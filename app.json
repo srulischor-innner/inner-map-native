@@ -20,7 +20,10 @@
         "NSMicrophoneUsageDescription": "Inner Map uses your microphone for voice conversations.",
         "UIBackgroundModes": [
           "audio"
-        ]
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "android": {

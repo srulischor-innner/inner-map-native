@@ -57,31 +57,51 @@ export default function ChatScreen() {
   // ===== BOOT: returning greeting + map state =====
   useEffect(() => {
     (async () => {
-      const [greeting, map] = await Promise.all([
-        api.getReturningGreeting(),
-        api.getLatestMap(),
-      ]);
-      // Derive phase from map completeness — mirrors the web app's rough heuristic:
-      //   1 = no core filled, 2 = some core filled, 3 = wound+fixer+skeptic+self-like all present
+      // Drop the fallback greeting immediately so the screen NEVER sits empty
+      // while we wait on the network. If a real returning greeting arrives, we
+      // swap the first bubble's text to the personalized version.
+      const openerId = addAssistantMessage(FALLBACK_GREETING);
+      historyRef.current.push({ role: 'assistant', content: FALLBACK_GREETING });
+
+      let greeting: string | null = null;
+      let map: any = null;
+      try {
+        [greeting, map] = await Promise.all([
+          api.getReturningGreeting(),
+          api.getLatestMap(),
+        ]);
+      } catch (err) {
+        console.warn('[chat] boot fetch failed:', (err as Error)?.message);
+      }
+
+      // Derive phase from map completeness.
       const md = map?.mapData || map || {};
       const coreFilled = ['wound', 'fixer', 'skeptic'].filter((k) => !!md?.[k]).length;
       if (coreFilled === 0) setPhase(1);
       else if (coreFilled < 3) setPhase(2);
       else setPhase(3);
 
-      const opener = (greeting && greeting.trim()) || FALLBACK_GREETING;
-      addAssistantMessage(opener);
-      historyRef.current.push({ role: 'assistant', content: opener });
+      // Upgrade the fallback greeting if the server returned a personalized one.
+      if (greeting && greeting.trim() && greeting.trim() !== FALLBACK_GREETING) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === openerId ? { ...m, text: greeting!.trim() } : m)),
+        );
+        // Replace the first history entry too so chat context uses the real opener.
+        if (historyRef.current[0]?.role === 'assistant') {
+          historyRef.current[0] = { role: 'assistant', content: greeting.trim() };
+        }
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ===== MESSAGE HELPERS =====
-  function addAssistantMessage(text: string, meta?: { detectedPart?: string; partLabel?: string | null }) {
+  function addAssistantMessage(text: string, meta?: { detectedPart?: string; partLabel?: string | null }): string {
+    const id = uuidv4();
     setMessages((prev) => [
       ...prev,
       {
-        id: uuidv4(),
+        id,
         role: 'assistant',
         text,
         detectedPart: meta?.detectedPart,
@@ -89,6 +109,7 @@ export default function ChatScreen() {
       },
     ]);
     scrollToBottom();
+    return id;
   }
 
   function addUserMessage(text: string) {
