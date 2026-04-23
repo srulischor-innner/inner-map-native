@@ -1,15 +1,25 @@
-// Bottom input bar: multiline textarea, mic button (voice dictation via expo-audio +
-// /api/transcribe), and send button. Send appears when there's content, mic appears
-// when the input is empty — matching the web app's single-button-at-a-time pattern.
+// Bottom input bar — DICTATION MODEL (not a conversation loop).
+//
+// Flow:
+//   idle      → tap mic → recording (red pulse + "Recording…" label above bar)
+//   recording → tap mic → stop, transcribe, drop transcript INTO the text input
+//                         (not auto-sent — user reviews, edits, then taps send)
+//   typing    → send button shown instead of mic; tap to send
+//
+// No TTS auto-play. No listening-after-AI loop. Voice input behaves like
+// dictation on an iPhone keyboard: press, talk, release, get editable text.
 
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
+  Text,
   TextInput,
   Pressable,
+  Animated,
   StyleSheet,
   ActivityIndicator,
   Alert,
+  Easing,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -28,7 +38,21 @@ export function ChatInput({
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const sentOnce = useRef(false);
+
+  // Mic pulse animation — scale 1.0 ↔ 1.12 while recording. Stops cleanly when
+  // recording flips false.
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!recording) { pulse.setValue(1); return; }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.12, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1,    duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [recording, pulse]);
 
   const canSend = text.trim().length > 0 && !disabled && !transcribing;
 
@@ -38,7 +62,6 @@ export function ChatInput({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setText('');
     onSend(t);
-    sentOnce.current = true;
   }
 
   async function startRecord() {
@@ -60,6 +83,12 @@ export function ChatInput({
     }
   }
 
+  /**
+   * Stop → transcribe → DROP INTO INPUT FIELD. Not auto-sent. The user reviews
+   * the transcription, edits if needed, then taps the Send button themselves.
+   * If the text area already has content, the transcript is appended with a
+   * leading space so nothing gets clobbered.
+   */
   async function stopRecordAndTranscribe() {
     try {
       await recorder.stop();
@@ -67,16 +96,13 @@ export function ChatInput({
       setRecording(false);
       if (!uri) return;
       setTranscribing(true);
-      // Pick a plausible mime type from the file extension; server accepts any audio/*.
       const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
       const transcript = await api.transcribe(uri, mime);
       setTranscribing(false);
       const t = (transcript || '').trim();
-      if (t) {
-        // Send directly — matches the web app's post-transcription auto-send flow.
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-        onSend(t);
-      }
+      if (!t) return;
+      Haptics.selectionAsync().catch(() => {});
+      setText((prev) => (prev.trim() ? prev.replace(/\s+$/, '') + ' ' + t : t));
     } catch (e) {
       console.warn('[mic] stop/transcribe failed:', (e as Error).message);
       setRecording(false);
@@ -85,54 +111,94 @@ export function ChatInput({
   }
 
   return (
-    <View style={styles.bar}>
-      <TextInput
-        value={text}
-        onChangeText={setText}
-        editable={!disabled && !transcribing}
-        multiline
-        placeholder={recording ? 'Listening…' : 'Share what feels true…'}
-        placeholderTextColor={colors.creamFaint}
-        style={styles.input}
-        selectionColor={colors.amber}
-        onSubmitEditing={handleSend}
-      />
-      {canSend ? (
-        <Pressable onPress={handleSend} style={[styles.btn, styles.sendBtn]} accessibilityLabel="Send">
-          <Ionicons name="arrow-up" size={18} color={colors.background} />
-        </Pressable>
-      ) : (
-        <Pressable
-          onPress={recording ? stopRecordAndTranscribe : startRecord}
-          style={[styles.btn, styles.micBtn, recording && styles.micRecording]}
-          accessibilityLabel={recording ? 'Stop recording' : 'Start voice input'}
-          disabled={transcribing}
-        >
-          {transcribing ? (
-            <ActivityIndicator size="small" color={colors.amber} />
-          ) : (
-            <Ionicons
-              name={recording ? 'stop' : 'mic'}
-              size={18}
-              color={recording ? '#fff' : colors.amber}
-            />
-          )}
-        </Pressable>
-      )}
+    <View style={styles.wrap}>
+      {/* "Recording…" label sits just above the input while the mic is active. */}
+      {recording ? (
+        <View style={styles.recordingRow}>
+          <View style={styles.recordingDot} />
+          <Text style={styles.recordingLabel}>Recording…</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.bar}>
+        <TextInput
+          value={text}
+          onChangeText={setText}
+          editable={!disabled && !transcribing}
+          multiline
+          placeholder={recording ? 'Listening…' : 'Share what feels true…'}
+          placeholderTextColor={colors.creamFaint}
+          style={styles.input}
+          selectionColor={colors.amber}
+          onSubmitEditing={handleSend}
+        />
+        {canSend ? (
+          <Pressable onPress={handleSend} style={[styles.btn, styles.sendBtn]} accessibilityLabel="Send">
+            <Ionicons name="arrow-up" size={18} color={colors.background} />
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={recording ? stopRecordAndTranscribe : startRecord}
+            accessibilityLabel={recording ? 'Stop dictation' : 'Start voice dictation'}
+            disabled={transcribing}
+          >
+            <Animated.View
+              style={[
+                styles.btn,
+                styles.micBtn,
+                recording && styles.micRecording,
+                recording ? { transform: [{ scale: pulse }] } : null,
+              ]}
+            >
+              {transcribing ? (
+                <ActivityIndicator size="small" color={colors.amber} />
+              ) : (
+                <Ionicons
+                  name={recording ? 'stop' : 'mic'}
+                  size={18}
+                  color={recording ? '#fff' : colors.amber}
+                />
+              )}
+            </Animated.View>
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrap: {
+    backgroundColor: colors.backgroundSecondary,
+    borderTopWidth: 0.5,
+    borderTopColor: colors.border,
+  },
+  recordingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  recordingDot: {
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: '#d4726a',
+    shadowColor: '#d4726a', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
+  },
+  recordingLabel: {
+    color: '#d4726a',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
   bar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: spacing.sm,
-    backgroundColor: colors.backgroundSecondary,
-    borderTopWidth: 0.5,
-    borderTopColor: colors.border,
     gap: spacing.sm,
   },
   input: {
@@ -156,9 +222,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendBtn: {
-    backgroundColor: colors.amber,
-  },
+  sendBtn: { backgroundColor: colors.amber },
   micBtn: {
     borderWidth: 1,
     borderColor: colors.amberDim,
@@ -167,5 +231,9 @@ const styles = StyleSheet.create({
   micRecording: {
     backgroundColor: '#d4726a',
     borderColor: '#d4726a',
+    shadowColor: '#d4726a',
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
   },
 });
