@@ -6,19 +6,25 @@
 // GestureHandlerRootView sits at the outermost level so any future bottom sheets
 // or swipeable surfaces work anywhere in the tree.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import * as Notifications from 'expo-notifications';
 
 import { colors } from '../constants/theme';
 import { getOnboardingState } from '../services/onboarding';
+import { registerForPushNotifications } from '../services/push';
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
   const router = useRouter();
+
+  // Notification tap → navigate the user to the right tab. `route` is an optional
+  // field on the notification payload; we default to chat when absent.
+  const responseSubRef = useRef<Notifications.Subscription | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -28,9 +34,23 @@ export default function RootLayout() {
         // Route the user to the onboarding flow. The (tabs) group is registered
         // below so the back navigation or completion replacement still works.
         router.replace('/onboarding');
+      } else {
+        // Only ask for push permission AFTER onboarding is done so the prompt
+        // doesn't crash into the intake flow's focus.
+        registerForPushNotifications().catch(() => {});
       }
       setReady(true);
     })();
+
+    // Route on notification tap.
+    responseSubRef.current = Notifications.addNotificationResponseReceivedListener(
+      (resp) => {
+        const data = resp.notification.request.content.data || {};
+        const route = typeof data.route === 'string' ? data.route : '/';
+        router.push(route);
+      },
+    );
+    return () => { responseSubRef.current?.remove(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

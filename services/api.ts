@@ -201,6 +201,21 @@ export const api = {
     } catch { return false; }
   },
 
+  /** POST /api/speak — returns an MP3 ArrayBuffer of the TTS'd text (OpenAI HD
+   *  shimmer voice, jittered speed). Used by the Map-tab voice loop. */
+  async speak(text: string): Promise<ArrayBuffer | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`${BASE_URL}/api/speak`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) return null;
+      return await res.arrayBuffer();
+    } catch { return null; }
+  },
+
   async transcribe(uri: string, mime: string): Promise<string | null> {
     try {
       const userId = await getUserId();

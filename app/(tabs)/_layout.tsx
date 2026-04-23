@@ -4,6 +4,7 @@
 
 import { Tabs } from 'expo-router';
 import { Text, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { colors, fonts } from '../../constants/theme';
 
 // Tiny text-only icon — we'll swap to proper SVG/PNG icons later.
@@ -30,6 +31,11 @@ function TabIcon({ label, focused }: { label: string; focused: boolean }) {
 export default function TabsLayout() {
   return (
     <Tabs
+      screenListeners={{
+        // Subtle tab-switch haptic — selection feedback is the most appropriate
+        // type here (less pushy than impact, louder than nothing).
+        tabPress: () => { Haptics.selectionAsync().catch(() => {}); },
+      }}
       screenOptions={{
         headerShown: false,
         tabBarStyle: {

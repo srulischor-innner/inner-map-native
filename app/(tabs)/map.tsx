@@ -3,22 +3,33 @@
 // geometry + tap handler to InnerMapCanvas. Tapping a node opens a bottom-sheet
 // folder. Map conversation (mic, OpenAI Realtime) lands in a later step.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import 'react-native-get-random-values';
+import { v4 as uuidv4 } from 'uuid';
 
 import { colors, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { computeMapGeometry, MapGeometry } from '../../utils/mapLayout';
 import { InnerMapCanvas, NodeKey } from '../../components/map/InnerMapCanvas';
 import { PartFolderModal } from '../../components/map/PartFolderModal';
+import { MapVoiceButton } from '../../components/map/MapVoiceButton';
 
 export default function MapScreen() {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [mapData, setMapData] = useState<any | null>(null);
   const [activePart, setActivePart] = useState<NodeKey | null>(null);
   const [folderPart, setFolderPart] = useState<NodeKey | null>(null);
+  const sessionIdRef = useRef<string>(uuidv4());
+
+  // Wipe activePart after ~8 s so the breathing node doesn't stay inflated forever.
+  useEffect(() => {
+    if (!activePart) return;
+    const t = setTimeout(() => setActivePart(null), 8000);
+    return () => clearTimeout(t);
+  }, [activePart]);
 
   // Fetch the latest map on mount. Swallow errors — an empty map still renders.
   useEffect(() => {
@@ -34,8 +45,23 @@ export default function MapScreen() {
 
   const geom: MapGeometry | null = size ? computeMapGeometry(size.w, size.h) : null;
 
+  // Node-specific haptic patterns. Heavier impact for parts that carry heavier
+  // somatic weight (wound, firefighter), soft notification for Self. Matches the
+  // clinical spec that each part has its own felt-sense.
+  function tapHaptic(k: NodeKey) {
+    switch (k) {
+      case 'wound':       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}); break;
+      case 'firefighter': Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}); break;
+      case 'fixer':       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); break;
+      case 'self-like':   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); break;
+      case 'skeptic':     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); break;
+      case 'manager':     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); break;
+      case 'self':        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {}); break;
+    }
+  }
+
   function handleTap(k: NodeKey) {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    tapHaptic(k);
     setActivePart(k);
     setFolderPart(k);
   }
@@ -61,6 +87,21 @@ export default function MapScreen() {
           <InnerMapCanvas geom={geom} activePart={activePart} onNodeTap={handleTap} />
         ) : null}
       </View>
+
+      <MapVoiceButton
+        sessionId={sessionIdRef.current}
+        onDetectedPart={(part) => {
+          // Narrowing the string to NodeKey — guarded by the known part list so a
+          // future server-side category doesn't crash the canvas.
+          const known: Record<string, NodeKey> = {
+            wound: 'wound', fixer: 'fixer', skeptic: 'skeptic', self: 'self',
+            'self-like': 'self-like', compromised: 'self-like',
+            manager: 'manager', firefighter: 'firefighter',
+          };
+          const key = known[part];
+          if (key) setActivePart(key);
+        }}
+      />
 
       <PartFolderModal
         visible={!!folderPart}
