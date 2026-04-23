@@ -6,6 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
@@ -32,21 +33,21 @@ export default function MapScreen() {
     return () => clearTimeout(t);
   }, [activePart]);
 
-  // Fetch the latest map on mount. Swallow errors — an empty map still renders.
+  // Fetch the latest map + parts on mount. Swallow errors — empty still renders.
   const [outsideInScore, setOutsideInScore] = useState<number | null>(null);
   const [fragmentedScore, setFragmentedScore] = useState<number | null>(null);
+  const [parts, setParts] = useState<any[]>([]);
+  const router = useRouter();
   useEffect(() => {
     (async () => {
-      const res = await api.getLatestMap();
+      const [res, ps] = await Promise.all([api.getLatestMap(), api.getParts()]);
       const md = res?.mapData || res || {};
       setMapData(md);
-      // For v1, fold manager/firefighter arrays into the flat shape the modal expects.
       if (res?.detectedManagers) md.detectedManagers = res.detectedManagers;
       if (res?.detectedFirefighters) md.detectedFirefighters = res.detectedFirefighters;
-      // Spectrum scores live on the session envelope, not mapData. /api/latest-map
-      // returns them at the top level when present.
       if (typeof res?.outsideInScore === 'number') setOutsideInScore(res.outsideInScore);
       if (typeof res?.fragmentedScore === 'number') setFragmentedScore(res.fragmentedScore);
+      setParts(ps);
     })();
   }, []);
 
@@ -111,7 +112,16 @@ export default function MapScreen() {
         visible={!!folderPart}
         partKey={folderPart}
         mapData={mapData}
+        parts={parts}
         onClose={() => setFolderPart(null)}
+        onEnterSelfMode={() => {
+          // Close the folder and jump to Chat — Self mode flag lands in a
+          // follow-up; for now this at least sends the user to a space where
+          // Self energy can be received.
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          setFolderPart(null);
+          router.push('/');
+        }}
       />
     </SafeAreaView>
   );

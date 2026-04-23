@@ -1,11 +1,9 @@
-// Journey tab — a single scroll that surfaces four things:
-//   1. Most Active Energies — which parts dominate the conversation history
-//   2. Language Pattern Categories — clinical pattern chips across sessions
-//   3. Two Spectrums — Outside-In → Inside-Out and Fragmented → Flowing
-//   4. Your Path — reverse-chronological timeline of sessions
+// Journey tab — how you're changing across sessions. Cleaner design pass:
+// no top metrics row, larger amber section headers with generous vertical
+// rhythm, softer spectrum presentation, subtle chip styling.
 //
-// Data source: /api/journey (server aggregates from SQLite). Every section has a
-// warm empty state so the page is useful from session one.
+// Data source: /api/journey (server aggregates from SQLite). Every section
+// still has a warm empty state so the page is useful from session one.
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { ScrollView, View, Text, RefreshControl, StyleSheet } from 'react-native';
@@ -25,10 +23,6 @@ type JourneyData = {
   mostActiveParts: Energy[];
   clinicalPatterns: any;
   sessions: PathItem[];
-  // The server doesn't currently return spectrum scores aggregated — we look at the
-  // most recent session's stored outsideInScore / fragmentedScore if we pull it here.
-  // For v1 we just show the spectrums as "not enough signal yet" unless we can derive
-  // a value. A follow-up can extend /api/journey to include an aggregate.
   outsideInScore?: number | null;
   fragmentedScore?: number | null;
 };
@@ -41,7 +35,6 @@ export default function JourneyScreen() {
     const res = await api.getJourney();
     if (res) setData(res as JourneyData);
   }, []);
-
   useEffect(() => { load(); }, [load]);
 
   const onRefresh = async () => {
@@ -49,31 +42,19 @@ export default function JourneyScreen() {
     try { await load(); } finally { setRefreshing(false); }
   };
 
-  const totalSessions = data?.totalSessions ?? 0;
-  const totalMessages = data?.totalMessages ?? 0;
-
   return (
     <SafeAreaView style={styles.root} edges={[]}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Your Journey</Text>
-        <Text style={styles.sub}>How you're changing across sessions</Text>
-      </View>
-
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.amber} />
         }
+        showsVerticalScrollIndicator={false}
       >
-        {/* Summary row — sessions + messages count */}
-        <View style={styles.summaryRow}>
-          <SummaryStat label="SESSIONS" value={totalSessions} />
-          <SummaryStat label="MESSAGES" value={totalMessages} />
-          {data?.firstMapDate ? (
-            <SummaryStat label="MAP SINCE" value={data.firstMapDate.slice(5)} />
-          ) : (
-            <SummaryStat label="MAP SINCE" value="—" />
-          )}
+        {/* Minimal intro — quiet instead of metric-y */}
+        <View style={styles.intro}>
+          <Text style={styles.introTitle}>Your Journey</Text>
+          <Text style={styles.introSub}>How you're changing across sessions.</Text>
         </View>
 
         <Section title="Most active energies">
@@ -91,8 +72,9 @@ export default function JourneyScreen() {
             leftColor={colors.wound}
             rightColor={colors.self}
             value={data?.outsideInScore ?? null}
-            caption="How your protective parts are orienting to the world — a conceptual shift."
+            caption="How your protective parts orient to the world — a conceptual shift."
           />
+          <View style={{ height: spacing.md }} />
           <SpectrumBar
             leftLabel="Fragmented"
             rightLabel="Flowing"
@@ -115,55 +97,40 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
+      <View style={styles.sectionDivider} />
       {children}
-    </View>
-  );
-}
-
-function SummaryStat({ label, value }: { label: string; value: number | string }) {
-  return (
-    <View style={styles.summaryStat}>
-      <Text style={styles.summaryValue}>{String(value)}</Text>
-      <Text style={styles.summaryLabel}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
-  header: {
-    paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm,
-    borderBottomColor: colors.border, borderBottomWidth: 1,
-  },
-  title: { color: colors.amber, fontSize: 22, fontWeight: '500', letterSpacing: 0.3 },
-  sub: { color: colors.creamFaint, fontSize: 12, fontStyle: 'italic', marginTop: 2 },
+  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl },
 
-  content: { padding: spacing.lg, paddingBottom: spacing.xxl },
-
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
+  // Top — no metric cards, just a warm two-line intro
+  intro: { alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.xl },
+  introTitle: { color: colors.cream, fontSize: 26, fontWeight: '500', letterSpacing: 0.3 },
+  introSub: {
+    color: colors.creamDim,
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginTop: 4,
+    letterSpacing: 0.2,
   },
-  summaryStat: {
-    flex: 1,
-    padding: spacing.sm,
-    backgroundColor: colors.backgroundCard,
-    borderRadius: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  summaryValue: { color: colors.cream, fontSize: 20, fontWeight: '500' },
-  summaryLabel: { color: colors.creamFaint, fontSize: 10, letterSpacing: 1.2, marginTop: 2 },
 
-  section: { marginBottom: spacing.xl },
+  // Section — bigger uppercase amber header + subtle divider line + generous
+  // bottom margin so nothing feels cramped.
+  section: { marginBottom: spacing.xxl },
   sectionTitle: {
     color: colors.amber,
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 1.8,
-    marginBottom: spacing.sm,
+    letterSpacing: 2.2,
+    marginBottom: 10,
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginBottom: spacing.md,
   },
 });

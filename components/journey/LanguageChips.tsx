@@ -74,20 +74,25 @@ export function LanguageChips({ patterns }: { patterns: Patterns | null | undefi
 }
 
 const styles = StyleSheet.create({
-  block: { marginBottom: spacing.md },
-  label: { fontSize: 11, fontWeight: '700', letterSpacing: 1.4, marginBottom: 4 },
-  note: { color: colors.creamDim, fontSize: 12, fontStyle: 'italic', lineHeight: 18, marginBottom: 8 },
+  block: { marginBottom: spacing.lg },
+  label: { fontSize: 11, fontWeight: '700', letterSpacing: 1.6, marginBottom: 6 },
+  note: {
+    color: colors.creamDim, fontSize: 12, fontStyle: 'italic', lineHeight: 18,
+    marginBottom: spacing.sm,
+  },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  // Smaller, subtler chips — background kept nearly-invisible, border very thin.
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderRadius: radii.pill,
     borderWidth: 0.5,
+    opacity: 0.85,
   },
-  chipText: { fontSize: 12, fontWeight: '500' },
-  chipCount: { fontSize: 10, marginLeft: 4 },
+  chipText: { fontSize: 11, fontWeight: '500' },
+  chipCount: { fontSize: 9, marginLeft: 4 },
   chipEmpty: { color: colors.creamFaint, fontSize: 12, fontStyle: 'italic' },
   empty: {
     padding: spacing.md,

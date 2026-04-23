@@ -217,6 +217,19 @@ export const api = {
     } catch { return []; }
   },
 
+  /** /api/parts — list of all parts (category + per-part fields like
+   *  corePhrase, howItShowsUp, whatItWants, originStory, bodyLocation, etc).
+   *  Powers the map folder's per-part section content. */
+  async getParts(): Promise<any[]> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/parts', { label: 'parts', headers });
+      if (!res.ok) return [];
+      const j: any = await res.json();
+      return Array.isArray(j) ? j : j?.parts || [];
+    } catch { return []; }
+  },
+
   async getLatestMap(): Promise<any | null> {
     try {
       const headers = await authHeaders();
