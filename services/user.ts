@@ -14,18 +14,36 @@ let _cached: string | null = null;
 
 export async function getUserId(): Promise<string> {
   if (_cached) return _cached;
+  console.log('[user] getUserId — reading SecureStore');
   try {
-    const existing = await SecureStore.getItemAsync(KEY);
+    // 1.5s timeout: SecureStore occasionally stalls on simulators and in
+    // first-launch conditions. Don't let that hang the first API call.
+    const existing = await Promise.race<string | null>([
+      SecureStore.getItemAsync(KEY),
+      new Promise<null>((r) => setTimeout(() => {
+        console.warn('[user] SecureStore read timed out @1500ms');
+        r(null);
+      }, 1500)),
+    ]);
     if (existing) {
       _cached = existing;
+      console.log('[user] got cached id');
       return existing;
     }
   } catch (e) {
     console.warn('[user] SecureStore read failed:', (e as Error).message);
   }
   const fresh = uuidv4();
+  console.log('[user] generating fresh id');
   try {
-    await SecureStore.setItemAsync(KEY, fresh);
+    // Best-effort write — if the device refuses, still use the id in memory.
+    await Promise.race<void>([
+      SecureStore.setItemAsync(KEY, fresh),
+      new Promise<void>((r) => setTimeout(() => {
+        console.warn('[user] SecureStore write timed out @1500ms');
+        r();
+      }, 1500)),
+    ]);
   } catch (e) {
     console.warn('[user] SecureStore write failed:', (e as Error).message);
   }

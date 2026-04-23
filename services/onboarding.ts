@@ -24,8 +24,26 @@ export type OnboardingState = {
 };
 
 async function getBool(key: string): Promise<boolean> {
-  try { return (await AsyncStorage.getItem(key)) === '1'; }
-  catch { return false; }
+  // Per-key 1.5s timeout so one slow AsyncStorage read can't hang boot. The
+  // `?? false` fallback is the safer default — treats an unknown flag as
+  // "not yet completed" for onboarding gating purposes, which the root
+  // _layout's own 3s timeout then overrides in the opposite direction if
+  // the whole read hangs. Either way: never hang.
+  try {
+    const raw = await Promise.race<string | null>([
+      AsyncStorage.getItem(key),
+      new Promise<null>((resolve) =>
+        setTimeout(() => {
+          console.warn(`[onboarding] AsyncStorage.getItem(${key}) timed out @1500ms`);
+          resolve(null);
+        }, 1500),
+      ),
+    ]);
+    return raw === '1';
+  } catch (e) {
+    console.warn(`[onboarding] AsyncStorage.getItem(${key}) threw:`, (e as Error)?.message);
+    return false;
+  }
 }
 async function setBool(key: string, v: boolean): Promise<void> {
   try { await AsyncStorage.setItem(key, v ? '1' : '0'); }
