@@ -127,6 +127,38 @@ export const api = {
     } catch { return null; }
   },
 
+  /** Journey data — active parts, clinical patterns, session list. Server does all the
+   *  aggregation; we just render. */
+  async getJourney(): Promise<any | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`${BASE_URL}/api/journey`, { headers });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  },
+
+  /** Full session payload including transcript, partDetections, etc. */
+  async getSession(id: string): Promise<any | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`${BASE_URL}/api/sessions/${encodeURIComponent(id)}`, { headers });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  },
+
+  /** Session list — id, date, time, preview, hasMap, messageCount. */
+  async listSessions(): Promise<any[]> {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`${BASE_URL}/api/sessions`, { headers });
+      if (!res.ok) return [];
+      const j: any = await res.json();
+      return Array.isArray(j) ? j : j?.sessions || [];
+    } catch { return []; }
+  },
+
   async getLatestMap(): Promise<any | null> {
     try {
       const headers = await authHeaders();
