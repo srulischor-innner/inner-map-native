@@ -22,7 +22,7 @@ import {
   Keyboard,
   Text,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
@@ -57,6 +57,10 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   // Name pulled from intake for the 'Hey [Name]' line — null when unknown.
   const [userName, setUserName] = useState<string | null>(null);
+  // Safe-area top inset + top-bar chrome height — used as keyboardVerticalOffset
+  // so the KeyboardAvoidingView pushes the input bar exactly above the keyboard
+  // without leaving a gap or going too far.
+  const insets = useSafeAreaInsets();
 
   // ===== BOOT: returning greeting + map state =====
   useEffect(() => {
@@ -104,6 +108,17 @@ export default function ChatScreen() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When the keyboard opens, snap the scroll to the latest message so the user
+  // sees what they're responding to. iOS emits keyboardWillShow before it's
+  // done animating; Android only fires keyboardDidShow. We handle both.
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const sub = Keyboard.addListener(showEvt, () => {
+      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    });
+    return () => sub.remove();
   }, []);
 
   // ===== MESSAGE HELPERS =====
@@ -275,10 +290,20 @@ export default function ChatScreen() {
           <Text style={styles.heyText}>Hey {userName}</Text>
         </View>
       ) : null}
+      {/* Keyboard avoidance. `keyboardVerticalOffset` must equal the height of
+          anything above this KeyboardAvoidingView on the screen: the iOS safe-
+          area top inset + the hamburger row (34) + the tab row (40) + the
+          optional 'Hey Name' row (~26). Without this the keyboard covers the
+          input bar on iPhone. `behavior: padding` shrinks the KAV by the
+          keyboard height, pushing our ScrollView + ChatInput up together. */}
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 4 : 0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={
+          Platform.OS === 'ios'
+            ? insets.top + 34 /* hamburger row */ + 40 /* tabs */ + (userName ? 26 : 0)
+            : 0
+        }
       >
         <ScrollView
           ref={scrollRef}
