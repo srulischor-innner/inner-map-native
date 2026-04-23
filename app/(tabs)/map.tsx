@@ -16,6 +16,7 @@ import { computeMapGeometry, MapGeometry } from '../../utils/mapLayout';
 import { InnerMapCanvas, NodeKey } from '../../components/map/InnerMapCanvas';
 import { PartFolderModal } from '../../components/map/PartFolderModal';
 import { MapVoiceButton } from '../../components/map/MapVoiceButton';
+import { ProgressStrip } from '../../components/map/ProgressStrip';
 
 export default function MapScreen() {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
@@ -32,6 +33,8 @@ export default function MapScreen() {
   }, [activePart]);
 
   // Fetch the latest map on mount. Swallow errors — an empty map still renders.
+  const [outsideInScore, setOutsideInScore] = useState<number | null>(null);
+  const [fragmentedScore, setFragmentedScore] = useState<number | null>(null);
   useEffect(() => {
     (async () => {
       const res = await api.getLatestMap();
@@ -40,6 +43,10 @@ export default function MapScreen() {
       // For v1, fold manager/firefighter arrays into the flat shape the modal expects.
       if (res?.detectedManagers) md.detectedManagers = res.detectedManagers;
       if (res?.detectedFirefighters) md.detectedFirefighters = res.detectedFirefighters;
+      // Spectrum scores live on the session envelope, not mapData. /api/latest-map
+      // returns them at the top level when present.
+      if (typeof res?.outsideInScore === 'number') setOutsideInScore(res.outsideInScore);
+      if (typeof res?.fragmentedScore === 'number') setFragmentedScore(res.fragmentedScore);
     })();
   }, []);
 
@@ -102,6 +109,8 @@ export default function MapScreen() {
           if (key) setActivePart(key);
         }}
       />
+
+      <ProgressStrip outsideInScore={outsideInScore} fragmentedScore={fragmentedScore} />
 
       <PartFolderModal
         visible={!!folderPart}

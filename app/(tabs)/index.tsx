@@ -35,6 +35,8 @@ import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
 import { PhaseIndicator } from '../../components/PhaseIndicator';
+import { ConversationStarters } from '../../components/ConversationStarters';
+import { EndSessionButton } from '../../components/EndSessionButton';
 
 // ms/word reveal cadence — matches the web app's `perWordMs: 45`.
 const PER_WORD_MS = 45;
@@ -271,11 +273,41 @@ export default function ChatScreen() {
         >
           {bubbleList}
           {typing ? <TypingIndicator /> : null}
+          {/* Starter chips appear only before the user has said anything. They
+              disappear the moment the first user turn is added. */}
+          {messages.length > 0 && historyRef.current.every((m) => m.role !== 'user') ? (
+            <ConversationStarters onPick={handleSend} />
+          ) : null}
           {messages.length === 0 ? (
             <Text style={styles.empty}>Warming up…</Text>
           ) : null}
         </ScrollView>
         <ChatInput disabled={sending} onSend={handleSend} />
+        {/* End session: only appears once a real back-and-forth has happened.
+            On commit, flush the transcript to /api/summary + /api/sessions so
+            the reflection + title land in the Journal tab immediately. */}
+        <EndSessionButton
+          visible={historyRef.current.filter((m) => m.role === 'user').length >= 2}
+          onEnd={async () => {
+            try {
+              // Kick the summary build; the server handles the async part.
+              await fetch(api.baseUrl + '/api/summary', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages: historyRef.current, sessionId: sessionIdRef.current }),
+              }).catch(() => {});
+              await api.saveSession({ id: sessionIdRef.current, messages: historyRef.current });
+            } catch {}
+            // Start a fresh session on the same screen.
+            historyRef.current = [];
+            setMessages([]);
+            sessionIdRef.current = uuidv4();
+            // Re-fetch the greeting for the new session.
+            const greeting = (await api.getReturningGreeting()) || FALLBACK_GREETING;
+            addAssistantMessage(greeting);
+            historyRef.current.push({ role: 'assistant', content: greeting });
+          }}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
