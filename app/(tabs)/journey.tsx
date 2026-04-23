@@ -53,7 +53,7 @@ export default function JourneyScreen() {
   const totalMessages = data?.totalMessages ?? 0;
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
+    <SafeAreaView style={styles.root} edges={[]}>
       <View style={styles.header}>
         <Text style={styles.title}>Your Journey</Text>
         <Text style={styles.sub}>How you're changing across sessions</Text>

@@ -257,7 +257,7 @@ export default function ChatScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
+    <SafeAreaView style={styles.root} edges={[]}>
       <PhaseIndicator phase={phase} />
       <KeyboardAvoidingView
         style={styles.flex}

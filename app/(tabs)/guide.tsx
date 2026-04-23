@@ -39,7 +39,7 @@ export default function GuideScreen() {
   const [section, setSection] = useState<SectionId>('map');
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
+    <SafeAreaView style={styles.root} edges={[]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Guide</Text>
       </View>

@@ -74,7 +74,7 @@ export default function MapScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
+    <SafeAreaView style={styles.root} edges={[]}>
       {/* Title/subtitle removed on mobile — they ate valuable real estate and
           the map's triangle itself is the title. The tab bar already tells
           the user where they are. */}

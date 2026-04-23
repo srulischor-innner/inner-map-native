@@ -42,8 +42,10 @@ export function ChatInput({
   }
 
   async function startRecord() {
+    console.log('[mic] tap → requesting permission');
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
+      console.log('[mic] permission result:', perm.granted);
       if (!perm.granted) {
         Alert.alert('Microphone off', 'Grant mic access in Settings to use voice input.');
         return;
