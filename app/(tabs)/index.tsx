@@ -88,7 +88,13 @@ export default function ChatScreen() {
       // node filled we're past first-session territory.
       const md = map?.mapData || map || {};
       const anyCoreFilled = ['wound', 'fixer', 'skeptic'].some((k) => !!md?.[k]);
-      setMode(anyCoreFilled ? 'ongoing' : 'onboarding');
+      const chosenMode = anyCoreFilled ? 'ongoing' : 'onboarding';
+      // Diagnostic — confirms which prompt branch the native app will request.
+      // If this prints `mode=onboarding anyCoreFilled=false` for a user who
+      // clearly has past sessions, the /api/latest-map fetch is either
+      // returning empty or hitting the wrong userId (mobile vs web split).
+      console.log('[mode]', chosenMode, 'anyCoreFilled:', anyCoreFilled, 'mapData:', JSON.stringify(md).slice(0, 300));
+      setMode(chosenMode);
 
       // Pull the first name if intake is complete — shown as "Hey [Name]" below
       // the top tabs. If absent we render nothing.
