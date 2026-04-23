@@ -34,7 +34,6 @@ import { colors, spacing } from '../../constants/theme';
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
-import { PhaseIndicator } from '../../components/PhaseIndicator';
 import { ConversationStarters } from '../../components/ConversationStarters';
 import { EndSessionButton } from '../../components/EndSessionButton';
 
@@ -53,8 +52,11 @@ export default function ChatScreen() {
   // Wire-format history sent in each chat request. We push turns here after they finish.
   const historyRef = useRef<ChatMessage[]>([]);
   const [typing, setTyping] = useState(false);
-  const [phase, setPhase] = useState<1 | 2 | 3>(1);
+  // Mode for /api/chat — onboarding for brand-new users, ongoing once any core node is filled.
+  const [mode, setMode] = useState<'onboarding' | 'ongoing'>('onboarding');
   const [sending, setSending] = useState(false);
+  // Name pulled from intake for the 'Hey [Name]' line — null when unknown.
+  const [userName, setUserName] = useState<string | null>(null);
 
   // ===== BOOT: returning greeting + map state =====
   useEffect(() => {
@@ -67,21 +69,28 @@ export default function ChatScreen() {
 
       let greeting: string | null = null;
       let map: any = null;
+      let intake: any = null;
       try {
-        [greeting, map] = await Promise.all([
+        [greeting, map, intake] = await Promise.all([
           api.getReturningGreeting(),
           api.getLatestMap(),
+          api.getIntake(),
         ]);
       } catch (err) {
         console.warn('[chat] boot fetch failed:', (err as Error)?.message);
       }
 
-      // Derive phase from map completeness.
+      // Drive /api/chat mode from map completeness — if the user has any core
+      // node filled we're past first-session territory.
       const md = map?.mapData || map || {};
-      const coreFilled = ['wound', 'fixer', 'skeptic'].filter((k) => !!md?.[k]).length;
-      if (coreFilled === 0) setPhase(1);
-      else if (coreFilled < 3) setPhase(2);
-      else setPhase(3);
+      const anyCoreFilled = ['wound', 'fixer', 'skeptic'].some((k) => !!md?.[k]);
+      setMode(anyCoreFilled ? 'ongoing' : 'onboarding');
+
+      // Pull the first name if intake is complete — shown as "Hey [Name]" below
+      // the top tabs. If absent we render nothing.
+      if (intake?.name && typeof intake.name === 'string' && intake.name.trim()) {
+        setUserName(intake.name.trim().split(/\s+/)[0]);
+      }
 
       // Upgrade the fallback greeting if the server returned a personalized one.
       if (greeting && greeting.trim() && greeting.trim() !== FALLBACK_GREETING) {
@@ -178,7 +187,7 @@ export default function ChatScreen() {
         await api.streamChat(
           {
             messages: historyRef.current,
-            mode: phase >= 2 ? 'ongoing' : 'onboarding',
+            mode,
             sessionId: sessionIdRef.current,
           },
           {
@@ -247,7 +256,7 @@ export default function ChatScreen() {
         setTyping(false);
       }
     },
-    [sending, phase, typing],
+    [sending, mode, typing],
   );
 
   // ===== RENDER =====
@@ -258,7 +267,14 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
-      <PhaseIndicator phase={phase} />
+      {/* Personal greeting line below the top tabs. Only rendered when we have
+          a real name from intake — intentionally blank otherwise so there's no
+          "Hey friend" placeholder feel. */}
+      {userName ? (
+        <View style={styles.heyRow}>
+          <Text style={styles.heyText}>Hey {userName}</Text>
+        </View>
+      ) : null}
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -319,4 +335,16 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.md, paddingBottom: spacing.md },
   empty: { color: colors.creamFaint, fontStyle: 'italic', textAlign: 'center', marginTop: spacing.xl },
+  heyRow: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+  },
+  heyText: {
+    color: colors.amberDim,        // dim amber per spec
+    fontSize: 12,
+    letterSpacing: 0.3,
+    fontStyle: 'italic',
+  },
 });

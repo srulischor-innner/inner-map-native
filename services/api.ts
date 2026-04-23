@@ -179,6 +179,22 @@ export const api = {
     return () => controller.abort();
   },
 
+  /** GET /api/intake — returns the user's stored intake JSON (name, age, etc).
+   *  Returns null if the user hasn't completed intake or the field is missing. */
+  async getIntake(): Promise<{
+    name?: string; age?: number; gender?: string;
+    relationship?: string; profession?: string;
+    goals?: string[]; goalsOther?: string; freeText?: string;
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/intake', { label: 'intake-get', headers });
+      if (!res.ok) return null;
+      const j: any = await res.json();
+      return (j && (j.intake || j)) || null;
+    } catch { return null; }
+  },
+
   async getReturningGreeting(): Promise<string | null> {
     try {
       const headers = await authHeaders();

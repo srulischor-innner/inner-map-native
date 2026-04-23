@@ -1,21 +1,23 @@
-// Tabs layout with a CUSTOM TOP tab bar. The default React Navigation bottom
-// tab bar is hidden; we render our own amber-accented row above the screen
-// content. Active tab is derived from usePathname() so it always matches the
-// router, even after hard navigation (e.g. notification tap).
+// Tabs layout with a CUSTOM TOP tab bar and a hamburger menu button.
 //
-// Design:
-//   - Dark bar below the iPhone status bar / Dynamic Island
-//   - Five uppercase labels: CHAT | MAP | JOURNAL | JOURNEY | GUIDE
-//   - Active tab: amber text + amber underline
-//   - Inactive: dim cream text
-//   - 11px font, 1px letter spacing, numberOfLines=1, allowFontScaling=false
+// Layout inside the SafeArea top inset:
+//   ┌─────────────────────────────────────────────────────┐
+//   │ ☰                                                   │  <- header row
+//   │ CHAT    MAP    JOURNAL   JOURNEY   GUIDE            │  <- tab row
+//   └─────────────────────────────────────────────────────┘
+//
+// The default bottom tab bar is hidden; our TopTabBar above handles navigation.
+// Active tab gets amber text + a chunkier amber underline with a stronger glow
+// so it reads as "lit" even in bright environments.
 
-import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../../constants/theme';
+import { HamburgerMenu } from '../../components/HamburgerMenu';
 
 const TAB_ROUTES: { name: string; label: string; path: string }[] = [
   { name: 'index',   label: 'CHAT',    path: '/' },
@@ -25,14 +27,18 @@ const TAB_ROUTES: { name: string; label: string; path: string }[] = [
   { name: 'guide',   label: 'GUIDE',   path: '/guide' },
 ];
 
-function TopTabBar() {
+function TopTabBar({ onMenu }: { onMenu: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
   return (
     <SafeAreaView edges={['top']} style={styles.safe}>
+      <View style={styles.headerRow}>
+        <Pressable onPress={onMenu} hitSlop={10} style={styles.menuBtn} accessibilityLabel="Open menu">
+          <Ionicons name="menu" size={22} color={colors.amber} />
+        </Pressable>
+      </View>
       <View style={styles.bar}>
         {TAB_ROUTES.map((r) => {
-          // Match exact path for non-index routes; match '/' or '/index' for CHAT.
           const active =
             r.path === '/'
               ? pathname === '/' || pathname === '/index'
@@ -64,14 +70,12 @@ function TopTabBar() {
 }
 
 export default function TabsLayout() {
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <TopTabBar />
+      <TopTabBar onMenu={() => setMenuOpen(true)} />
       <Tabs
         screenOptions={{
-          // Hide the default bottom bar entirely — our TopTabBar above handles
-          // navigation. tabBarButton={() => null} + zero height is a belt-and-
-          // braces combo that works across Safe Area quirks on iOS.
           headerShown: false,
           tabBarStyle: { display: 'none', height: 0 },
           tabBarButton: () => null,
@@ -83,6 +87,7 @@ export default function TabsLayout() {
         <Tabs.Screen name="journey" options={{ title: 'Journey' }} />
         <Tabs.Screen name="guide"   options={{ title: 'Guide' }} />
       </Tabs>
+      <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} />
     </View>
   );
 }
@@ -93,19 +98,22 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 12,
+    height: 34,
+  },
+  menuBtn: { padding: 4 },
   bar: {
     flexDirection: 'row',
     alignItems: 'stretch',
     justifyContent: 'space-between',
-    height: 44,
+    height: 40,
     paddingHorizontal: 8,
   },
-  tab: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
+  tab: { flex: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
   label: {
     color: colors.creamFaint,
     fontSize: 11,
@@ -113,15 +121,19 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   labelActive: { color: colors.amber, fontWeight: '700' },
+  // Chunkier, glowier active underline per the latest spec. 2px tall with a
+  // strong amber shadow so it reads as "lit" even in daylight.
   underline: {
     position: 'absolute',
-    left: 16, right: 16, bottom: 0,
+    left: 14, right: 14, bottom: 0,
     height: 2,
     backgroundColor: colors.amber,
-    borderRadius: 1,
+    borderRadius: 2,
     shadowColor: colors.amber,
-    shadowOpacity: 0.7,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.95,
+    shadowRadius: Platform.OS === 'ios' ? 8 : 0,
+    shadowOffset: { width: 0, height: 1 },
+    // Android doesn't render iOS shadow; elevation gives a comparable soft glow.
+    elevation: 5,
   },
 });
