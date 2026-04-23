@@ -255,14 +255,30 @@ export const api = {
     } catch { return null; }
   },
 
-  async saveSession(payload: Record<string, any>): Promise<void> {
+  /** Persist a session's messages + map data to the server. Returns true on
+   *  success so the caller can log / retry. Was silently swallowing errors;
+   *  now surfaces them via apiFetch's standard logs AND adds an explicit
+   *  pass/fail line with the session id + message count so save-or-not is
+   *  unambiguous in Metro. */
+  async saveSession(payload: Record<string, any>): Promise<boolean> {
     try {
       const headers = await authHeaders();
-      await apiFetch('/api/sessions', {
+      const msgCount = Array.isArray(payload?.messages) ? payload.messages.length : 0;
+      console.log(`[session-save] → id=${String(payload?.id).slice(0, 8)} msgs=${msgCount}`);
+      const res = await apiFetch('/api/sessions', {
         label: 'save-session', method: 'POST', headers,
         body: JSON.stringify(payload),
       });
-    } catch {}
+      if (res.ok) {
+        console.log(`[session-save] ✓ server accepted id=${String(payload?.id).slice(0, 8)}`);
+        return true;
+      }
+      console.warn(`[session-save] ✗ server returned ${res.status}`);
+      return false;
+    } catch (e) {
+      console.warn('[session-save] ✗ threw:', (e as Error)?.message);
+      return false;
+    }
   },
 
   async postIntake(payload: Record<string, any>): Promise<boolean> {
