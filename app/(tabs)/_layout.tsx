@@ -12,12 +12,17 @@ import { colors, fonts } from '../../constants/theme';
 // by the tab label + the amber active underline.
 function TabIcon({ label, focused }: { label: string; focused: boolean }) {
   return (
+    // Single line — tight letter-spacing + 10px font + numberOfLines=1 + allowFontScaling=false
+    // so iOS's Dynamic Type setting can't inflate these into a wrap. Journal/Journey shortened
+    // to LOG / PATH so even on iPhone SE the five tabs fit comfortably side by side.
     <View style={{ alignItems: 'center', justifyContent: 'center' }}>
       <Text
+        numberOfLines={1}
+        allowFontScaling={false}
         style={{
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: focused ? fonts.bold : fonts.medium,
-          letterSpacing: 1.4,
+          letterSpacing: 1.0,
           color: focused ? colors.amber : colors.creamFaint,
           textTransform: 'uppercase',
         }}
@@ -69,14 +74,14 @@ export default function TabsLayout() {
         name="journal"
         options={{
           title: 'Journal',
-          tabBarIcon: ({ focused }) => <TabIcon label="Journal" focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon label="Log" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="journey"
         options={{
           title: 'Journey',
-          tabBarIcon: ({ focused }) => <TabIcon label="Journey" focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon label="Path" focused={focused} />,
         }}
       />
       <Tabs.Screen

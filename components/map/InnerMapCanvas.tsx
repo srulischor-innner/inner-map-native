@@ -164,13 +164,16 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
       {/* ===== TEXT LABELS ===== Rendered as RN <Text> overlays instead of Skia SkText
            so we don't need a font asset loaded. One label per node, centered on the
            node's geometry. pointerEvents=none so they never block the Pressable taps. */}
-      <NodeLabel x={wound.x}        y={wound.y}        label="WOUND"        color={colors.wound} />
-      <NodeLabel x={fixer.x}        y={fixer.y}        label="FIXER"        color={colors.fixer} />
-      <NodeLabel x={skeptic.x}      y={skeptic.y}      label="SKEPTIC"      color={colors.skeptic} />
-      <NodeLabel x={self.x}         y={self.y}         label="SELF"         color={colors.self} />
-      <NodeLabel x={managers.x}     y={managers.y}     label="MANAGERS"     color={colors.managers} />
-      <NodeLabel x={firefighters.x} y={firefighters.y} label="FIREFIGHTERS" color={colors.firefighters} />
-      <NodeLabel x={selfLike.cx}    y={selfLike.cy + selfLike.size + 16} label="SELF-LIKE" color={colors.selfLike} />
+      <NodeLabel x={wound.x}            y={wound.y}        label="WOUND"        color={colors.wound}        width={90} />
+      <NodeLabel x={fixer.x}            y={fixer.y}        label="FIXER"        color={colors.fixer}        width={90} />
+      <NodeLabel x={skeptic.x}          y={skeptic.y}      label="SKEPTIC"      color={colors.skeptic}      width={90} />
+      <NodeLabel x={self.x}             y={self.y}         label="SELF"         color={colors.self}         width={90} />
+      <NodeLabel x={managers.x + 6}     y={managers.y}     label="MANAGERS"     color={colors.managers}     width={100} />
+      {/* FIREFIGHTERS is the longest label — center shifted ~12px left so the
+          full word fits on even the narrowest iPhone screens without clipping
+          against the right edge of the viewport. */}
+      <NodeLabel x={firefighters.x - 12} y={firefighters.y} label="FIREFIGHTERS" color={colors.firefighters} width={120} />
+      <NodeLabel x={selfLike.cx}        y={selfLike.cy + selfLike.size + 16} label="SELF-LIKE" color={colors.selfLike} width={90} />
 
       {/* ===== TAP OVERLAY ===== Absolutely-positioned Pressable per node. Hit region
            is slightly larger than the drawn circle for comfortable tap targets. */}
@@ -187,18 +190,26 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
 
 // Compact label that sits centered on a node. Absolute-positioned and
 // non-interactive so it never gets in the way of the Pressable hit zone.
-function NodeLabel({ x, y, label, color }: { x: number; y: number; label: string; color: string }) {
-  const W = 90;
+// `width` defaults to 90; long labels (FIREFIGHTERS) pass their own.
+function NodeLabel({
+  x, y, label, color, width = 90,
+}: { x: number; y: number; label: string; color: string; width?: number }) {
   const H = 18;
   return (
     <View
       pointerEvents="none"
       style={[
         styles.label,
-        { left: x - W / 2, top: y - H / 2, width: W, height: H },
+        { left: x - width / 2, top: y - H / 2, width, height: H },
       ]}
     >
-      <Text style={[styles.labelText, { color }]} numberOfLines={1}>{label}</Text>
+      <Text
+        allowFontScaling={false}
+        style={[styles.labelText, { color }]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
     </View>
   );
 }

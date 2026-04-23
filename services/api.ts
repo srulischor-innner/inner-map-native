@@ -98,6 +98,13 @@ export const api = {
     }
   },
 
+  /** POST /api/chat — non-streaming on native. We used to ask the server for SSE
+   *  (`stream:true`) but React Native Hermes doesn't reliably expose
+   *  `response.body.getReader()` for POST responses, which made every chat turn
+   *  fail with "streaming not supported". Native now requests a plain JSON reply
+   *  and delivers it as a single delta; the screen's word-by-word reveal runs
+   *  client-side so the UX is identical. Keep the StreamCallbacks shape so callers
+   *  don't have to change. */
   async streamChat(
     params: {
       messages: ChatMessage[];
@@ -109,63 +116,60 @@ export const api = {
   ): Promise<() => void> {
     const controller = new AbortController();
     const headers = await authHeaders();
-    const body = JSON.stringify({
+    const bodyObj = {
       messages: params.messages,
       mode: params.mode || 'onboarding',
       sessionId: params.sessionId,
-      stream: true,
+      stream: false,
       wasInterrupted: !!params.wasInterrupted,
-    });
+    };
+    console.log(
+      `[chat] sending mode=${bodyObj.mode} msgCount=${params.messages.length} lastRole=${params.messages[params.messages.length - 1]?.role}`,
+    );
 
     (async () => {
       try {
         const res = await apiFetch('/api/chat', {
-          label: 'chat', method: 'POST', headers, body,
-          signal: controller.signal, timeoutMs: 60000, expectStream: true,
+          label: 'chat', method: 'POST', headers, body: JSON.stringify(bodyObj),
+          signal: controller.signal, timeoutMs: 60000,
         });
         if (!res.ok) {
+          // apiFetch already logged the body preview on non-OK; still surface the
+          // status here so the error reaching the screen is specific.
           cb.onError(`chat ${res.status}`);
           return;
         }
+        // Some server errors still come back as 200 with a text/event-stream body
+        // containing a data:{"type":"error",...} frame — handle that defensively.
         const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('text/event-stream')) {
-          // Server fell back to plain JSON — deliver as one delta.
-          const j = (await res.json().catch(() => null)) as any;
-          const reply = (j && (j.reply || j.text)) || '';
-          if (reply) { cb.onDelta(reply); cb.onDone(reply); }
-          else cb.onError('empty reply');
-          return;
-        }
-
-        const reader = (res.body as any)?.getReader?.();
-        if (!reader) { cb.onError('streaming not supported'); return; }
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let fullText = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
+        if (contentType.includes('text/event-stream')) {
+          const raw = await res.text();
+          // Parse all SSE frames; find the done/error events and the final text.
+          let fullText = '';
+          let serverError: string | null = null;
+          for (const line of raw.split('\n')) {
             if (!line.startsWith('data: ')) continue;
             try {
               const evt = JSON.parse(line.slice(6));
-              if (evt.type === 'delta' && typeof evt.text === 'string') {
-                fullText += evt.text;
-                cb.onDelta(evt.text);
-              } else if (evt.type === 'done') {
-                cb.onDone(evt.text || fullText);
-                return;
-              } else if (evt.type === 'error') {
-                cb.onError(evt.error || 'unknown error');
-                return;
-              }
-            } catch { /* incomplete JSON */ }
+              if (evt.type === 'delta' && typeof evt.text === 'string') fullText += evt.text;
+              else if (evt.type === 'done') fullText = evt.text || fullText;
+              else if (evt.type === 'error') serverError = evt.error || 'unknown error';
+            } catch { /* skip */ }
           }
+          if (serverError) { cb.onError(serverError); return; }
+          if (fullText) { cb.onDelta(fullText); cb.onDone(fullText); return; }
+          cb.onError('empty reply');
+          return;
         }
-        cb.onDone(fullText);
+        // Normal JSON path — server returns { reply: "..." }.
+        const j: any = await res.json().catch(() => null);
+        const reply = (j && (j.reply || j.text)) || '';
+        if (!reply) {
+          cb.onError(j?.error || 'empty reply');
+          return;
+        }
+        cb.onDelta(reply);
+        cb.onDone(reply);
       } catch (e) {
         if ((e as any)?.name === 'AbortError') return;
         cb.onError((e as Error)?.message || 'network error');

@@ -4,13 +4,13 @@
 // folder. Map conversation (mic, OpenAI Realtime) lands in a later step.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
-import { colors, spacing } from '../../constants/theme';
+import { colors } from '../../constants/theme';
 import { api } from '../../services/api';
 import { computeMapGeometry, MapGeometry } from '../../utils/mapLayout';
 import { InnerMapCanvas, NodeKey } from '../../components/map/InnerMapCanvas';
@@ -75,14 +75,9 @@ export default function MapScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Your Inner Map</Text>
-        <Text style={styles.sub}>
-          {mapData && mapData.wound
-            ? 'Tap any node to see what it holds'
-            : 'Your map grows with every conversation'}
-        </Text>
-      </View>
+      {/* Title/subtitle removed on mobile — they ate valuable real estate and
+          the map's triangle itself is the title. The tab bar already tells
+          the user where they are. */}
       <View
         style={styles.canvasWrap}
         onLayout={(e) => {
@@ -124,13 +119,5 @@ export default function MapScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
-  header: {
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-  },
-  title: { color: colors.cream, fontSize: 24, fontWeight: '500' },
-  sub: { color: colors.creamFaint, fontSize: 12, fontStyle: 'italic', marginTop: 4 },
   canvasWrap: { flex: 1, overflow: 'hidden' },
 });
