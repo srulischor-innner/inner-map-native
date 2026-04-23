@@ -5,13 +5,16 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { colors } from '../constants/theme';
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
+    // GestureHandlerRootView must wrap everything so gesture handlers (bottom sheets,
+    // swipeable panels) work anywhere inside the app. Reanimated is enabled globally via
+    // the babel plugin — nothing to wire up at the React tree level for that.
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
+      <SafeAreaProvider>
         <StatusBar style="light" />
         <Stack
           screenOptions={{
@@ -24,7 +27,7 @@ export default function RootLayout() {
           {/* Future: onboarding / intake / terms / self-prompt overlay screens
               go here as siblings. They'll push on top of the tabs stack. */}
         </Stack>
-      </View>
-    </SafeAreaProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
