@@ -179,6 +179,28 @@ export const api = {
     } catch {}
   },
 
+  /** POST intake form data (name, age, gender, relationship, profession, goals[], freeText). */
+  async postIntake(payload: Record<string, any>): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`${BASE_URL}/api/intake`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+      return res.ok;
+    } catch { return false; }
+  },
+
+  /** Record that the user accepted the terms of use. Server stores timestamp. */
+  async acceptTerms(): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`${BASE_URL}/api/terms/accept`, { method: 'POST', headers });
+      return res.ok;
+    } catch { return false; }
+  },
+
   async transcribe(uri: string, mime: string): Promise<string | null> {
     try {
       const userId = await getUserId();

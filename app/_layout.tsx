@@ -1,32 +1,58 @@
-// Root layout — wraps the entire app in a Stack so modal/overlay screens (onboarding,
-// intake, terms) can push on top of the main tabs without unmounting them.
-// The (tabs) group renders the five-tab navigator. Modals go here as sibling routes.
+// Root layout — wraps the entire app in a Stack with a boot-time gate that decides
+// whether to show the onboarding flow or the main tabs. The gate reads three
+// AsyncStorage flags (hasSeenIntro, termsAccepted, intakeComplete) and if any are
+// missing, redirects the user to /onboarding on first render.
+//
+// GestureHandlerRootView sits at the outermost level so any future bottom sheets
+// or swipeable surfaces work anywhere in the tree.
 
-import { Stack } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+
 import { colors } from '../constants/theme';
+import { getOnboardingState } from '../services/onboarding';
 
 export default function RootLayout() {
+  const [ready, setReady] = useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    (async () => {
+      const state = await getOnboardingState();
+      const complete = state.hasSeenIntro && state.termsAccepted && state.intakeComplete;
+      if (!complete) {
+        // Route the user to the onboarding flow. The (tabs) group is registered
+        // below so the back navigation or completion replacement still works.
+        router.replace('/onboarding');
+      }
+      setReady(true);
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    // GestureHandlerRootView must wrap everything so gesture handlers (bottom sheets,
-    // swipeable panels) work anywhere inside the app. Reanimated is enabled globally via
-    // the babel plugin — nothing to wire up at the React tree level for that.
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
       <SafeAreaProvider>
         <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.background },
-            animation: 'fade',
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-          {/* Future: onboarding / intake / terms / self-prompt overlay screens
-              go here as siblings. They'll push on top of the tabs stack. */}
-        </Stack>
+        {!ready ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator color={colors.amber} />
+          </View>
+        ) : (
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.background },
+              animation: 'fade',
+            }}
+          >
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+          </Stack>
+        )}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
