@@ -200,6 +200,25 @@ export class RealtimeSession {
       }
       const pcmB64 = stripWavHeaderToPcm16Base64(b64);
       if (!pcmB64) { console.warn('[realtime] empty PCM after header strip'); this.setState('error'); return; }
+      // Energy check — decode a subset of the PCM to confirm the recorder
+      // actually captured audio. If every sample is zero the mic never
+      // produced sound (silent boot, permission stub, wrong route on iOS,
+      // etc.), and OpenAI will error server-side on an empty buffer.
+      const pcmBytes = base64ToBytes(pcmB64);
+      const energy = checkAudioEnergy(pcmBytes);
+      const first20 = Array.from(pcmBytes.slice(0, 20))
+        .map((b) => b.toString(16).padStart(2, '0')).join(' ');
+      console.log('[realtime] first 20 PCM bytes:', first20);
+      console.log(
+        '[realtime] audio energy — maxAmp=' + energy.maxAmplitude,
+        'rms=' + energy.rms,
+        'hasAudio=' + energy.hasAudio,
+      );
+      if (!energy.hasAudio) {
+        console.warn('[realtime] recording appears silent (maxAmp < 100) — not sending. Mic may not have captured audio.');
+        this.setState('idle');
+        return;
+      }
       const pcmByteCount = Math.round((pcmB64.length * 3) / 4);
       // PCM16 mono @ 24kHz = 48000 bytes/second. Realtime requires >=100ms
       // (4800 bytes) to accept a commit — any less and OpenAI rejects with
@@ -443,6 +462,30 @@ export class RealtimeSession {
 }
 
 // ---- helpers ----
+
+/** Scan a PCM16 little-endian buffer for signal energy. A fully silent
+ *  recording has maxAmplitude = 0; quiet room noise is usually < 50; normal
+ *  speech peaks well above 1000 on int16. If nothing crosses 100 the mic
+ *  didn't capture real audio — sending it to OpenAI just wastes the turn. */
+function checkAudioEnergy(pcmBytes: Uint8Array): { hasAudio: boolean; maxAmplitude: number; rms: number } {
+  let sumSquares = 0;
+  let maxAmp = 0;
+  // PCM16 = 2 bytes/sample, little-endian, signed. Samples limited to ~200k
+  // to cap work on long recordings — plenty to judge whether there's signal.
+  const endIndex = Math.min(pcmBytes.length - 1, 400000);
+  let sampleCount = 0;
+  for (let i = 0; i < endIndex; i += 2) {
+    // Reconstruct signed int16: LE bytes → 16-bit value, sign-extend via <<16 >>16.
+    const raw = pcmBytes[i] | (pcmBytes[i + 1] << 8);
+    const sample = (raw << 16) >> 16;
+    sumSquares += sample * sample;
+    const abs = sample < 0 ? -sample : sample;
+    if (abs > maxAmp) maxAmp = abs;
+    sampleCount++;
+  }
+  const rms = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
+  return { hasAudio: maxAmp > 100, maxAmplitude: maxAmp, rms: Math.round(rms) };
+}
 
 async function blobToBase64(blob: Blob): Promise<string> {
   // RN's FileReader supports readAsDataURL which returns "data:...;base64,<..>"
