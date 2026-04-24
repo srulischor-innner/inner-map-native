@@ -25,16 +25,93 @@ export function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-/** Strip a 44-byte RIFF/WAVE header and return the raw PCM16 payload as
- *  base64. The expo-audio recording format is exactly that — standard
- *  Microsoft WAVE, 16-bit PCM, the sample rate we specified in the preset.
- *  We assume 44-byte header here; a more defensive implementation would
- *  parse the chunk table, but every expo-audio recording uses the canonical
- *  header layout. */
+/** WAV header info parsed from a recording. */
+export type WavInfo = {
+  sampleRate: number;
+  numChannels: number;
+  bitsPerSample: number;
+  audioFormat: number;     // 1 = PCM
+  dataOffset: number;      // byte offset of the PCM data within the file
+  dataSize: number;        // byte length of the PCM data
+  totalBytes: number;      // total file size
+};
+
+/** Parse the RIFF/WAVE chunk table to locate the `data` chunk. expo-audio
+ *  sometimes writes a non-canonical header (extra LIST/INFO chunks, FACT
+ *  chunks, padding) so we can't assume the data chunk starts at offset 44.
+ *  Walks chunks until it finds 'data' and reads fmt fields along the way. */
+export function parseWavHeader(bytes: Uint8Array): WavInfo | null {
+  if (bytes.length < 12) return null;
+  // Must start with "RIFF" and "WAVE"
+  if (bytes[0] !== 0x52 || bytes[1] !== 0x49 || bytes[2] !== 0x46 || bytes[3] !== 0x46) return null;
+  if (bytes[8] !== 0x57 || bytes[9] !== 0x41 || bytes[10] !== 0x56 || bytes[11] !== 0x45) return null;
+
+  let sampleRate = 0, numChannels = 0, bitsPerSample = 0, audioFormat = 0;
+  let dataOffset = -1, dataSize = 0;
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const id = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+    const size =
+      bytes[offset + 4] |
+      (bytes[offset + 5] << 8) |
+      (bytes[offset + 6] << 16) |
+      (bytes[offset + 7] << 24);
+    const body = offset + 8;
+    if (id === 'fmt ' && size >= 16) {
+      audioFormat  =  bytes[body]       | (bytes[body + 1] << 8);
+      numChannels  =  bytes[body + 2]   | (bytes[body + 3] << 8);
+      sampleRate   =  bytes[body + 4]   | (bytes[body + 5] << 8) | (bytes[body + 6] << 16) | (bytes[body + 7] << 24);
+      bitsPerSample = bytes[body + 14]  | (bytes[body + 15] << 8);
+    } else if (id === 'data') {
+      dataOffset = body;
+      dataSize = size;
+      break;
+    }
+    // Chunks are word-aligned — round odd sizes up.
+    const pad = size % 2 === 0 ? 0 : 1;
+    offset = body + size + pad;
+  }
+  if (dataOffset < 0) return null;
+  return { sampleRate, numChannels, bitsPerSample, audioFormat, dataOffset, dataSize, totalBytes: bytes.length };
+}
+
+/** Strip the RIFF/WAVE header and return the raw PCM16 payload as base64.
+ *  Uses chunk-table parsing (not a fixed 44-byte strip) because expo-audio
+ *  can emit non-canonical headers on some device/OS combos.
+ *  Logs the parsed header metadata so the Metro console shows sample rate,
+ *  channel count, data offset, and PCM size — critical when diagnosing
+ *  format mismatches against OpenAI Realtime's 24kHz/mono/pcm16 requirement. */
 export function stripWavHeaderToPcm16Base64(wavBase64: string): string {
   const bytes = base64ToBytes(wavBase64);
-  if (bytes.length <= 44) return '';
-  return bytesToBase64(bytes.subarray(44));
+  const info = parseWavHeader(bytes);
+  if (!info) {
+    console.warn('[realtime] WAV header parse failed — falling back to offset 44');
+    if (bytes.length <= 44) return '';
+    return bytesToBase64(bytes.subarray(44));
+  }
+  console.log(
+    '[realtime] WAV header:',
+    'sampleRate=' + info.sampleRate,
+    'channels=' + info.numChannels,
+    'bitsPerSample=' + info.bitsPerSample,
+    'audioFormat=' + info.audioFormat + (info.audioFormat === 1 ? ' (PCM ✓)' : ' (NOT PCM ✗)'),
+    'dataOffset=' + info.dataOffset,
+    'dataSize=' + info.dataSize,
+    'totalBytes=' + info.totalBytes,
+    'headerBytes=' + (info.totalBytes - info.dataSize),
+  );
+  if (info.sampleRate !== 24000) {
+    console.warn('[realtime] ⚠ sampleRate is ' + info.sampleRate + ' — OpenAI Realtime expects 24000Hz. Audio will be garbled or rejected.');
+  }
+  if (info.numChannels !== 1) {
+    console.warn('[realtime] ⚠ channels=' + info.numChannels + ' — OpenAI expects mono');
+  }
+  if (info.bitsPerSample !== 16) {
+    console.warn('[realtime] ⚠ bitsPerSample=' + info.bitsPerSample + ' — OpenAI expects 16');
+  }
+  const end = Math.min(info.dataOffset + info.dataSize, bytes.length);
+  const pcm = bytes.subarray(info.dataOffset, end);
+  return bytesToBase64(pcm);
 }
 
 /** Wrap raw PCM16 bytes in a canonical RIFF/WAVE header so expo-audio's

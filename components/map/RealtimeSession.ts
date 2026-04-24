@@ -186,7 +186,19 @@ export class RealtimeSession {
       }
       const pcmB64 = stripWavHeaderToPcm16Base64(b64);
       if (!pcmB64) { console.warn('[realtime] empty PCM after header strip'); this.setState('error'); return; }
-      console.log('[realtime] uploading audio chunk — pcm bytes ≈', Math.round((pcmB64.length * 3) / 4));
+      const pcmByteCount = Math.round((pcmB64.length * 3) / 4);
+      // PCM16 mono @ 24kHz = 48000 bytes/second. Realtime requires >=100ms
+      // (4800 bytes) to accept a commit — any less and OpenAI rejects with
+      // input_audio_buffer_commit_empty and closes.
+      console.log(
+        '[realtime] uploading audio chunk —',
+        'pcm b64 chars=' + pcmB64.length,
+        'pcm bytes≈' + pcmByteCount,
+        'duration≈' + (pcmByteCount / 48000).toFixed(2) + 's',
+      );
+      if (pcmByteCount < 4800) {
+        console.warn('[realtime] ⚠ audio is shorter than 100ms — OpenAI may reject commit');
+      }
       this.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcmB64 }));
       this.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       this.ws.send(JSON.stringify({ type: 'response.create' }));
