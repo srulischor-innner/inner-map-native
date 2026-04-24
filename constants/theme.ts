@@ -35,15 +35,30 @@ export const colors = {
   shadow: 'rgba(0,0,0,0.4)',
 } as const;
 
+// Font families — loaded at app boot via useFonts() in the root layout
+// (app/_layout.tsx). Values are the exact key strings expo-font registers
+// for each Google Font package, so `fontFamily: fonts.serif` lines up with
+// what's available to the render layer after fonts finish loading.
+//
+// Serif  → Cormorant Garamond (display / greetings / logo)
+// Sans   → DM Sans (body / tabs / UI chrome)
 export const fonts = {
-  regular: '400' as const,
-  medium: '500' as const,
+  // Weight constants (still useful for components that don't opt into the
+  // custom families).
+  regular:  '400' as const,
+  medium:   '500' as const,
   semibold: '600' as const,
-  bold: '700' as const,
-  // System sans stack — Expo picks up SF Pro on iOS and Roboto on Android.
-  // Replace with custom fonts in a later pass via expo-font if we want a signature type.
-  sans: undefined, // default system font
-  serif: undefined, // default serif (Cormorant would require a font file)
+  bold:     '700' as const,
+
+  // Cormorant Garamond
+  serif:        'CormorantGaramond_400Regular',
+  serifItalic:  'CormorantGaramond_400Regular_Italic',
+  serifBold:    'CormorantGaramond_600SemiBold',
+
+  // DM Sans
+  sans:       'DMSans_400Regular',
+  sansMedium: 'DMSans_500Medium',
+  sansBold:   'DMSans_600SemiBold',
 };
 
 export const spacing = {

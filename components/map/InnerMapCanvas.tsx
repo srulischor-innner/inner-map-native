@@ -39,7 +39,7 @@ import {
   Easing,
   useDerivedValue,
 } from 'react-native-reanimated';
-import { colors } from '../../constants/theme';
+import { colors, fonts } from '../../constants/theme';
 import type { MapGeometry, Node as GeomNode, Diamond as GeomDiamond } from '../../utils/mapLayout';
 
 export type NodeKey = 'wound' | 'fixer' | 'skeptic' | 'self' | 'self-like' | 'manager' | 'firefighter';
@@ -568,15 +568,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   labelText: {
-    // Bumped from 9 → 11 and font weight to '800' (extrabold on iOS). Shadow
-    // is doubled so the letters stay legible when they cross the ring stroke.
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.5,
+    // Serif (Cormorant Garamond SemiBold) — adds elegance to the node
+    // labels so the map reads as considered typography rather than UI chrome.
+    // Shadow keeps the letters legible where they cross the ring stroke.
+    fontFamily: fonts.serifBold,
+    fontSize: 12,
+    letterSpacing: 1.2,
     textAlign: 'center',
     textShadowColor: 'rgba(0,0,0,0.85)',
     textShadowRadius: 5,
     textShadowOffset: { width: 0, height: 1 },
   },
-  labelTextSmall: { fontSize: 9.5, letterSpacing: 1.0 },
+  labelTextSmall: { fontSize: 10.5, letterSpacing: 0.8 },
 });

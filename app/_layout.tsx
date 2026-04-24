@@ -18,6 +18,17 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Notifications from 'expo-notifications';
+import { useFonts } from 'expo-font';
+import {
+  CormorantGaramond_400Regular,
+  CormorantGaramond_400Regular_Italic,
+  CormorantGaramond_600SemiBold,
+} from '@expo-google-fonts/cormorant-garamond';
+import {
+  DMSans_400Regular,
+  DMSans_500Medium,
+  DMSans_600SemiBold,
+} from '@expo-google-fonts/dm-sans';
 
 import { colors } from '../constants/theme';
 import { getOnboardingState, OnboardingState } from '../services/onboarding';
@@ -52,6 +63,24 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T, tag: string): Pr
 export default function RootLayout() {
   const router = useRouter();
   const responseSubRef = useRef<Notifications.Subscription | null>(null);
+
+  // Load the custom font pairing (Cormorant Garamond for display, DM Sans
+  // for body). We intentionally don't BLOCK the Stack on font load —
+  // components fall back to system fonts during the brief load window and
+  // swap in the custom faces once `fontsLoaded` flips true. This keeps
+  // cold-start fast and avoids any chance of a font-load hang stranding
+  // the user on a white screen.
+  const [fontsLoaded] = useFonts({
+    CormorantGaramond_400Regular,
+    CormorantGaramond_400Regular_Italic,
+    CormorantGaramond_600SemiBold,
+    DMSans_400Regular,
+    DMSans_500Medium,
+    DMSans_600SemiBold,
+  });
+  useEffect(() => {
+    if (fontsLoaded) console.log('[boot] custom fonts loaded ✓');
+  }, [fontsLoaded]);
 
   useEffect(() => {
     console.log('[boot] RootLayout mount — starting boot sequence');

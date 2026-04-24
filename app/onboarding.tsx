@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
-import { colors, radii, spacing } from '../constants/theme';
+import { colors, fonts, radii, spacing } from '../constants/theme';
 import {
   markIntroSeen, markTermsAccepted, markIntakeComplete,
 } from '../services/onboarding';
@@ -426,15 +426,31 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
   },
-  welcomeTitle: { color: colors.cream, fontSize: 28, fontWeight: '500', textAlign: 'center', marginBottom: spacing.md },
-  welcomeBody: { color: colors.creamDim, fontSize: 15, lineHeight: 24, textAlign: 'center', maxWidth: 400 },
+  welcomeTitle: {
+    color: colors.cream, fontFamily: fonts.serifBold,
+    fontSize: 36, letterSpacing: 0.5,
+    textAlign: 'center', marginBottom: spacing.md,
+  },
+  welcomeBody: {
+    color: colors.creamDim, fontFamily: fonts.sans,
+    fontSize: 15, lineHeight: 24, textAlign: 'center', maxWidth: 400,
+  },
   welcomeFoot: { paddingVertical: spacing.sm, borderTopColor: colors.border, borderTopWidth: 1 },
 
   // terms
   termsRoot: { padding: spacing.xl, paddingBottom: spacing.xxl },
-  termsTitle: { color: colors.cream, fontSize: 26, fontWeight: '500', marginBottom: spacing.md },
-  termsLead: { color: colors.creamDim, fontSize: 15, lineHeight: 22, marginBottom: spacing.lg },
-  termsHeading: { color: colors.amber, fontSize: 11, fontWeight: '700', letterSpacing: 1.6, marginBottom: spacing.sm },
+  termsTitle: {
+    color: colors.cream, fontFamily: fonts.serifBold,
+    fontSize: 30, marginBottom: spacing.md,
+  },
+  termsLead: {
+    color: colors.creamDim, fontFamily: fonts.sans,
+    fontSize: 15, lineHeight: 22, marginBottom: spacing.lg,
+  },
+  termsHeading: {
+    color: colors.amber, fontFamily: fonts.sansBold,
+    fontSize: 11, letterSpacing: 2, marginBottom: spacing.sm,
+  },
   termsBullet: { flexDirection: 'row', gap: 10, marginBottom: 8 },
   termsDot: { color: colors.amber, fontSize: 14 },
   termsBulletText: { flex: 1, color: colors.cream, fontSize: 14, lineHeight: 22 },
@@ -455,10 +471,19 @@ const styles = StyleSheet.create({
   stepDotActive: { backgroundColor: colors.amber, transform: [{ scale: 1.2 }] },
   stepDotDone: { backgroundColor: 'rgba(230,180,122,0.5)' },
   stepWrap: { padding: spacing.xl, paddingBottom: spacing.xxl },
-  stepTitle: { color: colors.cream, fontSize: 24, fontWeight: '500', marginBottom: 8 },
-  stepSubtitle: { color: colors.creamDim, fontSize: 14, fontStyle: 'italic', marginBottom: spacing.lg },
+  stepTitle: {
+    color: colors.cream, fontFamily: fonts.serifBold,
+    fontSize: 28, marginBottom: 8,
+  },
+  stepSubtitle: {
+    color: colors.creamDim, fontFamily: fonts.serifItalic,
+    fontSize: 15, marginBottom: spacing.lg,
+  },
   field: { marginBottom: spacing.lg },
-  fieldLabel: { color: colors.amber, fontSize: 10, fontWeight: '700', letterSpacing: 1.4, marginBottom: spacing.sm },
+  fieldLabel: {
+    color: colors.amber, fontFamily: fonts.sansBold,
+    fontSize: 11, letterSpacing: 2, marginBottom: spacing.sm,
+  },
   input: {
     color: colors.cream, fontSize: 16, paddingHorizontal: 14, paddingVertical: 12,
     backgroundColor: colors.backgroundCard, borderRadius: radii.md,

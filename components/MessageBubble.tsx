@@ -15,7 +15,7 @@ import {
   createAudioPlayer, setAudioModeAsync,
 } from 'expo-audio';
 
-import { colors, radii, spacing } from '../constants/theme';
+import { colors, fonts, radii, spacing } from '../constants/theme';
 import { api } from '../services/api';
 import { PartBadge } from './PartBadge';
 
@@ -198,7 +198,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderBottomRightRadius: 2,
   },
-  text: { color: colors.cream, fontSize: 15, lineHeight: 22 },
+  text: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    lineHeight: 22,
+  },
   caret: { color: colors.amber, fontSize: 14 },
   speakerBtn: {
     position: 'absolute',

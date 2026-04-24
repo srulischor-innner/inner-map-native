@@ -16,7 +16,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
-import { colors, radii, spacing } from '../../constants/theme';
+import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { journal, JournalEntry, JournalKind } from '../../services/journal';
 import { getUserId } from '../../services/user';
 import { api } from '../../services/api';
@@ -330,17 +330,18 @@ const styles = StyleSheet.create({
 
   heading: {
     color: colors.cream,
-    // Serif fallback — a proper google-font load lands in a follow-up; system
-    // serif already gives the heading the warmer feel the web has.
-    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
-    fontSize: 40,
-    fontWeight: '400',
+    fontFamily: fonts.serifBold,
+    fontSize: 42,
     textAlign: 'center',
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
   },
   subheading: {
-    color: colors.creamDim, fontSize: 14, fontStyle: 'italic',
-    textAlign: 'center', marginTop: 4, marginBottom: spacing.xl,
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 15,
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: spacing.xl,
   },
 
   card: {
@@ -352,19 +353,30 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   cardLabel: {
-    color: colors.amber, fontSize: 10, fontWeight: '700',
-    letterSpacing: 1.6, marginBottom: spacing.sm,
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 2,
+    marginBottom: spacing.sm,
   },
   cardTitle: {
     color: colors.cream,
-    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    fontFamily: fonts.serif,
     fontSize: 22, fontWeight: '500', marginBottom: 8, lineHeight: 28,
   },
-  cardBody: { color: colors.creamDim, fontSize: 14, lineHeight: 21 },
+  cardBody: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    lineHeight: 22,
+  },
 
   sectionLabel: {
-    color: colors.amber, fontSize: 10, fontWeight: '700',
-    letterSpacing: 1.8, marginBottom: spacing.sm,
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 2,
+    marginBottom: spacing.sm,
   },
   searchRow: {
     flexDirection: 'row', alignItems: 'center',
@@ -448,7 +460,7 @@ const styles = StyleSheet.create({
   },
   promptText: {
     color: colors.cream,
-    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    fontFamily: fonts.serif,
     fontSize: 18, fontStyle: 'italic', lineHeight: 26,
   },
 

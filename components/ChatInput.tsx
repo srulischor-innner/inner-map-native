@@ -24,7 +24,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
-import { colors, radii, spacing } from '../constants/theme';
+import { colors, fonts, radii, spacing } from '../constants/theme';
 import { api } from '../services/api';
 
 export function ChatInput({
@@ -206,6 +206,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     color: colors.cream,
+    fontFamily: fonts.sans,
     fontSize: 16,
     lineHeight: 22,
     // Taller, more inviting input surface. No maxHeight cap for short

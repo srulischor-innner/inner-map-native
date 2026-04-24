@@ -3,7 +3,7 @@
 
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
-import { colors, spacing } from '../../constants/theme';
+import { colors, fonts, spacing } from '../../constants/theme';
 import { GuideNodeVisual } from './GuideNodeVisual';
 import type { GuideSlide as SlideData } from '../../utils/guideContent';
 
@@ -47,15 +47,17 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.amber,
-    fontSize: 26,
-    fontWeight: '500',
-    letterSpacing: 0.3,
+    fontFamily: fonts.serifBold,
+    fontSize: 36,
+    letterSpacing: 0.5,
+    lineHeight: 42,
     textAlign: 'center',
     marginBottom: spacing.md,
   },
   body: { width: '100%', maxWidth: 560 },
   para: {
     color: colors.cream,
+    fontFamily: fonts.sans,
     fontSize: 15,
     lineHeight: 24,
     marginBottom: spacing.sm,

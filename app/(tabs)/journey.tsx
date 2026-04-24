@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ScrollView, View, Text, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, spacing } from '../../constants/theme';
+import { colors, fonts, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { getUserId } from '../../services/user';
 import { EnergiesBar, Energy } from '../../components/journey/EnergiesBar';
@@ -130,23 +130,27 @@ const styles = StyleSheet.create({
 
   // Top — no metric cards, just a warm two-line intro
   intro: { alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.xl },
-  introTitle: { color: colors.cream, fontSize: 26, fontWeight: '500', letterSpacing: 0.3 },
+  introTitle: {
+    color: colors.cream,
+    fontFamily: fonts.serifBold,
+    fontSize: 30,
+    letterSpacing: 0.4,
+  },
   introSub: {
     color: colors.creamDim,
-    fontSize: 13,
-    fontStyle: 'italic',
+    fontFamily: fonts.serifItalic,
+    fontSize: 14,
     marginTop: 4,
     letterSpacing: 0.2,
   },
 
-  // Section — bigger uppercase amber header + subtle divider line + generous
-  // bottom margin so nothing feels cramped.
+  // Section — amber uppercase header in DM Sans SemiBold, subtle divider.
   section: { marginBottom: spacing.xxl },
   sectionTitle: {
     color: colors.amber,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 2.2,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 2,
     marginBottom: 10,
   },
   sectionDivider: {

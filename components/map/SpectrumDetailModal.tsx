@@ -15,7 +15,7 @@ import {
   Modal, View, Text, Pressable, ScrollView, StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radii, spacing } from '../../constants/theme';
+import { colors, fonts, radii, spacing } from '../../constants/theme';
 
 export type SpectrumKey = 'outsideIn' | 'fragmented';
 
@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: spacing.lg, paddingBottom: spacing.sm,
   },
-  title: { color: colors.amber, fontSize: 20, fontWeight: '500', letterSpacing: 0.3 },
+  title: { color: colors.amber, fontFamily: fonts.serifBold, fontSize: 24, letterSpacing: 0.3 },
   close: { padding: 6 },
   body: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl },
 
@@ -257,21 +257,25 @@ const styles = StyleSheet.create({
   },
 
   sectionLabel: {
-    color: colors.amber, fontSize: 10, fontWeight: '700',
-    letterSpacing: 1.6, marginTop: spacing.lg, marginBottom: spacing.sm,
+    color: colors.amber, fontFamily: fonts.sansBold,
+    fontSize: 11, letterSpacing: 2,
+    marginTop: spacing.lg, marginBottom: spacing.sm,
   },
   paragraph: {
-    color: colors.cream, fontSize: 14, lineHeight: 22, marginBottom: spacing.sm,
+    color: colors.cream, fontFamily: fonts.sans,
+    fontSize: 15, lineHeight: 24, marginBottom: spacing.sm,
   },
   empty: {
-    color: colors.creamFaint, fontSize: 13, lineHeight: 20,
-    fontStyle: 'italic', paddingVertical: spacing.sm,
+    color: colors.creamFaint, fontFamily: fonts.serifItalic,
+    fontSize: 14, lineHeight: 22, paddingVertical: spacing.sm,
   },
   keywordHeading: {
-    fontSize: 11, fontWeight: '700', letterSpacing: 1.2,
+    fontFamily: fonts.sansBold,
+    fontSize: 11, letterSpacing: 1.5,
     textTransform: 'uppercase', marginBottom: 6,
   },
   keywordLine: {
+    fontFamily: fonts.sans,
     fontSize: 14, lineHeight: 22,
     paddingLeft: 4,
   },

@@ -27,7 +27,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radii, spacing } from '../../constants/theme';
+import { colors, fonts, radii, spacing } from '../../constants/theme';
 import type { NodeKey } from './InnerMapCanvas';
 
 type Props = {
@@ -305,27 +305,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.sm,
   },
-  title: { fontSize: 22, fontWeight: '500', letterSpacing: 0.3 },
+  title: { fontFamily: fonts.serifBold, fontSize: 26, letterSpacing: 0.3 },
   close: { padding: 6 },
   body: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl },
 
-  subtitle: { fontSize: 11, fontWeight: '700', letterSpacing: 2, marginBottom: spacing.sm, opacity: 0.9 },
-  description: { color: colors.creamDim, fontSize: 14, lineHeight: 22, fontStyle: 'italic' },
+  subtitle: {
+    fontFamily: fonts.sansBold, fontSize: 11,
+    letterSpacing: 2, marginBottom: spacing.sm, opacity: 0.9,
+  },
+  description: {
+    color: colors.creamDim, fontFamily: fonts.serifItalic,
+    fontSize: 15, lineHeight: 24,
+  },
 
   sections: { marginTop: spacing.lg },
   section: { marginBottom: spacing.md },
   sectionLabel: {
-    color: colors.amber, fontSize: 10, fontWeight: '700',
-    letterSpacing: 1.6, marginBottom: 6,
+    color: colors.amber, fontFamily: fonts.sansBold,
+    fontSize: 11, letterSpacing: 2, marginBottom: 6,
   },
-  sectionValue: { color: colors.cream, fontSize: 14, lineHeight: 21 },
-  sectionEmpty: { color: colors.creamFaint, fontSize: 13, fontStyle: 'italic', opacity: 0.7 },
+  sectionValue: { color: colors.cream, fontFamily: fonts.sans, fontSize: 14, lineHeight: 22 },
+  sectionEmpty: { color: colors.creamFaint, fontFamily: fonts.serifItalic, fontSize: 13, opacity: 0.7 },
 
   selfModeExplain: {
     color: colors.creamDim,
-    fontSize: 14,
-    lineHeight: 22,
-    fontStyle: 'italic',
+    fontFamily: fonts.serifItalic,
+    fontSize: 15,
+    lineHeight: 24,
     marginTop: spacing.lg,
     marginBottom: spacing.sm,
     textAlign: 'center',

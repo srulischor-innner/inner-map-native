@@ -16,7 +16,7 @@ import { Tabs, usePathname, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { colors } from '../../constants/theme';
+import { colors, fonts } from '../../constants/theme';
 import { HamburgerMenu } from '../../components/HamburgerMenu';
 import { subscribeMapPulse } from '../../utils/mapPulse';
 
@@ -159,11 +159,11 @@ const styles = StyleSheet.create({
   tab: { flex: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
   label: {
     color: colors.creamFaint,
+    fontFamily: fonts.sansBold,
     fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
   },
-  labelActive: { color: colors.amber, fontWeight: '700' },
+  labelActive: { color: colors.amber, fontFamily: fonts.sansBold },
   // Chunkier, glowier active underline per the latest spec. 2px tall with a
   // strong amber shadow so it reads as "lit" even in daylight.
   underline: {

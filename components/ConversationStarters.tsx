@@ -9,7 +9,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { colors, radii, spacing } from '../constants/theme';
+import { colors, fonts, radii, spacing } from '../constants/theme';
 
 const FALLBACK_STARTERS: string[] = [
   "Something's been on my mind lately",
@@ -63,6 +63,7 @@ const styles = StyleSheet.create({
   },
   chipText: {
     color: colors.cream,
+    fontFamily: fonts.sans,
     fontSize: 14,
     lineHeight: 20,
   },
