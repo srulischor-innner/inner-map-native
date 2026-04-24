@@ -154,17 +154,43 @@ export default function ChatScreen() {
     scrollToBottom();
   }
 
+  /** Append a user voice-note message: shows a playable bubble AND feeds
+   *  the transcript into the AI chat flow. If the transcript is empty we
+   *  still show the bubble but skip the AI turn — the user can type a
+   *  follow-up next. */
+  function handleSendVoice({ uri, durationSec, transcript }: { uri: string; durationSec: number; transcript: string }) {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: uuidv4(),
+        role: 'user',
+        text: transcript,
+        voice: { uri, durationSec },
+      },
+    ]);
+    scrollToBottom();
+    if (transcript.trim()) {
+      // Push to history (AI needs the text), then run the normal send
+      // pipeline — but skip addUserMessage inside handleSend since we
+      // already added the bubble above.
+      historyRef.current.push({ role: 'user', content: transcript });
+      runAssistantTurn();
+    }
+  }
+
   function scrollToBottom() {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
   }
 
   // ===== SEND =====
-  const handleSend = useCallback(
-    async (text: string) => {
-      if (sending || !text.trim()) return;
+  // runAssistantTurn handles the streaming AI reply ONLY — the caller is
+  // responsible for having already added the user's bubble and pushed their
+  // message to historyRef. This split lets the voice-note path share the
+  // exact same streaming + reveal logic without duplicating it.
+  const runAssistantTurn = useCallback(
+    async () => {
+      if (sending) return;
       setSending(true);
-      addUserMessage(text);
-      historyRef.current.push({ role: 'user', content: text });
       setTyping(true);
 
       // Create the streaming assistant bubble up front; its `text` grows as deltas arrive.
@@ -286,7 +312,20 @@ export default function ChatScreen() {
         setTyping(false);
       }
     },
-    [sending, mode, typing],
+    [sending, mode, typing, selfMode],
+  );
+
+  // Thin wrapper used by the text-send path: push bubble + history, then run
+  // the assistant turn. The voice-note path in handleSendVoice does the same
+  // two steps itself before calling runAssistantTurn directly.
+  const handleSend = useCallback(
+    async (text: string) => {
+      if (sending || !text.trim()) return;
+      addUserMessage(text);
+      historyRef.current.push({ role: 'user', content: text });
+      runAssistantTurn();
+    },
+    [sending, runAssistantTurn],
   );
 
   // ===== RENDER =====
@@ -339,7 +378,11 @@ export default function ChatScreen() {
             <Text style={styles.transitionText}>Your map has been updated.</Text>
           </Animated.View>
         ) : null}
-        <ChatInput disabled={sending} onSend={handleSend} />
+        <ChatInput
+          disabled={sending}
+          onSend={handleSend}
+          onSendVoice={handleSendVoice}
+        />
         {/* End session: only appears once a real back-and-forth has happened.
             On commit, flush the transcript to /api/summary + /api/sessions so
             the reflection + title land in the Journal tab immediately. */}

@@ -7,7 +7,7 @@
 //     No auto-play: TTS only happens when the user explicitly asks for it.
 //   - a blinking caret while the message is still streaming.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, Animated, Easing, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -26,6 +26,10 @@ export type ChatMsg = {
   detectedPart?: string | null;
   partLabel?: string | null;
   streaming?: boolean;
+  /** Present on user voice-note messages. The bubble renders a play button +
+   *  waveform + duration instead of the text string. The text field still
+   *  holds the transcript so the AI sees what was said. */
+  voice?: { uri: string; durationSec: number };
 };
 
 // One shared player slot — tapping the speaker on a new bubble stops playback
@@ -108,10 +112,14 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
   return (
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
       <View style={[styles.bubble, isUser ? styles.user : styles.assistant]}>
-        <Text style={styles.text}>
-          {msg.text}
-          {msg.streaming ? <StreamCaret /> : null}
-        </Text>
+        {msg.voice ? (
+          <VoiceNoteBubble uri={msg.voice.uri} durationSec={msg.voice.durationSec} />
+        ) : (
+          <Text style={styles.text}>
+            {msg.text}
+            {msg.streaming ? <StreamCaret /> : null}
+          </Text>
+        )}
         {!isUser && msg.detectedPart ? (
           <PartBadge part={msg.detectedPart} label={msg.partLabel} />
         ) : null}
@@ -138,6 +146,138 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
     </View>
   );
 }
+
+// ============================================================================
+// VoiceNoteBubble — play/pause + static waveform + duration. Uses expo-audio's
+// createAudioPlayer pointed at the local file URI expo-audio saved when the
+// user released the press-and-hold mic in ChatInput. Singleton pattern with
+// currentPlayer lets tapping another voice note auto-stop the previous.
+// ============================================================================
+function VoiceNoteBubble({ uri, durationSec }: { uri: string; durationSec: number }) {
+  const [playing, setPlaying] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+
+  // 20 fixed-height bars derived from the URI hash so the waveform is stable
+  // across renders but different per message. Not a real audio analysis —
+  // purely visual.
+  const bars = useMemo(() => {
+    let seed = 0;
+    for (let i = 0; i < uri.length; i++) seed = (seed * 31 + uri.charCodeAt(i)) >>> 0;
+    const out: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      const t = (seed & 0xffff) / 0xffff;
+      // Amplitude curve — taller toward the middle, shorter at edges.
+      const edgeFade = 1 - Math.abs((i - 9.5) / 10);
+      out.push(6 + Math.round(t * 16 * edgeFade));
+    }
+    return out;
+  }, [uri]);
+
+  async function toggle() {
+    Haptics.selectionAsync().catch(() => {});
+    if (playing) {
+      try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
+      playerRef.current = null;
+      setPlaying(false);
+      return;
+    }
+    // Stop anything else playing (TTS from another bubble, etc).
+    try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
+    setLoading(true);
+    try {
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false, playsInSilentMode: true,
+          interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
+        });
+      } catch {}
+      const player = createAudioPlayer({ uri });
+      playerRef.current = player;
+      setPlaying(true);
+      setLoading(false);
+      player.play();
+      const watch = async () => {
+        while (playerRef.current === player) {
+          try {
+            const s = player.currentStatus;
+            if (s?.didJustFinish || s?.isLoaded === false) break;
+          } catch { break; }
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        try { player.remove(); } catch {}
+        if (playerRef.current === player) { playerRef.current = null; setPlaying(false); }
+      };
+      watch();
+    } catch (e) {
+      console.warn('[voice-note] play failed:', (e as Error).message);
+      setLoading(false);
+      setPlaying(false);
+    }
+  }
+
+  return (
+    <Pressable onPress={toggle} style={voiceStyles.row} accessibilityLabel={playing ? 'Pause voice note' : 'Play voice note'}>
+      <View style={voiceStyles.playBtn}>
+        {loading ? (
+          <Ionicons name="sync" size={18} color={colors.amber} />
+        ) : (
+          <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.amber} />
+        )}
+      </View>
+      <View style={voiceStyles.waveform}>
+        {bars.map((h, i) => (
+          <View key={i} style={[voiceStyles.bar, { height: h }]} />
+        ))}
+      </View>
+      <Text style={voiceStyles.duration}>{formatDuration(durationSec)}</Text>
+    </Pressable>
+  );
+}
+
+function formatDuration(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r < 10 ? '0' : ''}${r}`;
+}
+
+const voiceStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 200,
+  },
+  playBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.amberDim,
+    backgroundColor: 'rgba(230,180,122,0.1)',
+  },
+  waveform: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    height: 24,
+  },
+  bar: {
+    width: 2.5,
+    backgroundColor: colors.amber,
+    borderRadius: 1.5,
+    opacity: 0.8,
+  },
+  duration: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 12,
+    letterSpacing: 0.3,
+    minWidth: 32,
+    textAlign: 'right',
+  },
+});
 
 // ---- helpers ----
 function bufferToBase64(buf: ArrayBuffer): string {

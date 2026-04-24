@@ -393,13 +393,14 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
 const styles = StyleSheet.create({
   wrap: {
-    // Bottom-right corner, well clear of the Fixer node (which sits at
-    // roughly x=width-74, y=height*0.78 with a 46px radius + blur halo).
-    // right:16 + bottom:70 keeps the 60px mic circle below and to the
-    // right of Fixer on every screen size. Status pill sits above.
+    // Bottom-right corner, pulled 20px lower than before so the "Tap to
+    // speak" pill (which sits above the mic via the flex stack) no longer
+    // climbs into the Fixer node's area on narrow screens. bottom:50
+    // keeps the mic clear of the YOUR PROGRESS strip (40px collapsed)
+    // with 10px of breathing room.
     position: 'absolute',
     right: 16,
-    bottom: 70,
+    bottom: 50,
     alignItems: 'flex-end',
     gap: 8,
   },

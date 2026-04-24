@@ -1,13 +1,23 @@
-// Bottom input bar — DICTATION MODEL (not a conversation loop).
+// Bottom input bar — WHATSAPP-STYLE VOICE NOTES.
 //
-// Flow:
-//   idle      → tap mic → recording (red pulse + "Recording…" label above bar)
-//   recording → tap mic → stop, transcribe, drop transcript INTO the text input
-//                         (not auto-sent — user reviews, edits, then taps send)
-//   typing    → send button shown instead of mic; tap to send
+// Modes:
+//   idle        → text field + mic button (press-and-hold to record)
+//   typing      → text field + send (arrow-up) button
+//   recording   → text field collapses into a "Recording… 0:03" pill with
+//                 a red pulsing dot and a "Slide to cancel ←" hint. User
+//                 must keep holding; release to send, drag left to cancel.
 //
-// No TTS auto-play. No listening-after-AI loop. Voice input behaves like
-// dictation on an iPhone keyboard: press, talk, release, get editable text.
+// On release (not cancelled):
+//   - recorder.stop() → file URI
+//   - Parent onSendVoice(uri, durationSec, transcript) is called. The
+//     parent (ChatScreen) handles pushing the voice-note bubble into the
+//     messages list AND sending the transcribed text through /api/chat.
+//   - We transcribe HERE so the parent gets both the file URI and the
+//     text in a single callback.
+//
+// On cancel (dragged left past threshold):
+//   - recorder.stop() is still called (to release the mic hardware) but
+//     the file is discarded and no callback fires.
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -20,41 +30,57 @@ import {
   ActivityIndicator,
   Alert,
   Easing,
+  GestureResponderEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
+import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { api } from '../services/api';
+
+// Swiping the finger this far left during a hold → cancel the recording.
+const CANCEL_SWIPE_PX = 80;
 
 export function ChatInput({
   disabled,
   onSend,
+  onSendVoice,
 }: {
   disabled?: boolean;
   onSend: (text: string) => void;
+  /** Called when user releases a voice note hold without cancelling. The
+   *  parent shows the voice-note bubble + runs the transcript through
+   *  /api/chat. If transcript is empty, the parent can show the bubble
+   *  alone without triggering a chat turn. */
+  onSendVoice?: (opts: { uri: string; durationSec: number; transcript: string }) => void;
 }) {
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
+  const [cancelArmed, setCancelArmed] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [seconds, setSeconds] = useState(0);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-  // Mic pulse animation — scale 1.0 ↔ 1.12 while recording. Stops cleanly when
-  // recording flips false.
+  const startXRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const didCancelRef = useRef(false);
+
+  // Red pulse while recording.
   const pulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (!recording) { pulse.setValue(1); return; }
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.12, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1,    duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1.2, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1.0, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       ]),
     );
     loop.start();
     return () => loop.stop();
   }, [recording, pulse]);
 
-  const canSend = text.trim().length > 0 && !disabled && !transcribing;
+  const canSend = text.trim().length > 0 && !disabled && !processing && !recording;
 
   async function handleSend() {
     const t = text.trim();
@@ -64,102 +90,165 @@ export function ChatInput({
     onSend(t);
   }
 
-  async function startRecord() {
-    console.log('[mic] tap → requesting permission');
+  // ------------------------------------------------------------------------
+  // Press-and-hold voice recording
+  // ------------------------------------------------------------------------
+  async function beginHold(e: GestureResponderEvent) {
+    console.log('[mic] press-and-hold begin');
+    startXRef.current = e.nativeEvent.pageX;
+    didCancelRef.current = false;
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
-      console.log('[mic] permission result:', perm.granted);
+      console.log('[mic] permission:', perm.granted);
       if (!perm.granted) {
-        Alert.alert('Microphone off', 'Grant mic access in Settings to use voice input.');
+        Alert.alert('Microphone off', 'Grant mic access in Settings to record voice notes.');
         return;
       }
+      try {
+        await setAudioModeAsync({
+          allowsRecording: true, playsInSilentMode: true,
+          interruptionMode: 'doNotMix', shouldPlayInBackground: false,
+        });
+      } catch {}
       await recorder.prepareToRecordAsync();
       recorder.record();
       setRecording(true);
+      setSeconds(0);
+      startTimeRef.current = Date.now();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    } catch (e) {
-      console.warn('[mic] start failed:', (e as Error).message);
+      // Tick the duration counter every 250ms — smooth but not every frame.
+      tickRef.current = setInterval(() => {
+        const s = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        setSeconds(s);
+      }, 250);
+    } catch (err) {
+      console.warn('[mic] beginHold failed:', (err as Error).message);
       setRecording(false);
     }
   }
 
-  /**
-   * Stop → transcribe → DROP INTO INPUT FIELD. Not auto-sent. The user reviews
-   * the transcription, edits if needed, then taps the Send button themselves.
-   * If the text area already has content, the transcript is appended with a
-   * leading space so nothing gets clobbered.
-   */
-  async function stopRecordAndTranscribe() {
+  function handleMove(e: GestureResponderEvent) {
+    if (!recording) return;
+    const startX = startXRef.current;
+    if (startX == null) return;
+    const dx = e.nativeEvent.pageX - startX;
+    // Fingers drifting left past threshold arms the cancel state — the
+    // UI turns red-tinted and a release at that point will not send.
+    const shouldArm = dx < -CANCEL_SWIPE_PX;
+    if (shouldArm !== cancelArmed) {
+      setCancelArmed(shouldArm);
+      if (shouldArm) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    }
+  }
+
+  async function endHold() {
+    if (!recording) return;
+    console.log('[mic] press-and-hold end, cancelArmed=', cancelArmed);
+    const wasCancel = cancelArmed;
+    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
+    setRecording(false);
+    setCancelArmed(false);
+    setSeconds(0);
     try {
       await recorder.stop();
       const uri = recorder.uri;
-      setRecording(false);
-      if (!uri) return;
-      setTranscribing(true);
+      if (wasCancel || !uri || heldSec < 0.3) {
+        // Canceled via left-swipe OR too short to count as a real message.
+        didCancelRef.current = true;
+        Haptics.selectionAsync().catch(() => {});
+        return;
+      }
+      // Not cancelled — transcribe, then hand both uri + transcript to parent.
+      setProcessing(true);
       const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
-      const transcript = await api.transcribe(uri, mime);
-      setTranscribing(false);
-      const t = (transcript || '').trim();
-      if (!t) return;
-      Haptics.selectionAsync().catch(() => {});
-      setText((prev) => (prev.trim() ? prev.replace(/\s+$/, '') + ' ' + t : t));
-    } catch (e) {
-      console.warn('[mic] stop/transcribe failed:', (e as Error).message);
-      setRecording(false);
-      setTranscribing(false);
+      let transcript = '';
+      try {
+        const t = await api.transcribe(uri, mime);
+        transcript = (t || '').trim();
+      } catch (e) {
+        console.warn('[mic] transcribe failed:', (e as Error).message);
+      }
+      setProcessing(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      onSendVoice?.({ uri, durationSec: heldSec, transcript });
+    } catch (err) {
+      console.warn('[mic] endHold stop/transcribe failed:', (err as Error).message);
+      setProcessing(false);
     }
   }
 
   return (
     <View style={styles.wrap}>
-      {/* "Recording…" label sits just above the input while the mic is active. */}
-      {recording ? (
-        <View style={styles.recordingRow}>
-          <View style={styles.recordingDot} />
-          <Text style={styles.recordingLabel}>Recording…</Text>
-        </View>
-      ) : null}
-
       <View style={styles.bar}>
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          editable={!disabled && !transcribing}
-          multiline
-          placeholder={recording ? 'Listening…' : 'Share what feels true…'}
-          placeholderTextColor={colors.creamFaint}
-          style={styles.input}
-          selectionColor={colors.amber}
-          onSubmitEditing={handleSend}
-        />
+        {recording ? (
+          // -----------------------------------------------------------------
+          // RECORDING PILL — replaces the text field while the hold is active.
+          // Red pulsing dot + "Recording" + ticking duration + swipe hint.
+          // When cancelArmed, the pill turns red to confirm a release now
+          // will discard.
+          // -----------------------------------------------------------------
+          <View style={[styles.recordingPill, cancelArmed && styles.recordingPillCancel]}>
+            <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
+            <Text style={styles.recordingLabel}>
+              {cancelArmed ? 'Release to cancel' : 'Recording…'}
+            </Text>
+            <Text style={styles.recordingTime}>{formatSecs(seconds)}</Text>
+            <View style={{ flex: 1 }} />
+            {!cancelArmed ? (
+              <Text style={styles.swipeHint}>Slide to cancel ←</Text>
+            ) : null}
+          </View>
+        ) : (
+          <TextInput
+            value={text}
+            onChangeText={setText}
+            editable={!disabled && !processing}
+            multiline
+            placeholder={'Share what feels true…'}
+            placeholderTextColor={colors.creamFaint}
+            style={styles.input}
+            selectionColor={colors.amber}
+            onSubmitEditing={handleSend}
+          />
+        )}
+
         {canSend ? (
           <Pressable onPress={handleSend} style={[styles.btn, styles.sendBtn]} accessibilityLabel="Send">
-            <Ionicons name="arrow-up" size={18} color={colors.background} />
+            <Ionicons name="arrow-up" size={20} color={colors.background} />
           </Pressable>
         ) : (
           <Pressable
-            onPress={recording ? stopRecordAndTranscribe : startRecord}
-            accessibilityLabel={recording ? 'Stop dictation' : 'Start voice dictation'}
-            disabled={transcribing}
+            onPressIn={beginHold}
+            onPressOut={endHold}
+            onTouchMove={handleMove}
+            disabled={processing}
+            // Hit area expanded well beyond the visible 48px so the button
+            // reliably catches press-and-hold even with imprecise finger
+            // placement — previously reports of "mic not tappable" came
+            // from the tap area being exactly the visible 40px circle.
+            hitSlop={14}
+            style={styles.micPressable}
+            accessibilityLabel={recording ? 'Release to send voice note' : 'Hold to record voice note'}
           >
-            <Animated.View
+            <View
               style={[
                 styles.btn,
                 styles.micBtn,
                 recording && styles.micRecording,
-                recording ? { transform: [{ scale: pulse }] } : null,
+                cancelArmed && styles.micCancel,
               ]}
             >
-              {transcribing ? (
+              {processing ? (
                 <ActivityIndicator size="small" color={colors.amber} />
               ) : (
                 <Ionicons
-                  name={recording ? 'stop' : 'mic'}
-                  size={18}
+                  name={recording ? (cancelArmed ? 'close' : 'mic') : 'mic'}
+                  size={20}
                   color={recording ? '#fff' : colors.amber}
                 />
               )}
-            </Animated.View>
+            </View>
           </Pressable>
         )}
       </View>
@@ -167,34 +256,17 @@ export function ChatInput({
   );
 }
 
+function formatSecs(s: number): string {
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r < 10 ? '0' : ''}${r}`;
+}
+
 const styles = StyleSheet.create({
   wrap: {
-    // A little presence so the input reads as "a place to write" rather than
-    // an afterthought — faint white-on-dark wash + a 0.5px top border to
-    // separate it from the scrolling messages without dominating.
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderTopWidth: 0.5,
     borderTopColor: 'rgba(255,255,255,0.1)',
-  },
-  recordingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingTop: 6,
-    paddingBottom: 2,
-  },
-  recordingDot: {
-    width: 8, height: 8, borderRadius: 4,
-    backgroundColor: '#d4726a',
-    shadowColor: '#d4726a', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
-  },
-  recordingLabel: {
-    color: '#d4726a',
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
   },
   bar: {
     flexDirection: 'row',
@@ -209,8 +281,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 16,
     lineHeight: 22,
-    // Taller, more inviting input surface. No maxHeight cap for short
-    // messages — the multiline field grows naturally as the user types.
     minHeight: 52,
     paddingVertical: 14,
     paddingHorizontal: 16,
@@ -219,14 +289,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(230,180,122,0.2)',
   },
+
+  // The mic Pressable itself — 48×48 minimum tap area, larger than the
+  // visible circle so presses near the edge still register.
+  micPressable: {
+    width: 52, height: 52,
+    alignItems: 'center', justifyContent: 'center',
+  },
   btn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendBtn: { backgroundColor: colors.amber },
+  sendBtn: { backgroundColor: colors.amber, width: 44, height: 44 },
   micBtn: {
     borderWidth: 1,
     borderColor: colors.amberDim,
@@ -239,5 +316,50 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.6,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 0 },
+  },
+  micCancel: {
+    backgroundColor: '#6a2a2a',
+    borderColor: '#6a2a2a',
+  },
+
+  // Recording pill — replaces the text field while holding.
+  recordingPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 52,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(212,114,106,0.12)',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(212,114,106,0.4)',
+  },
+  recordingPillCancel: {
+    backgroundColor: 'rgba(180,60,60,0.25)',
+    borderColor: 'rgba(255,100,100,0.7)',
+  },
+  recordingDot: {
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: '#d4726a',
+    shadowColor: '#d4726a', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
+  },
+  recordingLabel: {
+    color: '#d4726a',
+    fontFamily: fonts.sansBold,
+    fontSize: 13,
+    letterSpacing: 0.3,
+  },
+  recordingTime: {
+    color: colors.cream,
+    fontFamily: fonts.sansMedium,
+    fontSize: 13,
+    minWidth: 36,
+  },
+  swipeHint: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    fontStyle: 'italic',
   },
 });
