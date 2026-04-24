@@ -8,7 +8,7 @@
 //   - a blinking caret while the message is still streaming.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, Animated, Easing, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Animated, Easing, StyleSheet, PanResponder, LayoutChangeEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import {
@@ -115,6 +115,7 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
       <View style={[styles.bubble, isUser ? styles.user : styles.assistant]}>
         {msg.voice ? (
           <VoiceNoteBubble
+            id={msg.id}
             uri={msg.voice.uri}
             durationSec={msg.voice.durationSec}
             transcript={msg.voice.transcript}
@@ -159,18 +160,31 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
 // currentPlayer lets tapping another voice note auto-stop the previous.
 // ============================================================================
 function VoiceNoteBubble({
-  uri, durationSec, transcript,
-}: { uri: string; durationSec: number; transcript: string | null }) {
+  id, uri, durationSec, transcript,
+}: {
+  id: string;
+  uri: string;
+  durationSec: number;
+  transcript: string | null;
+}) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
-  // 0..20 — how many bars to paint as "already played". Updates during
-  // playback via the polling watch loop below.
-  const [playedBars, setPlayedBars] = useState(0);
+  // Live playback position in seconds — drives the progress coloring on the
+  // waveform AND the "0:03 / 0:08" counter. Updated every 100ms while the
+  // player is active.
+  const [currentTime, setCurrentTime] = useState(0);
   const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Measured width of the waveform view — used to map finger x → seek seconds
+  // for both tap-to-seek and drag-to-scrub.
+  const waveformWidthRef = useRef<number>(0);
+  // Subscribe to the shared playing-id slot so a second voice note (or the
+  // TTS speaker on an AI bubble) can kick us out of the play state without
+  // needing a prop drill.
+  const activePlayingId = usePlayingId();
 
   // 20 fixed-height bars derived from the URI hash so the waveform is stable
-  // across renders but different per message. Not a real audio analysis —
-  // purely visual.
+  // across renders but different per message.
   const bars = useMemo(() => {
     let seed = 0;
     for (let i = 0; i < uri.length; i++) seed = (seed * 31 + uri.charCodeAt(i)) >>> 0;
@@ -178,57 +192,93 @@ function VoiceNoteBubble({
     for (let i = 0; i < 20; i++) {
       seed = (seed * 1664525 + 1013904223) >>> 0;
       const t = (seed & 0xffff) / 0xffff;
-      // Amplitude curve — taller toward the middle, shorter at edges.
       const edgeFade = 1 - Math.abs((i - 9.5) / 10);
       out.push(6 + Math.round(t * 16 * edgeFade));
     }
     return out;
   }, [uri]);
 
+  // If another voice note / TTS claimed the slot → pause ours.
+  useEffect(() => {
+    if (playing && activePlayingId !== id) {
+      try { playerRef.current?.pause(); } catch {}
+      setPlaying(false);
+      stopPolling();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePlayingId]);
+
+  // Release the native player on unmount — prevents leaks if the session is
+  // reset while a bubble is cached in the Messages list.
+  useEffect(() => () => {
+    stopPolling();
+    try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
+    playerRef.current = null;
+    if (currentPlayerOwnerId === id) setPlayingId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }
+
+  function startPolling() {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(() => {
+      const p = playerRef.current;
+      if (!p) return;
+      try {
+        const s = p.currentStatus;
+        const t = typeof s?.currentTime === 'number' ? s.currentTime : 0;
+        setCurrentTime(t);
+        if (s?.didJustFinish) {
+          // Reached the end — reset UI so next tap plays from the start.
+          stopPolling();
+          try { p.seekTo(0); } catch {}
+          setCurrentTime(0);
+          setPlaying(false);
+          if (currentPlayerOwnerId === id) setPlayingId(null);
+        }
+      } catch {}
+    }, 100);
+  }
+
+  async function ensurePlayer() {
+    if (playerRef.current) return playerRef.current;
+    try {
+      await setAudioModeAsync({
+        allowsRecording: false, playsInSilentMode: true,
+        interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
+      });
+    } catch {}
+    const p = createAudioPlayer({ uri });
+    playerRef.current = p;
+    return p;
+  }
+
   async function toggle() {
     Haptics.selectionAsync().catch(() => {});
+    // PAUSE — keep the player alive so a later tap resumes from here.
     if (playing) {
-      try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
-      playerRef.current = null;
+      try { playerRef.current?.pause(); } catch {}
       setPlaying(false);
+      stopPolling();
       return;
     }
-    // Stop anything else playing (TTS from another bubble, etc).
-    try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
+    // PLAY (or resume). Claim the singleton slot FIRST so other bubbles pause.
     setLoading(true);
     try {
-      try {
-        await setAudioModeAsync({
-          allowsRecording: false, playsInSilentMode: true,
-          interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
-        });
-      } catch {}
-      const player = createAudioPlayer({ uri });
-      playerRef.current = player;
+      const p = await ensurePlayer();
+      // Stop any other bubble via the pub/sub slot.
+      if (currentPlayerOwnerId && currentPlayerOwnerId !== id) {
+        setPlayingId(id); // other owners will pause via their useEffect
+      } else {
+        setPlayingId(id);
+      }
+      p.play();
       setPlaying(true);
       setLoading(false);
-      player.play();
-      const watch = async () => {
-        while (playerRef.current === player) {
-          try {
-            const s = player.currentStatus;
-            // Map the current time into a 0..20 bar index so the waveform
-            // "fills up" left-to-right as the clip plays back.
-            const cur = typeof s?.currentTime === 'number' ? s.currentTime : 0;
-            const ratio = durationSec > 0 ? Math.min(1, cur / durationSec) : 0;
-            setPlayedBars(Math.floor(ratio * 20));
-            if (s?.didJustFinish || s?.isLoaded === false) break;
-          } catch { break; }
-          await new Promise((r) => setTimeout(r, 100));
-        }
-        try { player.remove(); } catch {}
-        if (playerRef.current === player) {
-          playerRef.current = null;
-          setPlaying(false);
-          setPlayedBars(0); // reset so a second tap starts from the left
-        }
-      };
-      watch();
+      startPolling();
     } catch (e) {
       console.warn('[voice-note] play failed:', (e as Error).message);
       setLoading(false);
@@ -236,21 +286,79 @@ function VoiceNoteBubble({
     }
   }
 
+  async function seekToRatio(ratio: number) {
+    const r = Math.max(0, Math.min(1, ratio));
+    const secs = durationSec * r;
+    const p = await ensurePlayer();
+    try { await p.seekTo(secs); } catch (e) {
+      console.warn('[voice-note] seek failed:', (e as Error).message);
+    }
+    setCurrentTime(secs);
+  }
+
+  function onWaveformLayout(e: LayoutChangeEvent) {
+    waveformWidthRef.current = e.nativeEvent.layout.width;
+  }
+
+  // Tap / drag scrubbing on the waveform. PanResponder captures the gesture
+  // (including initial tap) so both a single tap on a bar AND a finger drag
+  // across the waveform seek the audio. locationX is relative to the
+  // responder view — exactly what we want.
+  const panResponder = useMemo(
+    () => PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (evt) => {
+        const w = waveformWidthRef.current;
+        if (w > 0) seekToRatio(evt.nativeEvent.locationX / w);
+      },
+      onPanResponderMove: (evt) => {
+        const w = waveformWidthRef.current;
+        if (w > 0) {
+          const x = Math.max(0, Math.min(w, evt.nativeEvent.locationX));
+          seekToRatio(x / w);
+        }
+      },
+    }),
+    // uri + durationSec captured by seekToRatio's closure; re-creating on
+    // those changes keeps the handler consistent if the same bubble ever
+    // gets a different source.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [uri, durationSec],
+  );
+
+  const ratio = durationSec > 0 ? Math.min(1, currentTime / durationSec) : 0;
+  // Fractional bar position so the color-cutoff moves smoothly across the
+  // 20-bar waveform (e.g. 7.4 means bars 0-7 lit, bar 8 partially, 9-19 dim).
+  const playedBoundary = ratio * 20;
+
+  const counterText = playing
+    ? `${formatDuration(currentTime)} / ${formatDuration(durationSec)}`
+    : formatDuration(durationSec);
+
   return (
     <View>
-      <Pressable
-        onPress={toggle}
-        style={voiceStyles.row}
-        accessibilityLabel={playing ? 'Pause voice note' : 'Play voice note'}
-      >
-        <View style={voiceStyles.playBtn}>
+      <View style={voiceStyles.row}>
+        <Pressable
+          onPress={toggle}
+          style={voiceStyles.playBtn}
+          accessibilityLabel={playing ? 'Pause voice note' : 'Play voice note'}
+          hitSlop={6}
+        >
           {loading ? (
             <Ionicons name="sync" size={18} color={colors.amber} />
           ) : (
             <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.amber} />
           )}
-        </View>
-        <View style={voiceStyles.waveform}>
+        </Pressable>
+
+        {/* Waveform — tap to seek, drag to scrub. Wrapped in a View that
+            owns the PanResponder handlers + onLayout measurement. */}
+        <View
+          style={voiceStyles.waveform}
+          onLayout={onWaveformLayout}
+          {...panResponder.panHandlers}
+        >
           {bars.map((h, i) => (
             <View
               key={i}
@@ -258,20 +366,20 @@ function VoiceNoteBubble({
                 voiceStyles.bar,
                 {
                   height: h,
-                  // Played bars glow full amber; unplayed bars sit at 30%
-                  // opacity so the progress indicator is legible at a glance.
-                  backgroundColor: i <= playedBars ? '#E6B47A' : 'rgba(230,180,122,0.3)',
+                  // Bar at index i is "played" if its center falls below
+                  // the fractional boundary — gives a smooth progressing
+                  // dividing line as currentTime advances.
+                  backgroundColor: i + 0.5 <= playedBoundary ? '#E6B47A' : 'rgba(230,180,122,0.3)',
                 },
               ]}
             />
           ))}
         </View>
-        <Text style={voiceStyles.duration}>{formatDuration(durationSec)}</Text>
-      </Pressable>
 
-      {/* Transcript row below the hairline divider. While transcript is
-          null we show "Transcribing…" in italic — it swaps to the real
-          text the moment /api/transcribe resolves. */}
+        <Text style={voiceStyles.duration}>{counterText}</Text>
+      </View>
+
+      {/* Transcript row below the hairline divider. */}
       <View style={voiceStyles.transcriptWrap}>
         {transcript === null ? (
           <Text style={voiceStyles.transcriptPending}>Transcribing…</Text>
@@ -297,7 +405,7 @@ const voiceStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    minWidth: 200,
+    minWidth: 240,
   },
   playBtn: {
     width: 32, height: 32, borderRadius: 16,
@@ -322,7 +430,10 @@ const voiceStyles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 12,
     letterSpacing: 0.3,
-    minWidth: 32,
+    // Wider — "0:03 / 0:08" is ~10 glyphs; the idle state "0:08" fits fine
+    // in the same column so the play button doesn't jump horizontally when
+    // playback toggles.
+    minWidth: 70,
     textAlign: 'right',
   },
   transcriptWrap: {
