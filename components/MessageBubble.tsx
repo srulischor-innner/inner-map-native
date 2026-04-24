@@ -182,15 +182,20 @@ const styles = StyleSheet.create({
   },
   assistant: {
     backgroundColor: 'rgba(255,255,255,0.04)',
-    borderLeftWidth: 2,
-    borderLeftColor: colors.borderAmber,
+    // Full border all the way around, warm amber, radii.md corners with a
+    // tiny 2px top-left corner so the bubble still reads as "from the AI
+    // side" without the old heavy-handed left stripe.
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.25)',
+    borderRadius: 12,
     borderTopLeftRadius: 2,
     paddingBottom: 24, // room for the absolute speaker button
   },
   user: {
     backgroundColor: 'rgba(230,180,122,0.12)',
     borderWidth: 0.5,
-    borderColor: colors.borderAmber,
+    borderColor: 'rgba(230,180,122,0.35)',
+    borderRadius: 12,
     borderBottomRightRadius: 2,
   },
   text: { color: colors.cream, fontSize: 15, lineHeight: 22 },

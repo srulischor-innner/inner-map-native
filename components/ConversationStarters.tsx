@@ -1,11 +1,13 @@
 // Conversation starter chips shown below the opening greeting when there's
-// no user-turn yet. Starters are passed in from the caller — the server's
-// /api/returning-greeting now returns 3 contextual suggestions grounded in
-// the last session so the chips land on what's actually alive for the user.
-// Falls back to a generic bank if the server couldn't produce any.
+// no user-turn yet. Starters come from /api/returning-greeting (contextual
+// to last session) with a generic fallback for first-time users.
+//
+// Layout: vertical stack so every suggestion is visible at a glance —
+// horizontal scroll hid later options behind a gesture users didn't know
+// to make.
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, radii, spacing } from '../constants/theme';
 
@@ -25,36 +27,43 @@ export function ConversationStarters({
   const items = starters && starters.length > 0 ? starters : FALLBACK_STARTERS;
   return (
     <View style={styles.wrap}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-        {items.map((s) => (
-          <Pressable
-            key={s}
-            style={styles.chip}
-            onPress={() => {
-              Haptics.selectionAsync().catch(() => {});
-              onPick(s);
-            }}
-          >
-            <Text style={styles.chipText}>{s}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+      {items.map((s) => (
+        <Pressable
+          key={s}
+          style={styles.chip}
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            onPick(s);
+          }}
+        >
+          <Text style={styles.chipText}>{s}</Text>
+        </Pressable>
+      ))}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // No "Or try one of these" label — chips just sit naturally below the
-  // greeting.
-  wrap: { marginTop: spacing.sm, marginBottom: spacing.xs },
-  row: { paddingRight: spacing.md, gap: 8 },
+  wrap: {
+    flexDirection: 'column',
+    gap: 8,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+    paddingHorizontal: 0,
+  },
   chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: radii.pill,
+    // Full-width left-aligned chips stack cleanly below the greeting, so
+    // every suggestion is visible without a swipe gesture.
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.amberDim,
     backgroundColor: 'rgba(230,180,122,0.06)',
   },
-  chipText: { color: colors.cream, fontSize: 13 },
+  chipText: {
+    color: colors.cream,
+    fontSize: 14,
+    lineHeight: 20,
+  },
 });

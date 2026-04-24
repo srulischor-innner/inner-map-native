@@ -46,12 +46,9 @@ export function computeMapGeometry(width: number, height: number): MapGeometry {
   const fixer: Node     = { x: width - 74,    y: bottomY,          r: 46 };
   const skeptic: Node   = { x: 74,            y: bottomY,          r: 46 };
   const self: Node      = { x: cx,            y: height * 0.55,    r: 36 };
-  // Self-Like diamond. Previously at 0.86 which put it right where the
-  // bottom-center mic FAB lives (bottom:52 + ~88px of button+pill stack).
-  // Pulled up to 0.80 — moves the diamond ~35-45px up on a typical iPhone
-  // map canvas, leaving clear air between the diamond's top edge and the
-  // mic button's status pill so they never touch regardless of device size.
-  const selfLike: Diamond = { cx: cx,         cy: height * 0.80,   size: 22 };
+  // Self-Like diamond — restored to 0.86 now that the mic FAB is back in
+  // the bottom-right corner (away from the bottom-center axis).
+  const selfLike: Diamond = { cx: cx,         cy: height * 0.86,   size: 22 };
   const managers: Node   = { x: 62,           y: sideY,            r: 52 };
   const firefighters: Node = { x: width - 62, y: sideY,            r: 52 };
 

@@ -341,19 +341,25 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     state === 'error'      ? 'Something went wrong' :
     'Tap to speak';
 
+  // Only show the status label when the session is ACTIVE — idle state
+  // shouldn't carry a "Tap to speak" pill permanently covering the map.
+  const showStatus = state !== 'idle';
+
   return (
     <View pointerEvents="box-none" style={styles.wrap}>
-      <View style={styles.status}>
-        <Text
-          style={[
-            styles.statusText,
-            state === 'listening' && { color: '#d4726a', fontWeight: '700' },
-            state === 'retrying'  && { color: colors.amber, fontWeight: '700' },
-          ]}
-        >
-          {label}
-        </Text>
-      </View>
+      {showStatus ? (
+        <View style={styles.status}>
+          <Text
+            style={[
+              styles.statusText,
+              state === 'listening' && { color: '#d4726a', fontWeight: '700' },
+              state === 'retrying'  && { color: colors.amber, fontWeight: '700' },
+            ]}
+          >
+            {label}
+          </Text>
+        </View>
+      ) : null}
 
       <Pressable
         onPress={onPress}
@@ -384,17 +390,14 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
 const styles = StyleSheet.create({
   wrap: {
-    // Bottom-centered, just above the YOUR PROGRESS strip (40px tall
-    // collapsed). Centering avoids overlapping the right-side Fixer node
-    // (which sits at roughly 80% of the viewport width at the bottom-right
-    // of the triangle). bottom:52 puts the 60px mic circle neatly between
-    // the SELF-LIKE diamond above and the progress strip below with a bit
-    // of breathing room on every device size.
+    // Bottom-right corner, well clear of the YOUR PROGRESS strip (40px
+    // collapsed). The status pill sits ABOVE the mic (flex stacks
+    // bottom-up via the alignItems:flex-end + gap); it only renders when
+    // a session is active so it can't cover the SELF-LIKE label while idle.
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 52,
-    alignItems: 'center',
+    right: 20,
+    bottom: 100,
+    alignItems: 'flex-end',
     gap: 8,
   },
   status: {

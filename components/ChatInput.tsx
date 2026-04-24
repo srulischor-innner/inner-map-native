@@ -200,26 +200,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: spacing.md,
-    // Taller bar — vertical padding bumped from 8 → 14 so the input feels
-    // like a proper writing surface rather than a thin strip.
     paddingVertical: 14,
     gap: spacing.sm,
   },
   input: {
     flex: 1,
     color: colors.cream,
-    // Bumped from 15 → 16 for readability and to match the perceived weight
-    // of the expanded bar.
     fontSize: 16,
     lineHeight: 22,
-    minHeight: 44,
-    maxHeight: 140,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    backgroundColor: colors.backgroundCard,
-    borderRadius: radii.lg,
-    borderWidth: 0.5,
-    borderColor: colors.border,
+    // Taller, more inviting input surface. No maxHeight cap for short
+    // messages — the multiline field grows naturally as the user types.
+    minHeight: 52,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(230,180,122,0.2)',
   },
   btn: {
     width: 40,
