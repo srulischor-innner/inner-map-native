@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { colors, radii, spacing } from '../../constants/theme';
+import { colors, fonts, radii, spacing } from '../../constants/theme';
 
 type Props = {
   leftLabel: string;
@@ -27,6 +27,13 @@ export function SpectrumBar({ leftLabel, rightLabel, caption, value, leftColor, 
         <Text style={[styles.label, { color: lc }]}>{leftLabel}</Text>
         <Text style={[styles.label, { color: rc, textAlign: 'right' }]}>{rightLabel}</Text>
       </View>
+      {/* "not enough signal yet" now sits ABOVE the bar — previously we
+          overlaid it on top of the track which read as broken. The empty
+          track itself conveys the same information visually; the hint just
+          explains it in words. */}
+      {!hasData ? (
+        <Text style={styles.noDataHint}>not enough signal yet</Text>
+      ) : null}
       <View style={styles.track}>
         {/* Soft gradient feel via three stacked blocks */}
         <View style={[styles.trackSegment, { backgroundColor: lc + '30' }]} />
@@ -39,11 +46,7 @@ export function SpectrumBar({ leftLabel, rightLabel, caption, value, leftColor, 
               { left: `${v * 100}%`, backgroundColor: colors.cream, shadowColor: colors.cream },
             ]}
           />
-        ) : (
-          <View style={styles.markerDimOverlay}>
-            <Text style={styles.markerDimText}>not enough signal yet</Text>
-          </View>
-        )}
+        ) : null}
       </View>
       {caption ? <Text style={styles.caption}>{caption}</Text> : null}
     </View>
@@ -73,16 +76,13 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 0 },
   },
-  markerDimOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  markerDimText: {
-    color: colors.creamFaint,
-    fontSize: 10,
+  // Floats above the empty track — dim italic so it doesn't dominate.
+  noDataHint: {
+    fontFamily: fonts.sans,
+    fontSize: 11,
     fontStyle: 'italic',
-    letterSpacing: 0.5,
+    color: 'rgba(240,237,232,0.35)',
+    marginBottom: 6,
   },
   caption: { color: colors.creamDim, fontSize: 12, fontStyle: 'italic', marginTop: 8, lineHeight: 18 },
 });
