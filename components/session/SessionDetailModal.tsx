@@ -12,7 +12,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Modal, View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, radii, spacing } from '../../constants/theme';
@@ -29,6 +29,10 @@ type Props = {
 export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<any | null>(null);
+  // Safe-area inset for the header so the X + title clear the iPhone
+  // notch/Dynamic Island on every device. We keep edges=[] on the
+  // SafeAreaView so the content area doesn't double-pad.
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     let cancelled = false;
@@ -72,14 +76,19 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-        <View style={styles.topBar}>
+      <SafeAreaView style={styles.root} edges={['bottom']}>
+        <View style={[styles.topBar, { paddingTop: insets.top + 16 }]}>
           <View style={{ flex: 1 }}>
             {header.date ? <Text style={styles.date}>{header.date}</Text> : null}
             {header.title ? <Text style={styles.title} numberOfLines={2}>{header.title}</Text> : null}
           </View>
-          <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Close session">
-            <Ionicons name="close" size={24} color={colors.creamDim} />
+          <Pressable
+            onPress={onClose}
+            style={styles.closeBtn}
+            hitSlop={10}
+            accessibilityLabel="Close session"
+          >
+            <Ionicons name="close" size={26} color={colors.creamDim} />
           </Pressable>
         </View>
 
@@ -135,9 +144,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    // paddingTop applied inline so the bar clears the iPhone notch on
+    // every device. Bottom keeps a normal spacing.sm gap to the body.
+    paddingBottom: spacing.sm,
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
+  },
+  closeBtn: {
+    width: 44, height: 44,
+    alignItems: 'center', justifyContent: 'center',
   },
   date: { color: colors.amber, fontSize: 12, fontWeight: '600', letterSpacing: 0.3 },
   title: { color: colors.cream, fontSize: 17, fontWeight: '500', marginTop: 2 },

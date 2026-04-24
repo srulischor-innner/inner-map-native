@@ -14,6 +14,7 @@ import React from 'react';
 import {
   Modal, View, Text, Pressable, ScrollView, StyleSheet,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 
@@ -34,6 +35,7 @@ export function SpectrumDetailModal({
 }: Props) {
   if (!spectrum) return null;
   const copy = spectrum === 'outsideIn' ? OUTSIDE_IN : FRAGMENTED;
+  const insets = useSafeAreaInsets();
 
   // Pull indicator keywords out of the journey payload when the server has
   // them. Naming matches the web app's /api/journey shape:
@@ -57,7 +59,7 @@ export function SpectrumDetailModal({
       statusBarTranslucent
     >
       <Pressable style={styles.backdrop} onPress={onClose} />
-      <View style={styles.sheet}>
+      <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
         <View style={styles.handle} />
         <View style={styles.header}>
           <Text style={styles.title}>{copy.title}</Text>

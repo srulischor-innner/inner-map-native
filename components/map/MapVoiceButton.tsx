@@ -341,9 +341,12 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     state === 'error'      ? 'Something went wrong' :
     'Tap to speak';
 
-  // Only show the status label when the session is ACTIVE — idle state
-  // shouldn't carry a "Tap to speak" pill permanently covering the map.
-  const showStatus = state !== 'idle';
+  // Always show the status label. In idle state it's a small dim
+  // "Tap to speak" hint sitting directly above the mic; active states
+  // show the red "Recording…" or amber "Thinking…" variants. The pill is
+  // right-aligned over the mic so it never reaches the SELF-LIKE label
+  // on the central axis.
+  const showStatus = true;
 
   return (
     <View pointerEvents="box-none" style={styles.wrap}>
@@ -390,25 +393,29 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
 const styles = StyleSheet.create({
   wrap: {
-    // Bottom-right corner, well clear of the YOUR PROGRESS strip (40px
-    // collapsed). The status pill sits ABOVE the mic (flex stacks
-    // bottom-up via the alignItems:flex-end + gap); it only renders when
-    // a session is active so it can't cover the SELF-LIKE label while idle.
+    // Bottom-right corner, well clear of the Fixer node (which sits at
+    // roughly x=width-74, y=height*0.78 with a 46px radius + blur halo).
+    // right:16 + bottom:70 keeps the 60px mic circle below and to the
+    // right of Fixer on every screen size. Status pill sits above.
     position: 'absolute',
-    right: 20,
-    bottom: 100,
+    right: 16,
+    bottom: 70,
     alignItems: 'flex-end',
     gap: 8,
   },
   status: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: 'rgba(20,19,26,0.85)',
+    backgroundColor: 'rgba(20,19,26,0.75)',
     borderRadius: 100,
     borderColor: colors.amberDim,
     borderWidth: 0.5,
   },
-  statusText: { color: colors.cream, fontSize: 11, letterSpacing: 1 },
+  statusText: {
+    color: colors.creamDim,
+    fontSize: 11,
+    letterSpacing: 1,
+  },
   btn: {
     width: 60, height: 60, borderRadius: 30,
     backgroundColor: 'rgba(20,19,26,0.9)',

@@ -26,6 +26,7 @@ import {
   Pressable,
   StyleSheet,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import type { NodeKey } from './InnerMapCanvas';
@@ -104,6 +105,10 @@ export function PartFolderModal({
   if (!partKey) return null;
   const meta = META[partKey];
   const part = (parts || []).find((p) => p?.category === partKey) || null;
+  // Bottom inset for the home indicator area — padding the scroll body
+  // prevents the last section from landing underneath the gesture bar on
+  // iPhone X+ devices.
+  const insets = useSafeAreaInsets();
 
   return (
     <Modal
@@ -114,7 +119,7 @@ export function PartFolderModal({
       statusBarTranslucent
     >
       <Pressable style={styles.backdrop} onPress={onClose} />
-      <View style={styles.sheet}>
+      <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
         <View style={styles.handle} />
         <View style={styles.header}>
           <Text style={[styles.title, { color: meta.color }]}>{meta.title}</Text>

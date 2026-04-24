@@ -232,7 +232,7 @@ function WriteModal({
           {/* Header — paddingTop explicitly includes safe-area top inset so the
               X and Save buttons clear the iPhone notch/Dynamic Island on every
               device. Both tap targets are 44x44 for reliable touch. */}
-          <View style={[styles.modalHeader, { paddingTop: insets.top + 12 }]}>
+          <View style={[styles.modalHeader, { paddingTop: insets.top + 16 }]}>
             <Pressable
               onPress={onClose}
               style={styles.headerBtn}

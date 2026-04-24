@@ -52,17 +52,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
   },
   chip: {
-    // Full-width left-aligned chips stack cleanly below the greeting, so
-    // every suggestion is visible without a swipe gesture.
+    // Rounded pill shape — matches the web app's soft-bubble style rather
+    // than the boxy rectangle the previous pass produced.
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.amberDim,
-    backgroundColor: 'rgba(230,180,122,0.06)',
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.4)',
+    backgroundColor: 'rgba(230,180,122,0.08)',
+    alignSelf: 'flex-start',
   },
   chipText: {
-    color: colors.cream,
+    color: '#F0EDE8',
     fontFamily: fonts.sans,
     fontSize: 14,
     lineHeight: 20,
