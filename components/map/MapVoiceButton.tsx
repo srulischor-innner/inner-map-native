@@ -317,8 +317,11 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   /* =====================================================================
    * RENDER
    * ===================================================================== */
+  // While recording, show an upward arrow (send) rather than a stop square —
+  // a square reads as "end everything" and was causing users to hesitate
+  // before tapping to send.
   const iconName: any =
-    state === 'listening'  ? 'stop' :
+    state === 'listening'  ? 'arrow-up' :
     state === 'speaking'   ? 'volume-high' :
     state === 'connecting' ? 'wifi' :
     'mic';
