@@ -39,13 +39,16 @@ export function computeMapGeometry(width: number, height: number): MapGeometry {
   const bottomY = height * 0.78;
   const sideY  = height * 0.44;
 
-  const wound: Node     = { x: cx,            y: woundCy,          r: 45 };
-  const fixer: Node     = { x: width - 70,    y: bottomY,          r: 38 };
-  const skeptic: Node   = { x: 70,            y: bottomY,          r: 38 };
-  const self: Node      = { x: cx,            y: height * 0.55,    r: 30 };
-  const selfLike: Diamond = { cx: cx,         cy: height * 0.86,   size: 18 };
-  const managers: Node   = { x: 52,           y: sideY,            r: 40 };
-  const firefighters: Node = { x: width - 52, y: sideY,            r: 40 };
+  // All radii bumped ~20% so the map feels substantial. Side-rings pushed
+  // slightly further in (x: 52 -> 62) to give the larger circles clearance
+  // from the edge on narrow iPhones.
+  const wound: Node     = { x: cx,            y: woundCy,          r: 54 };
+  const fixer: Node     = { x: width - 74,    y: bottomY,          r: 46 };
+  const skeptic: Node   = { x: 74,            y: bottomY,          r: 46 };
+  const self: Node      = { x: cx,            y: height * 0.55,    r: 36 };
+  const selfLike: Diamond = { cx: cx,         cy: height * 0.86,   size: 22 };
+  const managers: Node   = { x: 62,           y: sideY,            r: 52 };
+  const firefighters: Node = { x: width - 62, y: sideY,            r: 52 };
 
   const triangle: [Point, Point, Point, Point] = [
     { x: wound.x, y: wound.y },

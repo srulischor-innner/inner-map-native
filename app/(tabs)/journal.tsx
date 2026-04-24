@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, radii, spacing } from '../../constants/theme';
 import { journal, JournalEntry, JournalKind } from '../../services/journal';
+import { getUserId } from '../../services/user';
 
 export default function JournalScreen() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
@@ -23,7 +24,13 @@ export default function JournalScreen() {
   const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
-    setEntries(await journal.list());
+    const userId = await getUserId();
+    const localEntries = await journal.list();
+    console.log(
+      '[journal] loaded local entries=', localEntries.length,
+      'userId=', userId.slice(0, 8),
+    );
+    setEntries(localEntries);
   }, []);
   useEffect(() => { load(); }, [load]);
 

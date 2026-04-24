@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
+import { getUserId } from '../../services/user';
 import { EnergiesBar, Energy } from '../../components/journey/EnergiesBar';
 import { LanguageChips } from '../../components/journey/LanguageChips';
 import { SpectrumBar } from '../../components/journey/SpectrumBar';
@@ -32,7 +33,16 @@ export default function JourneyScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    // Print the exact userId we're fetching sessions under so a mismatch
+    // between the native UUID and any web account is visible immediately.
+    const userId = await getUserId();
+    console.log('[journey] fetching /api/journey for userId=', userId.slice(0, 8));
     const res = await api.getJourney();
+    console.log(
+      '[journey] response: sessions=', res?.sessions?.length ?? 0,
+      'totalMessages=', res?.totalMessages,
+      'firstMapDate=', res?.firstMapDate,
+    );
     if (res) setData(res as JourneyData);
   }, []);
   useEffect(() => { load(); }, [load]);

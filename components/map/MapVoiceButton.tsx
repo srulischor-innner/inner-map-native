@@ -242,9 +242,13 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
 const styles = StyleSheet.create({
   wrap: {
+    // Positioned well above the YOUR PROGRESS strip (which sits at bottom:0
+    // when collapsed, ~44px tall). bottom:90 gives 46px clearance above it;
+    // right:16 keeps the 60px circle + its 12px shadow inside the viewport
+    // on any iPhone.
     position: 'absolute',
-    right: 22,
-    bottom: 28,
+    right: 16,
+    bottom: 90,
     alignItems: 'center',
     gap: 8,
   },

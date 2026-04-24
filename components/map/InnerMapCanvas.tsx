@@ -48,9 +48,11 @@ type Props = {
 
 export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
   // ===== SHARED VALUES (Reanimated) =====
-  const breath = useSharedValue(0.55);
-  const selfScale = useSharedValue(1);
-  const woundPulse = useSharedValue(1);
+  const breath = useSharedValue(0.55);          // triangle-line opacity cycle
+  const atmosphere = useSharedValue(0.35);       // atmospheric glow opacity cycle
+  const subtleScale = useSharedValue(1);         // 1.0 ↔ 1.04 for every node
+  const selfScale = useSharedValue(1);           // slightly deeper self pulse
+  const woundPulse = useSharedValue(1);          // wound glow pulse
 
   // Per-node "active" scale — springs up to 1.25 when a part is detected in
   // conversation, drops back to 1 when another part fires or after the 8s
@@ -74,16 +76,33 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
   };
 
   useEffect(() => {
+    // Triangle-line opacity cycle 0.5 ↔ 0.8 / 4s — 'breathing' of the map.
     breath.value = withRepeat(
-      withTiming(0.9, { duration: 4000, easing: Easing.inOut(Easing.ease) }),
+      withTiming(0.8, { duration: 4000, easing: Easing.inOut(Easing.ease) }),
       -1, true,
     );
+    // Atmospheric purple glow opacity cycle 0.3 ↔ 0.5 / 6s — adds depth to the
+    // center of the triangle without demanding attention.
+    atmosphere.value = withRepeat(
+      withTiming(0.5, { duration: 6000, easing: Easing.inOut(Easing.ease) }),
+      -1, true,
+    );
+    // Universal subtle breath — every node scales 1.0 ↔ 1.04 / 5s. Small enough
+    // that the animation reads as 'alive' rather than 'pulsing'.
+    subtleScale.value = withRepeat(
+      withTiming(1.04, { duration: 5000, easing: Easing.inOut(Easing.ease) }),
+      -1, true,
+    );
+    // Self gets a slightly deeper breath than the others (1.0 ↔ 1.06 / 5s) —
+    // composes on top of subtleScale for a richer center.
     selfScale.value = withRepeat(
       withTiming(1.06, { duration: 5000, easing: Easing.inOut(Easing.ease) }),
       -1, true,
     );
+    // Wound gets its own slow glow-intensity pulse (1.0 ↔ 1.12 / 4s) so the
+    // node at the top of the triangle feels like the heartbeat of the map.
     woundPulse.value = withRepeat(
-      withTiming(1.12, { duration: 3500, easing: Easing.inOut(Easing.ease) }),
+      withTiming(1.12, { duration: 4000, easing: Easing.inOut(Easing.ease) }),
       -1, true,
     );
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -96,32 +115,58 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
     });
   }, [activePart]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Skia-specific derived values (forces re-read on the UI thread)
+  // Skia-specific derived values (forces re-read on the UI thread).
+  // Every node's radius is `base * subtleScale * activeScale`. The subtle
+  // breath is shared; activeScale springs to 1.25 when detected; the two
+  // multiply so detection still reads clearly over the ambient motion.
   const triangleOpacity = useDerivedValue(() => breath.value, [breath]);
-  const selfR = useDerivedValue(() => geom.self.r * selfScale.value * scaleSelf.value, [geom.self.r, selfScale, scaleSelf]);
-  const woundR = useDerivedValue(() => geom.wound.r * woundPulse.value * scaleWound.value, [geom.wound.r, woundPulse, scaleWound]);
-  const fixerR = useDerivedValue(() => geom.fixer.r * scaleFixer.value, [geom.fixer.r, scaleFixer]);
-  const skepticR = useDerivedValue(() => geom.skeptic.r * scaleSkeptic.value, [geom.skeptic.r, scaleSkeptic]);
-  const managersR = useDerivedValue(() => geom.managers.r * scaleManager.value, [geom.managers.r, scaleManager]);
-  const firefightersR = useDerivedValue(() => geom.firefighters.r * scaleFirefighter.value, [geom.firefighters.r, scaleFirefighter]);
+  const atmosphereOpacity = useDerivedValue(() => atmosphere.value, [atmosphere]);
+  const selfR = useDerivedValue(
+    () => geom.self.r * selfScale.value * scaleSelf.value,
+    [geom.self.r, selfScale, scaleSelf],
+  );
+  const woundR = useDerivedValue(
+    () => geom.wound.r * woundPulse.value * scaleWound.value,
+    [geom.wound.r, woundPulse, scaleWound],
+  );
+  const fixerR = useDerivedValue(
+    () => geom.fixer.r * subtleScale.value * scaleFixer.value,
+    [geom.fixer.r, subtleScale, scaleFixer],
+  );
+  const skepticR = useDerivedValue(
+    () => geom.skeptic.r * subtleScale.value * scaleSkeptic.value,
+    [geom.skeptic.r, subtleScale, scaleSkeptic],
+  );
+  const managersR = useDerivedValue(
+    () => geom.managers.r * subtleScale.value * scaleManager.value,
+    [geom.managers.r, subtleScale, scaleManager],
+  );
+  const firefightersR = useDerivedValue(
+    () => geom.firefighters.r * subtleScale.value * scaleFirefighter.value,
+    [geom.firefighters.r, subtleScale, scaleFirefighter],
+  );
 
-  const { width, height, wound, fixer, skeptic, self, selfLike, managers, firefighters, triangle, atmosphere } = geom;
+  // `atmosphere` (the shared animated value) is already in scope — don't
+  // shadow it here; read geom.atmosphere directly inside the JSX below.
+  const { width, height, wound, fixer, skeptic, self, selfLike, managers, firefighters, triangle } = geom;
 
   return (
     <View style={[styles.root, { width, height }]} pointerEvents="box-none">
       <Canvas style={{ width, height }}>
-        {/* Atmospheric glow between Fixer and Skeptic — a subtle purple haze */}
-        <Group opacity={0.45}>
-          <Circle cx={atmosphere.cx} cy={atmosphere.cy} r={atmosphere.rx * 0.9}>
+        {/* Atmospheric glow between Fixer and Skeptic — breathing purple haze */}
+        <Group opacity={atmosphereOpacity}>
+          <Circle cx={geom.atmosphere.cx} cy={geom.atmosphere.cy} r={geom.atmosphere.rx * 0.9}>
             <RadialGradient
-              c={vec(atmosphere.cx, atmosphere.cy)}
-              r={atmosphere.rx}
-              colors={['rgba(177, 156, 217, 0.28)', 'rgba(177, 156, 217, 0)']}
+              c={vec(geom.atmosphere.cx, geom.atmosphere.cy)}
+              r={geom.atmosphere.rx}
+              colors={['rgba(177, 156, 217, 0.34)', 'rgba(177, 156, 217, 0)']}
             />
           </Circle>
         </Group>
 
-        {/* Triangle outline — three lines that breathe together */}
+        {/* Triangle outline — three thicker, brighter lines that breathe together.
+            Stroke 2.5 and color #6a6a9a per the latest spec so the lines read as
+            the structural backbone of the map, not decoration. */}
         <Group opacity={triangleOpacity}>
           {[0, 1, 2].map((i) => {
             const a = triangle[i];
@@ -131,9 +176,9 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
                 key={i}
                 p1={vec(a.x, a.y)}
                 p2={vec(b.x, b.y)}
-                color="#5a5a8a"
+                color="#6a6a9a"
                 style="stroke"
-                strokeWidth={1.5}
+                strokeWidth={2.5}
               />
             );
           })}
@@ -164,16 +209,16 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
       {/* ===== TEXT LABELS ===== Rendered as RN <Text> overlays instead of Skia SkText
            so we don't need a font asset loaded. One label per node, centered on the
            node's geometry. pointerEvents=none so they never block the Pressable taps. */}
-      <NodeLabel x={wound.x}            y={wound.y}        label="WOUND"        color={colors.wound}        width={90} />
-      <NodeLabel x={fixer.x}            y={fixer.y}        label="FIXER"        color={colors.fixer}        width={90} />
-      <NodeLabel x={skeptic.x}          y={skeptic.y}      label="SKEPTIC"      color={colors.skeptic}      width={90} />
-      <NodeLabel x={self.x}             y={self.y}         label="SELF"         color={colors.self}         width={90} />
-      <NodeLabel x={managers.x + 6}     y={managers.y}     label="MANAGERS"     color={colors.managers}     width={100} />
-      {/* FIREFIGHTERS is the longest label — center shifted ~12px left so the
-          full word fits on even the narrowest iPhone screens without clipping
-          against the right edge of the viewport. */}
-      <NodeLabel x={firefighters.x - 12} y={firefighters.y} label="FIREFIGHTERS" color={colors.firefighters} width={120} />
-      <NodeLabel x={selfLike.cx}        y={selfLike.cy + selfLike.size + 16} label="SELF-LIKE" color={colors.selfLike} width={90} />
+      <NodeLabel x={wound.x}         y={wound.y}        label="WOUND"        color={colors.wound} />
+      <NodeLabel x={fixer.x}         y={fixer.y}        label="FIXER"        color={colors.fixer} />
+      <NodeLabel x={skeptic.x}       y={skeptic.y}      label="SKEPTIC"      color={colors.skeptic} />
+      <NodeLabel x={self.x}          y={self.y}         label="SELF"         color={colors.self} />
+      {/* Side-ring labels sit on the center of their circle — no horizontal
+          offset. MANAGERS fits comfortably. FIREFIGHTERS uses a smaller font
+          (8px) so the longer word never clips on narrow screens. */}
+      <NodeLabel x={managers.x}      y={managers.y}     label="MANAGERS"     color={colors.managers}     width={104} />
+      <NodeLabel x={firefighters.x}  y={firefighters.y} label="FIREFIGHTERS" color={colors.firefighters} width={104} small />
+      <NodeLabel x={selfLike.cx}     y={selfLike.cy + selfLike.size + 16} label="SELF-LIKE" color={colors.selfLike} />
 
       {/* ===== TAP OVERLAY ===== Absolutely-positioned Pressable per node. Hit region
            is slightly larger than the drawn circle for comfortable tap targets. */}
@@ -191,9 +236,10 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
 // Compact label that sits centered on a node. Absolute-positioned and
 // non-interactive so it never gets in the way of the Pressable hit zone.
 // `width` defaults to 90; long labels (FIREFIGHTERS) pass their own.
+// `small` flag drops to 8px font so 12-char labels fit without clipping.
 function NodeLabel({
-  x, y, label, color, width = 90,
-}: { x: number; y: number; label: string; color: string; width?: number }) {
+  x, y, label, color, width = 90, small,
+}: { x: number; y: number; label: string; color: string; width?: number; small?: boolean }) {
   const H = 18;
   return (
     <View
@@ -205,7 +251,7 @@ function NodeLabel({
     >
       <Text
         allowFontScaling={false}
-        style={[styles.labelText, { color }]}
+        style={[styles.labelText, { color }, small && styles.labelTextSmall]}
         numberOfLines={1}
       >
         {label}
@@ -336,4 +382,5 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.7)',
     textShadowRadius: 3,
   },
+  labelTextSmall: { fontSize: 8, letterSpacing: 0.8 },
 });
