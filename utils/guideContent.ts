@@ -2,17 +2,26 @@
 // Three sections: the map, healing, using it.
 // Editing copy here is the single source of truth for the mobile Guide tab.
 
+// Every slide has its own distinct visual. See GuideNodeVisual.tsx for the
+// Skia render for each kind. Names match the slide concepts so the intent is
+// obvious at the point of assignment.
 export type NodeVisualKind =
-  | 'wound'
-  | 'woundSoft'
-  | 'fixer'
-  | 'skeptic'
-  | 'selfLike'
-  | 'self'
-  | 'triangle'
-  | 'managersFirefighters'
-  | 'fullmap'
-  | 'ambient';
+  | 'intro'                // expanding amber rings radiating outward
+  | 'everyone'             // ring of small circles — many people, one hidden center
+  | 'wound'                // single red circle, slow pulse
+  | 'woundLayers'          // wound with two distinct rings (story + feeling)
+  | 'fixer'                // amber circle + three upward lines
+  | 'skeptic'              // blue circle + heavy horizontal bar underneath
+  | 'tension'              // mini triangle with atmospheric glow
+  | 'selfLike'             // dimmer lavender diamond
+  | 'managersFirefighters' // two dashed circles with inner dots
+  | 'self'                 // purple, largest, steady, no pulse
+  | 'fullmap'              // complete mini map, everything breathing
+  | 'seed'                 // bottom circle with line growing upward
+  | 'responsibility'       // right-arrow fades / left-arrow brightens
+  | 'unblending'           // two overlapping circles drift apart and back
+  | 'release'              // wound with outer ring expanding + fading
+  | 'newCreation';         // full map with golden glow from Self center
 
 export type GuideSlide = {
   visual: NodeVisualKind;
@@ -24,7 +33,7 @@ export type GuideSlide = {
 // ===== SECTION 1: THE MAP =====
 export const MAP_SLIDES: GuideSlide[] = [
   {
-    visual: 'ambient',
+    visual: 'intro',
     title: 'Inner Map',
     body: [
       "You can't change what you can't see. The map is a tool for seeing.",
@@ -33,7 +42,7 @@ export const MAP_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'ambient',
+    visual: 'everyone',
     title: 'This is everyone',
     body: [
       "Everyone has a wound. Not from trauma necessarily — just from being human. Every child, at some point, encountered something overwhelming and formed a conclusion.",
@@ -52,7 +61,7 @@ export const MAP_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'woundSoft',
+    visual: 'woundLayers',
     title: 'How the wound develops',
     titleColor: '#E05050',
     body: [
@@ -82,7 +91,7 @@ export const MAP_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'triangle',
+    visual: 'tension',
     title: 'The tension between them',
     body: [
       "The Fixer and Skeptic were once one thing — the natural drive and wisdom of a whole person. The wound split them apart.",
@@ -135,7 +144,7 @@ export const MAP_SLIDES: GuideSlide[] = [
 // ===== SECTION 2: HEALING =====
 export const HEALING_SLIDES: GuideSlide[] = [
   {
-    visual: 'ambient',
+    visual: 'seed',
     title: 'How healing actually happens',
     body: [
       "Understanding your map is not the same as healing. Insight is the beginning — not the destination.",
@@ -144,7 +153,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'fixer',
+    visual: 'responsibility',
     title: 'Stage one — Taking responsibility',
     body: [
       "The shift from outside-in to inside-out. The recognition that external things can soothe but never fill.",
@@ -153,7 +162,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'self',
+    visual: 'unblending',
     title: 'Stage two — Unblending',
     body: [
       '"I am this pain" becomes "I notice this part."',
@@ -162,7 +171,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'self',
+    visual: 'release',
     title: 'Stage three — Release',
     body: [
       "Through genuine relationship with a part — being truly seen, being truly received — the part begins to see itself differently.",
@@ -171,7 +180,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'ambient',
+    visual: 'newCreation',
     title: 'Creating something new',
     body: [
       "A word about what healing actually means here.",

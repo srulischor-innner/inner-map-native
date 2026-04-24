@@ -56,14 +56,14 @@ export default function OnboardingScreen() {
 // ============================================================================
 type WelcomeSlide = { visual: Parameters<typeof GuideNodeVisual>[0]['kind']; title?: string; body?: string; showBegin?: boolean };
 const WELCOME_SLIDES: WelcomeSlide[] = [
-  { visual: 'ambient',  title: 'Inner Map',                   body: 'Understand what’s happening inside you.' },
-  { visual: 'triangle', title: 'We all have patterns',        body: 'Ways we react. Things that trigger us. Feelings we can’t explain. Most of us don’t fully understand why.' },
+  { visual: 'intro',    title: 'Inner Map',                   body: 'Understand what’s happening inside you.' },
+  { visual: 'tension',  title: 'We all have patterns',        body: 'Ways we react. Things that trigger us. Feelings we can’t explain. Most of us don’t fully understand why.' },
   { visual: 'fullmap',  title: 'Inner Map helps you see them',body: 'As you talk, patterns emerge. The same feelings, the same voices, the same pushes and pulls — the AI listens and gradually reflects them back. We call it your map.' },
   { visual: 'self',     title: 'Your map starts as a sketch', body: 'The more we talk, the more detailed and accurate it becomes. Every conversation adds a layer.' },
-  { visual: 'ambient',  title: 'A companion for the long journey',
+  { visual: 'seed',     title: 'A companion for the long journey',
     body: 'Come when something is activated. Come when a pattern repeated and you want to understand why. Come when you need to be heard without advice or fixing. The longer you come, the more it knows you.' },
   { visual: 'selfLike', title: 'This is not therapy',         body: 'It’s a mirror. A space to see yourself more clearly. Nothing you share is judged.' },
-  { visual: 'ambient',  showBegin: true },
+  { visual: 'newCreation', showBegin: true },
 ];
 
 function WelcomeSlides({ onDone }: { onDone: () => void }) {
