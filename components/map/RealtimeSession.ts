@@ -29,7 +29,7 @@ const API_BASE: string =
   (Constants.expoConfig?.extra as any)?.apiBaseUrl ||
   'https://inner-map-production.up.railway.app';
 
-export type VoiceState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'error';
+export type VoiceState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'retrying' | 'error';
 
 export type RealtimeCallbacks = {
   onStateChange?: (s: VoiceState) => void;
@@ -55,6 +55,12 @@ export class RealtimeSession {
   // nothing comes back in 30s we treat it as stuck and tear down cleanly
   // rather than leaving the user on 'Thinking…' forever.
   private responseTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Retry state. OpenAI's Realtime service sometimes returns transient
+  // server_error — we cache the PCM we just uploaded and resend up to 3
+  // times before giving up. Cleared after response.done.
+  private lastPcmB64: string | null = null;
+  private retryCount = 0;
+  private readonly MAX_RETRIES = 3;
 
   constructor(cb: RealtimeCallbacks = {}) { this.cb = cb; }
 
@@ -207,21 +213,58 @@ export class RealtimeSession {
       if (pcmByteCount < 4800) {
         console.warn('[realtime] ⚠ audio is shorter than 100ms — OpenAI may reject commit');
       }
-      this.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcmB64 }));
-      this.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-      this.ws.send(JSON.stringify({ type: 'response.create' }));
-      // Watchdog — if no response.done in 30s, give up gracefully instead of
-      // leaving the user on 'Thinking…' forever.
-      if (this.responseTimeout) clearTimeout(this.responseTimeout);
-      this.responseTimeout = setTimeout(() => {
-        console.warn('[realtime] response.done timeout after 30s — stopping session');
-        this.cleanup();
-      }, 30000);
+      // Cache so we can retry the same audio on a transient OpenAI
+      // server_error without re-recording.
+      this.lastPcmB64 = pcmB64;
+      this.retryCount = 0;
+      this.sendTurnFrames(pcmB64);
       console.log('[realtime] user turn committed, awaiting response.done (30s watchdog armed)');
     } catch (e) {
       console.warn('[realtime] commitTurn failed:', (e as Error)?.message);
       this.setState('error');
     }
+  }
+
+  /** Low-level: send append + commit + response.create for a cached PCM
+   *  payload, and arm the 30s response watchdog. Used by both commitTurn()
+   *  (first attempt) and retryLastTurn() (after a transient server_error). */
+  private sendTurnFrames(pcmB64: string) {
+    if (!this.ws || this.ws.readyState !== 1) {
+      console.warn('[realtime] sendTurnFrames aborted — ws not open');
+      return;
+    }
+    this.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcmB64 }));
+    this.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+    this.ws.send(JSON.stringify({ type: 'response.create' }));
+    if (this.responseTimeout) clearTimeout(this.responseTimeout);
+    this.responseTimeout = setTimeout(() => {
+      console.warn('[realtime] response.done timeout after 30s — stopping session');
+      this.cleanup();
+    }, 30000);
+  }
+
+  /** Retry the last committed turn after a transient OpenAI error. Uses the
+   *  cached PCM so we don't force the user to re-record. Called from the
+   *  server_error branch of handleServerEvent. */
+  private retryLastTurn() {
+    if (!this.lastPcmB64) {
+      console.warn('[realtime] retryLastTurn: no cached PCM');
+      this.setState('error');
+      return;
+    }
+    if (!this.ws || this.ws.readyState !== 1) {
+      console.warn('[realtime] retryLastTurn: socket closed, cannot retry');
+      this.setState('error');
+      return;
+    }
+    console.log(`[realtime] retrying last turn (attempt ${this.retryCount}/${this.MAX_RETRIES})`);
+    this.setState('retrying');
+    // Switch back to thinking so the UI stops flashing the retry pill after
+    // the resend is on its way.
+    setTimeout(() => {
+      this.setState('thinking');
+    }, 400);
+    this.sendTurnFrames(this.lastPcmB64);
   }
 
   /** Fully tear down: close WS, stop playback, end recording, fire onEnded.
@@ -278,6 +321,9 @@ export class RealtimeSession {
         break;
       case 'response.done': {
         if (this.responseTimeout) { clearTimeout(this.responseTimeout); this.responseTimeout = null; }
+        // Turn completed cleanly — drop cached PCM + retry counter.
+        this.lastPcmB64 = null;
+        this.retryCount = 0;
         this.setState('speaking');
         // Concatenate all collected PCM16 deltas and play as one WAV.
         // After playback, return to idle — the user taps the mic again to
@@ -288,9 +334,37 @@ export class RealtimeSession {
         });
         break;
       }
-      case 'error':
-        console.warn('[realtime] server error:', evt?.error);
+      case 'error': {
+        const errType = evt?.error?.type || '(unknown)';
+        const errMsg  = evt?.error?.message || '';
+        console.warn('[realtime] server error:', errType, errMsg, JSON.stringify(evt?.error || {}).slice(0, 400));
+        // OpenAI Realtime occasionally returns transient server_error — the
+        // same PCM retried a second later usually goes through. We cache the
+        // last payload so the user never has to re-record.
+        if (errType === 'server_error' && this.lastPcmB64) {
+          this.retryCount += 1;
+          if (this.retryCount <= this.MAX_RETRIES) {
+            console.log(`[realtime] transient OpenAI error — retry ${this.retryCount}/${this.MAX_RETRIES} in 1s`);
+            if (this.responseTimeout) { clearTimeout(this.responseTimeout); this.responseTimeout = null; }
+            this.setState('retrying');
+            setTimeout(() => this.retryLastTurn(), 1000);
+          } else {
+            console.warn('[realtime] max retries reached — giving up on this turn');
+            this.setState('error');
+            // Don't tear down the whole session — the user can tap mic again.
+            this.lastPcmB64 = null;
+            this.retryCount = 0;
+            // Bump back to idle after a moment so the mic is tappable again.
+            setTimeout(() => this.setState('idle'), 1500);
+          }
+        } else {
+          // Non-transient error (invalid_request_error etc.) — surface and
+          // let the user decide.
+          this.setState('error');
+          setTimeout(() => this.setState('idle'), 1500);
+        }
         break;
+      }
     }
   }
 

@@ -333,6 +333,7 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     state === 'thinking'   ? 'Thinking…' :
     state === 'speaking'   ? 'Speaking…' :
     state === 'connecting' ? 'Connecting…' :
+    state === 'retrying'   ? 'Retrying…' :
     state === 'error'      ? 'Something went wrong' :
     'Tap to speak';
 
@@ -343,6 +344,7 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
           style={[
             styles.statusText,
             state === 'listening' && { color: '#d4726a', fontWeight: '700' },
+            state === 'retrying'  && { color: colors.amber, fontWeight: '700' },
           ]}
         >
           {label}
@@ -357,11 +359,12 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
           state === 'speaking'  && styles.btnSpeaking,
           state === 'thinking'  && styles.btnThinking,
           state === 'connecting' && styles.btnThinking,
+          state === 'retrying'  && styles.btnThinking,
           state === 'error'     && styles.btnThinking,
         ]}
         accessibilityLabel={state === 'listening' ? 'Tap to send' : 'Voice conversation'}
       >
-        {state === 'thinking' || state === 'connecting' ? (
+        {state === 'thinking' || state === 'connecting' || state === 'retrying' ? (
           <ActivityIndicator color={colors.amber} />
         ) : (
           <Ionicons
