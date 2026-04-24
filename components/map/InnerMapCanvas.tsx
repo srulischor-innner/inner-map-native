@@ -49,7 +49,10 @@ type Props = {
 export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
   // ===== SHARED VALUES (Reanimated) =====
   const breath = useSharedValue(0.55);          // triangle-line opacity cycle
-  const atmosphere = useSharedValue(0.35);       // atmospheric glow opacity cycle
+  // Shared value for the atmospheric-glow opacity cycle. Named *Breath so it
+  // can't collide with `geom.atmosphere` (the ellipse geometry) if someone
+  // ever re-adds `atmosphere` to the destructure below.
+  const atmosphereBreath = useSharedValue(0.35);
   const subtleScale = useSharedValue(1);         // 1.0 ↔ 1.04 for every node
   const selfScale = useSharedValue(1);           // slightly deeper self pulse
   const woundPulse = useSharedValue(1);          // wound glow pulse
@@ -83,7 +86,7 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
     );
     // Atmospheric purple glow opacity cycle 0.3 ↔ 0.5 / 6s — adds depth to the
     // center of the triangle without demanding attention.
-    atmosphere.value = withRepeat(
+    atmosphereBreath.value = withRepeat(
       withTiming(0.5, { duration: 6000, easing: Easing.inOut(Easing.ease) }),
       -1, true,
     );
@@ -120,7 +123,7 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
   // breath is shared; activeScale springs to 1.25 when detected; the two
   // multiply so detection still reads clearly over the ambient motion.
   const triangleOpacity = useDerivedValue(() => breath.value, [breath]);
-  const atmosphereOpacity = useDerivedValue(() => atmosphere.value, [atmosphere]);
+  const atmosphereOpacity = useDerivedValue(() => atmosphereBreath.value, [atmosphereBreath]);
   const selfR = useDerivedValue(
     () => geom.self.r * selfScale.value * scaleSelf.value,
     [geom.self.r, selfScale, scaleSelf],
@@ -146,19 +149,19 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
     [geom.firefighters.r, subtleScale, scaleFirefighter],
   );
 
-  // `atmosphere` (the shared animated value) is already in scope — don't
-  // shadow it here; read geom.atmosphere directly inside the JSX below.
-  const { width, height, wound, fixer, skeptic, self, selfLike, managers, firefighters, triangle } = geom;
+  // Now that the shared breath value is named `atmosphereBreath`, this
+  // destructure is unambiguous — `atmosphere` refers to the ellipse geometry.
+  const { width, height, wound, fixer, skeptic, self, selfLike, managers, firefighters, triangle, atmosphere } = geom;
 
   return (
     <View style={[styles.root, { width, height }]} pointerEvents="box-none">
       <Canvas style={{ width, height }}>
         {/* Atmospheric glow between Fixer and Skeptic — breathing purple haze */}
         <Group opacity={atmosphereOpacity}>
-          <Circle cx={geom.atmosphere.cx} cy={geom.atmosphere.cy} r={geom.atmosphere.rx * 0.9}>
+          <Circle cx={atmosphere.cx} cy={atmosphere.cy} r={atmosphere.rx * 0.9}>
             <RadialGradient
-              c={vec(geom.atmosphere.cx, geom.atmosphere.cy)}
-              r={geom.atmosphere.rx}
+              c={vec(atmosphere.cx, atmosphere.cy)}
+              r={atmosphere.rx}
               colors={['rgba(177, 156, 217, 0.34)', 'rgba(177, 156, 217, 0)']}
             />
           </Circle>
