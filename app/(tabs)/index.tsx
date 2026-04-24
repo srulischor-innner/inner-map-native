@@ -63,14 +63,12 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
 
   // ===== BOOT: returning greeting + map state =====
+  // Instead of inserting a placeholder bubble that then gets swapped (which
+  // read as a glitch), we show the typing indicator immediately and insert
+  // the greeting bubble only once — when the real text is ready.
   useEffect(() => {
+    setTyping(true);
     (async () => {
-      // Drop the fallback greeting immediately so the screen NEVER sits empty
-      // while we wait on the network. If a real returning greeting arrives, we
-      // swap the first bubble's text to the personalized version.
-      const openerId = addAssistantMessage(FALLBACK_GREETING);
-      historyRef.current.push({ role: 'assistant', content: FALLBACK_GREETING });
-
       let greeting: string | null = null;
       let map: any = null;
       let intake: any = null;
@@ -84,34 +82,20 @@ export default function ChatScreen() {
         console.warn('[chat] boot fetch failed:', (err as Error)?.message);
       }
 
-      // Drive /api/chat mode from map completeness — if the user has any core
-      // node filled we're past first-session territory.
       const md = map?.mapData || map || {};
       const anyCoreFilled = ['wound', 'fixer', 'skeptic'].some((k) => !!md?.[k]);
       const chosenMode = anyCoreFilled ? 'ongoing' : 'onboarding';
-      // Diagnostic — confirms which prompt branch the native app will request.
-      // If this prints `mode=onboarding anyCoreFilled=false` for a user who
-      // clearly has past sessions, the /api/latest-map fetch is either
-      // returning empty or hitting the wrong userId (mobile vs web split).
       console.log('[mode]', chosenMode, 'anyCoreFilled:', anyCoreFilled, 'mapData:', JSON.stringify(md).slice(0, 300));
       setMode(chosenMode);
 
-      // Pull the first name if intake is complete — shown as "Hey [Name]" below
-      // the top tabs. If absent we render nothing.
       if (intake?.name && typeof intake.name === 'string' && intake.name.trim()) {
         setUserName(intake.name.trim().split(/\s+/)[0]);
       }
 
-      // Upgrade the fallback greeting if the server returned a personalized one.
-      if (greeting && greeting.trim() && greeting.trim() !== FALLBACK_GREETING) {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === openerId ? { ...m, text: greeting!.trim() } : m)),
-        );
-        // Replace the first history entry too so chat context uses the real opener.
-        if (historyRef.current[0]?.role === 'assistant') {
-          historyRef.current[0] = { role: 'assistant', content: greeting.trim() };
-        }
-      }
+      const finalGreeting = (greeting && greeting.trim()) || FALLBACK_GREETING;
+      addAssistantMessage(finalGreeting);
+      historyRef.current.push({ role: 'assistant', content: finalGreeting });
+      setTyping(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -324,9 +308,6 @@ export default function ChatScreen() {
               disappear the moment the first user turn is added. */}
           {messages.length > 0 && historyRef.current.every((m) => m.role !== 'user') ? (
             <ConversationStarters onPick={handleSend} />
-          ) : null}
-          {messages.length === 0 ? (
-            <Text style={styles.empty}>Warming up…</Text>
           ) : null}
         </ScrollView>
         <ChatInput disabled={sending} onSend={handleSend} />

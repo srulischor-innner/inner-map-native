@@ -377,13 +377,16 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
 const styles = StyleSheet.create({
   wrap: {
-    // Positioned well above the YOUR PROGRESS strip (which sits at bottom:0
-    // when collapsed, ~44px tall). bottom:90 gives 46px clearance above it;
-    // right:16 keeps the 60px circle + its 12px shadow inside the viewport
-    // on any iPhone.
+    // Bottom-centered, just above the YOUR PROGRESS strip (40px tall
+    // collapsed). Centering avoids overlapping the right-side Fixer node
+    // (which sits at roughly 80% of the viewport width at the bottom-right
+    // of the triangle). bottom:52 puts the 60px mic circle neatly between
+    // the SELF-LIKE diamond above and the progress strip below with a bit
+    // of breathing room on every device size.
     position: 'absolute',
-    right: 16,
-    bottom: 90,
+    left: 0,
+    right: 0,
+    bottom: 52,
     alignItems: 'center',
     gap: 8,
   },
