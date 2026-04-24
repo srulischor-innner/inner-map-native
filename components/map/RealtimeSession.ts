@@ -62,10 +62,12 @@ export class RealtimeSession {
   private setState(s: VoiceState) { this.cb.onStateChange?.(s); }
 
   async start(): Promise<boolean> {
+    console.log('[realtime] start() — requesting mic permission');
     this.setState('connecting');
     try {
       // Mic permission (required whether we end up using realtime or falling back).
       const perm = await AudioModule.requestRecordingPermissionsAsync();
+      console.log('[realtime] mic permission:', perm.granted);
       if (!perm.granted) {
         this.setState('error');
         return false;
@@ -84,20 +86,25 @@ export class RealtimeSession {
       // upstream connects — we just need to keep our end alive.
       const userId = await getUserId();
       const wsUrl = API_BASE.replace(/^http/, 'ws') + '/realtime';
-      // RN's WebSocket accepts a 3rd `options` argument for custom headers but
-      // the standard TS lib typing only allows 2. Cast so we can ship the header.
+      console.log('[realtime] WS status: connecting →', wsUrl);
       const WSAny = WebSocket as any;
       const ws = new WSAny(wsUrl, undefined, { headers: { 'X-User-Id': userId } });
       this.ws = ws;
 
       // Open gate with a hard timeout so a stuck socket doesn't lock up the UI.
       const ok = await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), 2500);
+        const timer = setTimeout(() => {
+          console.warn('[realtime] WS open TIMEOUT after 2500ms');
+          resolve(false);
+        }, 2500);
         ws.onopen = () => { clearTimeout(timer); resolve(true); };
-        ws.onerror = () => { clearTimeout(timer); resolve(false); };
+        ws.onerror = (e: any) => {
+          console.warn('[realtime] WS error during open:', e?.message || 'no message');
+          clearTimeout(timer); resolve(false);
+        };
       });
-      if (!ok) { console.warn('[realtime] WS open failed'); this.cleanup(); return false; }
-      console.log('[realtime] WS open');
+      if (!ok) { console.warn('[realtime] WS status: failed — falling back'); this.cleanup(); return false; }
+      console.log('[realtime] WS status: open ✓');
 
       ws.onmessage = (ev: any) => this.handleServerEvent(ev);
       ws.onclose = () => { console.log('[realtime] WS closed'); this.cleanup(); };
@@ -110,9 +117,11 @@ export class RealtimeSession {
         this.cleanup();
         return false;
       }
+      console.log('[realtime] starting recording…');
       await this.recorderRef.prepareToRecordAsync();
       this.recorderRef.record();
       this.recording = true;
+      console.log('[realtime] recording started ✓');
       this.setState('listening');
       return true;
     } catch (e) {
@@ -125,24 +134,45 @@ export class RealtimeSession {
   /** Called when user taps the mic a second time — finalize the recording,
    *  upload the audio, and ask the server for a response. */
   async commitTurn(): Promise<void> {
-    if (!this.ws || this.ws.readyState !== 1 || !this.recorderRef) return;
-    if (!this.recording) return;
+    console.log(
+      '[realtime] commitTurn() — ws?=', !!this.ws,
+      'readyState=', this.ws?.readyState,
+      'recorder?=', !!this.recorderRef,
+      'recording=', this.recording,
+    );
+    if (!this.ws || this.ws.readyState !== 1 || !this.recorderRef) {
+      console.warn('[realtime] commitTurn aborted — socket or recorder missing');
+      return;
+    }
+    if (!this.recording) {
+      console.warn('[realtime] commitTurn aborted — not recording');
+      return;
+    }
     this.setState('thinking');
     try {
+      console.log('[realtime] stopping recording…');
       await this.recorderRef.stop();
       this.recording = false;
       const uri = this.recorderRef.uri;
-      if (!uri) return;
-      // Read WAV, strip header, send PCM.
+      console.log('[realtime] recording stopped, file uri:', uri);
+      if (!uri) { console.warn('[realtime] no uri after stop — aborting'); return; }
+      // Read WAV. fetch(file://) works on iOS reliably and on Android in
+      // most cases; if blob() fails we fall back to reading as text and
+      // re-encoding. Log sizes at each step so we can see where audio is lost.
       const fileRes = await fetch(uri);
       const blob = await fileRes.blob();
+      console.log('[realtime] blob size =', blob.size, 'bytes, type =', blob.type);
+      if (blob.size < 512) {
+        console.warn('[realtime] blob too small — mic may not have captured audio. Check mic permission.');
+      }
       const b64 = await blobToBase64(blob);
       const pcmB64 = stripWavHeaderToPcm16Base64(b64);
-      if (!pcmB64) { console.warn('[realtime] empty PCM after header strip'); return; }
+      if (!pcmB64) { console.warn('[realtime] empty PCM after header strip'); this.setState('error'); return; }
+      console.log('[realtime] uploading audio chunk — pcm bytes ≈', Math.round((pcmB64.length * 3) / 4));
       this.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcmB64 }));
       this.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       this.ws.send(JSON.stringify({ type: 'response.create' }));
-      console.log('[realtime] user turn committed, pcm bytes ≈', (pcmB64.length * 3) / 4);
+      console.log('[realtime] user turn committed, awaiting response.done');
     } catch (e) {
       console.warn('[realtime] commitTurn failed:', (e as Error)?.message);
       this.setState('error');

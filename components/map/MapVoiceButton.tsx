@@ -52,48 +52,73 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
    * TAP DISPATCH
    * ===================================================================== */
   async function onPress() {
+    console.log('[map-voice] mic tapped — current state:', state);
     if (state === 'idle') {
-      // Start a session. Try realtime first; if it fails fall through to legacy.
+      console.log('[map-voice] starting new session (trying realtime first)');
       const rt = new RealtimeSession({
         onStateChange: setStateAnd,
         onPartDetected: (p, l) => onDetectedPart?.(p, l),
-        onUserTranscript: () => {},
-        onAssistantTranscript: () => {},
+        onUserTranscript: (t) => console.log('[map-voice] user said:', t.slice(0, 60)),
+        onAssistantTranscript: (t) => console.log('[map-voice] AI said:', t.slice(0, 60)),
         onEnded: (turns) => {
+          console.log('[map-voice] session ended, turns=', turns.length);
           if (!turns.length) return;
-          // Save transcript alongside existing web session history.
           api.saveSession({ id: sessionId, messages: turns });
         },
       });
       rt.attachRecorder(recorder);
       const ok = await rt.start();
-      if (ok) {
-        realtimeRef.current = rt;
-        return;
-      }
+      if (ok) { realtimeRef.current = rt; return; }
       console.log('[map-voice] realtime unavailable — falling back to legacy pipeline');
       realtimeRef.current = null;
       legacyStart();
       return;
     }
 
-    // We're already in a session. Any tap from a non-idle state:
-    // - If realtime is running, tap commits the user's turn.
-    // - If a user's turn is processing or the AI is speaking, a second tap
-    //   ends the whole session so they can exit the voice flow.
+    // We're already in a session.
     if (realtimeRef.current) {
-      if (state === 'listening') { await realtimeRef.current.commitTurn(); return; }
-      // Any other state → stop the whole session.
+      if (state === 'listening') {
+        console.log('[map-voice] mic tapped again — committing turn');
+        await realtimeRef.current.commitTurn();
+        return;
+      }
+      // Any other state → stop the whole session cleanly.
+      console.log('[map-voice] stopping session from state=', state);
       realtimeRef.current.stop();
       realtimeRef.current = null;
       return;
     }
 
-    // Legacy path — single tap toggles recording / stops playback.
+    // Legacy path — same tap semantics.
     if (legacyActive.current) {
-      if (state === 'listening') await legacyStopAndRespond();
-      else if (state === 'speaking') { try { audioPlayerRef.current?.pause(); audioPlayerRef.current?.remove(); } catch {} audioPlayerRef.current = null; legacyActive.current = false; setStateAnd('idle'); }
+      if (state === 'listening') {
+        console.log('[map-voice] legacy — mic tapped again, stopping + transcribing');
+        await legacyStopAndRespond();
+      } else if (state === 'speaking') {
+        console.log('[map-voice] legacy — interrupting playback');
+        try { audioPlayerRef.current?.pause(); audioPlayerRef.current?.remove(); } catch {}
+        audioPlayerRef.current = null;
+        legacyActive.current = false;
+        setStateAnd('idle');
+      }
     }
+  }
+
+  // Cancel — bail out of a session without sending anything.
+  async function onCancel() {
+    console.log('[map-voice] cancel tapped, state was:', state);
+    Haptics.selectionAsync().catch(() => {});
+    if (realtimeRef.current) {
+      realtimeRef.current.stop();
+      realtimeRef.current = null;
+    }
+    if (legacyActive.current) {
+      try { await recorder.stop(); } catch {}
+      try { audioPlayerRef.current?.pause(); audioPlayerRef.current?.remove(); } catch {}
+      audioPlayerRef.current = null;
+      legacyActive.current = false;
+    }
+    setStateAnd('idle');
   }
 
   /* =====================================================================
@@ -199,43 +224,65 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     state === 'connecting' ? 'wifi' :
     'mic';
 
+  // Explicit, instructive status text — tells the user exactly what to do next.
   const label =
-    state === 'listening'  ? 'Listening…' :
+    state === 'listening'  ? 'Listening… tap to send' :
     state === 'thinking'   ? 'Thinking…' :
     state === 'speaking'   ? 'Speaking…' :
     state === 'connecting' ? 'Connecting…' :
-    state === 'error'      ? 'Error' :
-    null;
+    state === 'error'      ? 'Something went wrong' :
+    'Tap to speak';
+
+  const showCancel = state === 'listening';
 
   return (
     <View pointerEvents="box-none" style={styles.wrap}>
-      {label ? (
-        <View style={styles.status}>
-          <Text style={styles.statusText}>{label}</Text>
-        </View>
-      ) : null}
-      <Pressable
-        onPress={onPress}
-        style={[
-          styles.btn,
-          state === 'listening' && styles.btnListening,
-          state === 'speaking'  && styles.btnSpeaking,
-          state === 'thinking'  && styles.btnThinking,
-          state === 'connecting' && styles.btnThinking,
-          state === 'error'     && styles.btnThinking,
-        ]}
-        accessibilityLabel="Voice conversation"
-      >
-        {state === 'thinking' || state === 'connecting' ? (
-          <ActivityIndicator color={colors.amber} />
-        ) : (
-          <Ionicons
-            name={iconName}
-            size={26}
-            color={state === 'idle' ? colors.amber : '#fff'}
-          />
-        )}
-      </Pressable>
+      <View style={styles.status}>
+        <Text
+          style={[
+            styles.statusText,
+            state === 'listening' && { color: '#d4726a', fontWeight: '700' },
+          ]}
+        >
+          {label}
+        </Text>
+      </View>
+
+      <View style={styles.row}>
+        {showCancel ? (
+          <Pressable
+            onPress={onCancel}
+            style={styles.cancelBtn}
+            accessibilityLabel="Cancel recording"
+            hitSlop={10}
+          >
+            <Ionicons name="close" size={18} color={colors.creamDim} />
+          </Pressable>
+        ) : null}
+
+        <Pressable
+          onPress={onPress}
+          style={[
+            styles.btn,
+            state === 'listening' && styles.btnListening,
+            state === 'speaking'  && styles.btnSpeaking,
+            state === 'thinking'  && styles.btnThinking,
+            state === 'connecting' && styles.btnThinking,
+            state === 'error'     && styles.btnThinking,
+          ]}
+          accessibilityLabel={state === 'listening' ? 'Tap to send' : 'Voice conversation'}
+        >
+          {state === 'thinking' || state === 'connecting' ? (
+            <ActivityIndicator color={colors.amber} />
+          ) : (
+            <Ionicons
+              name={iconName}
+              size={26}
+              color={state === 'idle' ? colors.amber : '#fff'}
+            />
+          )}
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -272,4 +319,13 @@ const styles = StyleSheet.create({
   btnListening: { backgroundColor: '#d4726a', borderColor: '#d4726a' },
   btnSpeaking:  { backgroundColor: '#8A7AAA', borderColor: '#8A7AAA' },
   btnThinking:  { backgroundColor: colors.backgroundSecondary },
+
+  // Row that holds [cancel X] [mic]. Cancel is only rendered while listening.
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cancelBtn: {
+    width: 34, height: 34, borderRadius: 17,
+    borderWidth: 1, borderColor: colors.border,
+    backgroundColor: 'rgba(20,19,26,0.9)',
+    alignItems: 'center', justifyContent: 'center',
+  },
 });
