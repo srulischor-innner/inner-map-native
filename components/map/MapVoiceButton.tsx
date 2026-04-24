@@ -199,11 +199,15 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
       const perm = await AudioModule.requestRecordingPermissionsAsync();
       console.log('[legacy] 1/7 permission granted:', perm.granted);
       if (!perm.granted) { setStateAnd('idle'); return; }
+      // Same iOS audio-session requirement as the Realtime path: switch to
+      // PlayAndRecord category with exclusive focus before prepareToRecord,
+      // or the mic records silence while permission still appears granted.
       try {
         await setAudioModeAsync({
           allowsRecording: true, playsInSilentMode: true,
-          interruptionMode: 'duckOthers', shouldPlayInBackground: false,
+          interruptionMode: 'doNotMix', shouldPlayInBackground: false,
         });
+        console.log('[legacy] audio mode set — allowsRecording:true, interruption=doNotMix');
       } catch (e) {
         console.warn('[legacy] setAudioModeAsync failed:', (e as Error).message);
       }

@@ -82,14 +82,23 @@ export class RealtimeSession {
         this.setState('error');
         return false;
       }
+      // CRITICAL on iOS: the audio session category must be PlayAndRecord
+      // BEFORE the recorder prepares/starts or the mic captures silence even
+      // though permission is granted. `allowsRecording: true` +
+      // `playsInSilentMode: true` selects PlayAndRecord; `doNotMix` requests
+      // exclusive audio focus so a backgrounded player/tts/realtime-output
+      // from an earlier turn can't leave us in a playback-only category.
       try {
         await setAudioModeAsync({
           allowsRecording: true,
           playsInSilentMode: true,
-          interruptionMode: 'duckOthers',
+          interruptionMode: 'doNotMix',
           shouldPlayInBackground: false,
         });
-      } catch {}
+        console.log('[realtime] audio mode set — allowsRecording:true, category=PlayAndRecord, interruption=doNotMix');
+      } catch (e) {
+        console.warn('[realtime] setAudioModeAsync failed:', (e as Error)?.message);
+      }
 
       // Open socket. The server-side proxy injects the OpenAI key +
       // session.update with the Inner Map system prompt as soon as the
@@ -425,12 +434,16 @@ export class RealtimeSession {
   async startNextTurn(): Promise<boolean> {
     if (this.closed || !this.recorderRef || !this.ws || this.ws.readyState !== 1) return false;
     try {
+      // Playback switched the session to mixWithOthers + allowsRecording:false.
+      // Flip back to PlayAndRecord + doNotMix BEFORE prepareToRecordAsync —
+      // otherwise iOS keeps the previous category and the mic stays muted.
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
-        interruptionMode: 'duckOthers',
+        interruptionMode: 'doNotMix',
         shouldPlayInBackground: false,
       });
+      console.log('[realtime] audio mode set for next turn — allowsRecording:true');
       await this.recorderRef.prepareToRecordAsync();
       this.recorderRef.record();
       this.recording = true;
