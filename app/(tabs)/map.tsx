@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { colors } from '../../constants/theme';
 import { api } from '../../services/api';
+import { armSelfMode } from '../../utils/selfMode';
 import { computeMapGeometry, MapGeometry } from '../../utils/mapLayout';
 import { InnerMapCanvas, NodeKey } from '../../components/map/InnerMapCanvas';
 import { PartFolderModal } from '../../components/map/PartFolderModal';
@@ -37,10 +38,18 @@ export default function MapScreen() {
   const [outsideInScore, setOutsideInScore] = useState<number | null>(null);
   const [fragmentedScore, setFragmentedScore] = useState<number | null>(null);
   const [parts, setParts] = useState<any[]>([]);
+  // clinicalPatterns (outsideInKeywords / insideOutKeywords / ...) powers the
+  // "keywords driving this score" lists in the spectrum detail panel. Pulled
+  // from /api/journey lazily on mount.
+  const [clinicalPatterns, setClinicalPatterns] = useState<any>(null);
   const router = useRouter();
   useEffect(() => {
     (async () => {
-      const [res, ps] = await Promise.all([api.getLatestMap(), api.getParts()]);
+      const [res, ps, journey] = await Promise.all([
+        api.getLatestMap(),
+        api.getParts(),
+        api.getJourney(),
+      ]);
       const md = res?.mapData || res || {};
       setMapData(md);
       if (res?.detectedManagers) md.detectedManagers = res.detectedManagers;
@@ -48,6 +57,7 @@ export default function MapScreen() {
       if (typeof res?.outsideInScore === 'number') setOutsideInScore(res.outsideInScore);
       if (typeof res?.fragmentedScore === 'number') setFragmentedScore(res.fragmentedScore);
       setParts(ps);
+      if (journey?.clinicalPatterns) setClinicalPatterns(journey.clinicalPatterns);
     })();
   }, []);
 
@@ -111,7 +121,11 @@ export default function MapScreen() {
         }}
       />
 
-      <ProgressStrip outsideInScore={outsideInScore} fragmentedScore={fragmentedScore} />
+      <ProgressStrip
+        outsideInScore={outsideInScore}
+        fragmentedScore={fragmentedScore}
+        clinicalPatterns={clinicalPatterns}
+      />
 
       <PartFolderModal
         visible={!!folderPart}
@@ -120,10 +134,12 @@ export default function MapScreen() {
         parts={parts}
         onClose={() => setFolderPart(null)}
         onEnterSelfMode={() => {
-          // Close the folder and jump to Chat — Self mode flag lands in a
-          // follow-up; for now this at least sends the user to a space where
-          // Self energy can be received.
+          // Arm the one-shot Self-mode flag, then navigate to Chat. Chat
+          // consumes the flag on mount and sends selfMode:true with its
+          // next /api/chat request so the server swaps in the Self-mode
+          // system prompt prefix.
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          armSelfMode();
           setFolderPart(null);
           router.push('/');
         }}

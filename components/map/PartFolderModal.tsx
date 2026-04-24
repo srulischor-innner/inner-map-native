@@ -133,7 +133,7 @@ export function PartFolderModal({
           {partKey === 'wound'      ? <WoundSections      mapData={mapData} part={part} /> : null}
           {partKey === 'fixer'      ? <FixerSections      part={part} />                    : null}
           {partKey === 'skeptic'    ? <SkepticSections    part={part} />                    : null}
-          {partKey === 'self'       ? <SelfSections       part={part} onEnterSelfMode={onEnterSelfMode} color={meta.color} /> : null}
+          {partKey === 'self'       ? <SelfSections       part={part} onEnterSelfMode={onEnterSelfMode} onClose={onClose} color={meta.color} /> : null}
           {partKey === 'self-like'  ? <SelfLikeSections   part={part} mapData={mapData} />  : null}
           {partKey === 'manager'    ? <ContainerList
               items={mapData?.detectedManagers || []}
@@ -207,21 +207,37 @@ function SkepticSections({ part }: { part: any }) {
   );
 }
 function SelfSections({
-  part, color, onEnterSelfMode,
-}: { part: any; color: string; onEnterSelfMode?: () => void }) {
+  part, color, onEnterSelfMode, onClose,
+}: { part: any; color: string; onEnterSelfMode?: () => void; onClose?: () => void }) {
   return (
     <View style={styles.sections}>
       <Section label="Moments of Self detected" value={part?.historicalEntries?.length ? `${part.historicalEntries.length} noticed so far` : undefined} />
       <Section label="Qualities noticed"         value={part?.recurringPhrases?.join?.(', ')} />
       <Section label="What it feels like"        value={part?.fullDescription || part?.sensation} />
+
+      {/* Warm explanation of what Self mode is — sits above the CTA so the
+          user understands what they're opting into before they tap. */}
+      <Text style={styles.selfModeExplain}>
+        Self mode shifts the conversation entirely. No mapping, no analysis, no agenda.
+        Just pure presence — a space to feel genuinely received without anything being
+        required of you. Use it when you need to be held rather than understood.
+      </Text>
+
       {onEnterSelfMode ? (
-        <Pressable
-          style={[styles.selfModeBtn, { borderColor: color, backgroundColor: color + '18' }]}
-          onPress={onEnterSelfMode}
-          accessibilityLabel="Enter Self mode"
-        >
-          <Text style={[styles.selfModeText, { color }]}>ENTER SELF MODE →</Text>
-        </Pressable>
+        <View style={{ alignItems: 'center' }}>
+          <Pressable
+            style={[styles.selfModeBtn, { borderColor: color, backgroundColor: color + '18' }]}
+            onPress={onEnterSelfMode}
+            accessibilityLabel="Enter Self mode"
+          >
+            <Text style={[styles.selfModeText, { color }]}>Enter Self mode →</Text>
+          </Pressable>
+          {onClose ? (
+            <Pressable onPress={onClose} hitSlop={10} style={styles.notNowBtn}>
+              <Text style={styles.notNowText}>Not now</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -305,14 +321,28 @@ const styles = StyleSheet.create({
   sectionValue: { color: colors.cream, fontSize: 14, lineHeight: 21 },
   sectionEmpty: { color: colors.creamFaint, fontSize: 13, fontStyle: 'italic', opacity: 0.7 },
 
+  selfModeExplain: {
+    color: colors.creamDim,
+    fontSize: 14,
+    lineHeight: 22,
+    fontStyle: 'italic',
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
   selfModeBtn: {
     alignSelf: 'center',
-    marginTop: spacing.lg,
+    marginTop: spacing.sm,
     paddingHorizontal: 24, paddingVertical: 12,
     borderRadius: radii.pill,
     borderWidth: 1.5,
   },
-  selfModeText: { fontSize: 11, fontWeight: '700', letterSpacing: 2 },
+  selfModeText: { fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
+  notNowBtn: { marginTop: spacing.sm, padding: 8 },
+  notNowText: {
+    color: colors.creamFaint, fontSize: 12, opacity: 0.7,
+    letterSpacing: 0.3,
+  },
 
   listItem: {
     backgroundColor: 'rgba(255,255,255,0.03)',

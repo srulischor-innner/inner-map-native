@@ -111,18 +111,20 @@ export const api = {
       mode?: 'onboarding' | 'ongoing';
       sessionId: string;
       wasInterrupted?: boolean;
+      selfMode?: boolean;
     },
     cb: StreamCallbacks,
   ): Promise<() => void> {
     const controller = new AbortController();
     const headers = await authHeaders();
-    const bodyObj = {
+    const bodyObj: any = {
       messages: params.messages,
       mode: params.mode || 'onboarding',
       sessionId: params.sessionId,
       stream: false,
       wasInterrupted: !!params.wasInterrupted,
     };
+    if (params.selfMode) bodyObj.selfMode = true;
     console.log(
       `[chat] sending mode=${bodyObj.mode} msgCount=${params.messages.length} lastRole=${params.messages[params.messages.length - 1]?.role}`,
     );

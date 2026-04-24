@@ -33,6 +33,7 @@ import { api, ChatMessage } from '../../services/api';
 import { parseChatMeta, stripMarkers } from '../../utils/markers';
 import { colors, spacing } from '../../constants/theme';
 import { pulseMapTab } from '../../utils/mapPulse';
+import { consumeSelfMode } from '../../utils/selfMode';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { TypingIndicator } from '../../components/TypingIndicator';
@@ -61,6 +62,11 @@ export default function ChatScreen() {
   // Contextual conversation starters returned by /api/returning-greeting —
   // grounded in the last session so the chips land on what's actually alive.
   const [starters, setStarters] = useState<string[]>([]);
+  // Self mode — one-shot flag set when the user taps "Enter Self mode" on
+  // the map's Self folder. Consumed on mount; every /api/chat request while
+  // this is true carries selfMode:true so the server prepends the Self-mode
+  // system prompt addendum. Cleared when the session ends.
+  const [selfMode, setSelfMode] = useState(false);
   // End-session transition. When the user commits, we fade the messages out
   // then cross-fade a centered "Your map has been updated." overlay in for a
   // beat, then fade that out and reload the fresh session. Done with RN
@@ -78,6 +84,14 @@ export default function ChatScreen() {
   // read as a glitch), we show the typing indicator immediately and insert
   // the greeting bubble only once — when the real text is ready.
   useEffect(() => {
+    // Consume the one-shot Self-mode flag if the user just tapped "Enter
+    // Self mode" on the map. Runs once on mount — subsequent tab visits
+    // don't re-enter Self mode unless the user explicitly opts back in.
+    const sm = consumeSelfMode();
+    if (sm) {
+      console.log('[chat] Self mode engaged for this session');
+      setSelfMode(true);
+    }
     setTyping(true);
     (async () => {
       let greetingRes: { greeting: string | null; suggestions: string[] } = { greeting: null, suggestions: [] };
@@ -201,6 +215,7 @@ export default function ChatScreen() {
             messages: historyRef.current,
             mode,
             sessionId: sessionIdRef.current,
+            selfMode,
           },
           {
             onDelta: (delta) => {
@@ -368,7 +383,9 @@ export default function ChatScreen() {
             await new Promise((r) => setTimeout(r, 2000));
             await saveWork;
 
-            // Reset session while overlay still covers the screen.
+            // Reset session while overlay still covers the screen. Self mode
+            // is session-scoped — the next session starts in normal mode.
+            setSelfMode(false);
             historyRef.current = [];
             setMessages([]);
             sessionIdRef.current = uuidv4();
