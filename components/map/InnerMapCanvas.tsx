@@ -22,6 +22,8 @@ import {
   Group,
   Path,
   RadialGradient,
+  LinearGradient,
+  BlurMask,
   Skia,
   Line,
   DashPathEffect,
@@ -39,6 +41,30 @@ import { colors } from '../../constants/theme';
 import type { MapGeometry, Node as GeomNode, Diamond as GeomDiamond } from '../../utils/mapLayout';
 
 export type NodeKey = 'wound' | 'fixer' | 'skeptic' | 'self' | 'self-like' | 'manager' | 'firefighter';
+
+// Brighter, more vivid stroke colors used ONLY for the drawn map — the
+// theme `colors.*` values stay muted for chips/text across the rest of
+// the app. These make the nodes pop when the canvas is on-screen.
+const MAP_STROKE = {
+  wound:        '#FF5555',
+  fixer:        '#F0C070',
+  skeptic:      '#90C8E8',
+  self:         '#D4B8E8',
+  selfLike:     '#A090C0',
+  managers:     '#A8DCC0',
+  firefighters: '#F0A050',
+};
+
+// Per-node RGB tuple so we can build alpha-gradient color stops.
+const MAP_RGB = {
+  wound:        '224,85,85',
+  fixer:        '240,192,112',
+  skeptic:      '144,200,232',
+  self:         '212,184,232',
+  selfLike:     '160,144,192',
+  managers:     '168,220,192',
+  firefighters: '240,160,80',
+};
 
 type Props = {
   geom: MapGeometry;
@@ -156,72 +182,83 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
   return (
     <View style={[styles.root, { width, height }]} pointerEvents="box-none">
       <Canvas style={{ width, height }}>
-        {/* Atmospheric glow between Fixer and Skeptic — breathing purple haze */}
+        {/* Atmospheric glow between Fixer and Skeptic — breathing purple haze.
+            Bumped from 0.34 → 0.55 peak alpha + wider radius so the triangle
+            reads as a glowing vessel rather than a wireframe. */}
         <Group opacity={atmosphereOpacity}>
-          <Circle cx={atmosphere.cx} cy={atmosphere.cy} r={atmosphere.rx * 0.9}>
+          <Circle cx={atmosphere.cx} cy={atmosphere.cy} r={atmosphere.rx * 1.1}>
             <RadialGradient
               c={vec(atmosphere.cx, atmosphere.cy)}
-              r={atmosphere.rx}
-              colors={['rgba(177, 156, 217, 0.34)', 'rgba(177, 156, 217, 0)']}
+              r={atmosphere.rx * 1.2}
+              colors={['rgba(177, 156, 217, 0.55)', 'rgba(177, 156, 217, 0.15)', 'rgba(177, 156, 217, 0)']}
             />
           </Circle>
         </Group>
 
-        {/* Triangle outline — three thicker, brighter lines that breathe together.
-            Stroke 2.5 and color #6a6a9a per the latest spec so the lines read as
-            the structural backbone of the map, not decoration. */}
+        {/* Triangle outline — each leg is gradient-stroked from the wound color
+            at the top vertex down to the node color at the bottom vertex so the
+            backbone reads with depth rather than a flat grey. */}
         <Group opacity={triangleOpacity}>
           {[0, 1, 2].map((i) => {
             const a = triangle[i];
             const b = triangle[i + 1];
+            // Map endpoints → which colors to blend. Edge 0 = wound→fixer, edge
+            // 1 = fixer→skeptic (bottom), edge 2 = skeptic→wound.
+            const endA = i === 0 ? MAP_STROKE.wound   : i === 1 ? MAP_STROKE.fixer   : MAP_STROKE.skeptic;
+            const endB = i === 0 ? MAP_STROKE.fixer   : i === 1 ? MAP_STROKE.skeptic : MAP_STROKE.wound;
             return (
               <Line
                 key={i}
                 p1={vec(a.x, a.y)}
                 p2={vec(b.x, b.y)}
-                color="#6a6a9a"
                 style="stroke"
                 strokeWidth={2.5}
-              />
+              >
+                <LinearGradient
+                  start={vec(a.x, a.y)}
+                  end={vec(b.x, b.y)}
+                  colors={[endA + 'AA', endB + 'AA']}
+                />
+              </Line>
             );
           })}
         </Group>
 
         {/* MANAGERS — dashed green ring on the left */}
-        <DashedRing node={managers} r={managersR} color={colors.managers} />
+        <DashedRing node={managers} r={managersR} stroke={MAP_STROKE.managers} rgb={MAP_RGB.managers} />
 
         {/* FIREFIGHTERS — dashed orange ring on the right */}
-        <DashedRing node={firefighters} r={firefightersR} color={colors.firefighters} />
+        <DashedRing node={firefighters} r={firefightersR} stroke={MAP_STROKE.firefighters} rgb={MAP_RGB.firefighters} />
 
-        {/* SELF-LIKE — muted lavender diamond below Self */}
-        <SelfLikeDiamond d={selfLike} />
+        {/* SELF-LIKE — brighter lavender diamond below Self */}
+        <SelfLikeDiamond d={selfLike} stroke={MAP_STROKE.selfLike} rgb={MAP_RGB.selfLike} />
 
         {/* SELF — breathing lavender circle at center */}
-        <GlowCircle cx={self.x} cy={self.y} r={selfR} color={colors.self} gradientR={self.r * 2.2} coreR={self.r * 0.55} />
+        <GlowCircle cx={self.x} cy={self.y} r={selfR} stroke={MAP_STROKE.self} rgb={MAP_RGB.self} gradientR={self.r * 2.2} strokeWidth={3} />
 
         {/* WOUND — red circle at top, gently pulsing */}
-        <GlowCircle cx={wound.x} cy={wound.y} r={woundR} color={colors.wound} gradientR={wound.r * 1.8} coreR={wound.r * 0.5} />
+        <GlowCircle cx={wound.x} cy={wound.y} r={woundR} stroke={MAP_STROKE.wound} rgb={MAP_RGB.wound} gradientR={wound.r * 2.0} strokeWidth={3.5} />
 
         {/* FIXER — amber circle at bottom-right */}
-        <GlowCircle cx={fixer.x} cy={fixer.y} r={fixerR} color={colors.fixer} gradientR={fixer.r * 1.8} coreR={fixer.r * 0.5} />
+        <GlowCircle cx={fixer.x} cy={fixer.y} r={fixerR} stroke={MAP_STROKE.fixer} rgb={MAP_RGB.fixer} gradientR={fixer.r * 2.0} strokeWidth={3.5} />
 
         {/* SKEPTIC — blue circle at bottom-left */}
-        <GlowCircle cx={skeptic.x} cy={skeptic.y} r={skepticR} color={colors.skeptic} gradientR={skeptic.r * 1.8} coreR={skeptic.r * 0.5} />
+        <GlowCircle cx={skeptic.x} cy={skeptic.y} r={skepticR} stroke={MAP_STROKE.skeptic} rgb={MAP_RGB.skeptic} gradientR={skeptic.r * 2.0} strokeWidth={3.5} />
       </Canvas>
 
       {/* ===== TEXT LABELS ===== Rendered as RN <Text> overlays instead of Skia SkText
            so we don't need a font asset loaded. One label per node, centered on the
            node's geometry. pointerEvents=none so they never block the Pressable taps. */}
-      <NodeLabel x={wound.x}         y={wound.y}        label="WOUND"        color={colors.wound} />
-      <NodeLabel x={fixer.x}         y={fixer.y}        label="FIXER"        color={colors.fixer} />
-      <NodeLabel x={skeptic.x}       y={skeptic.y}      label="SKEPTIC"      color={colors.skeptic} />
-      <NodeLabel x={self.x}          y={self.y}         label="SELF"         color={colors.self} />
+      <NodeLabel x={wound.x}         y={wound.y}        label="WOUND"        color={MAP_STROKE.wound} />
+      <NodeLabel x={fixer.x}         y={fixer.y}        label="FIXER"        color={MAP_STROKE.fixer} />
+      <NodeLabel x={skeptic.x}       y={skeptic.y}      label="SKEPTIC"      color={MAP_STROKE.skeptic} />
+      <NodeLabel x={self.x}          y={self.y}         label="SELF"         color={MAP_STROKE.self} />
       {/* Side-ring labels sit on the center of their circle — no horizontal
           offset. MANAGERS fits comfortably. FIREFIGHTERS uses a smaller font
-          (8px) so the longer word never clips on narrow screens. */}
-      <NodeLabel x={managers.x}      y={managers.y}     label="MANAGERS"     color={colors.managers}     width={104} />
-      <NodeLabel x={firefighters.x}  y={firefighters.y} label="FIREFIGHTERS" color={colors.firefighters} width={104} small />
-      <NodeLabel x={selfLike.cx}     y={selfLike.cy + selfLike.size + 16} label="SELF-LIKE" color={colors.selfLike} />
+          so the longer word never clips on narrow screens. */}
+      <NodeLabel x={managers.x}      y={managers.y}     label="MANAGERS"     color={MAP_STROKE.managers}     width={112} />
+      <NodeLabel x={firefighters.x}  y={firefighters.y} label="FIREFIGHTERS" color={MAP_STROKE.firefighters} width={112} small />
+      <NodeLabel x={selfLike.cx}     y={selfLike.cy + selfLike.size + 18} label="SELF-LIKE" color={MAP_STROKE.selfLike} />
 
       {/* ===== TAP OVERLAY ===== Absolutely-positioned Pressable per node. Hit region
            is slightly larger than the drawn circle for comfortable tap targets. */}
@@ -266,51 +303,69 @@ function NodeLabel({
 // ---------- Skia drawing sub-components ----------
 
 function GlowCircle({
-  cx, cy, r, color, gradientR, coreR,
+  cx, cy, r, stroke, rgb, gradientR, strokeWidth,
 }: {
   cx: number;
   cy: number;
   r: any;              // number or Skia animated value
-  color: string;
+  stroke: string;      // brighter hex for the ring
+  rgb: string;         // "R,G,B" for rgba() gradient stops
   gradientR: number;
-  coreR: number;
+  strokeWidth: number;
 }) {
   return (
     <Group>
-      {/* Outer soft glow halo */}
-      <Circle cx={cx} cy={cy} r={gradientR} opacity={0.65}>
+      {/* Inner radial gradient fill — glows from center outward. Stops at
+          0.35 alpha core → 0.10 mid → transparent edge give each node real
+          depth rather than a flat ring with a dim core. */}
+      <Circle cx={cx} cy={cy} r={gradientR}>
         <RadialGradient
           c={vec(cx, cy)}
           r={gradientR}
-          colors={[color + 'AA', color + '00']}
+          colors={[
+            `rgba(${rgb},0.35)`,
+            `rgba(${rgb},0.10)`,
+            `rgba(${rgb},0)`,
+          ]}
         />
       </Circle>
-      {/* Solid stroke outline */}
-      <Circle cx={cx} cy={cy} r={r} color={color} style="stroke" strokeWidth={2.5} />
-      {/* Dim inner core fill for depth */}
-      <Circle cx={cx} cy={cy} r={coreR} color={color + '33'} style="fill" />
+      {/* Bold stroke ring with outer BlurMask — gives the node a soft halo
+          that reads as light bleeding outward, not just a painted edge. */}
+      <Circle cx={cx} cy={cy} r={r} color={stroke} style="stroke" strokeWidth={strokeWidth}>
+        <BlurMask blur={8} style="outer" respectCTM={false} />
+      </Circle>
+      {/* Crisp on-top stroke so the outer blur doesn't soften the edge away. */}
+      <Circle cx={cx} cy={cy} r={r} color={stroke} style="stroke" strokeWidth={strokeWidth} />
     </Group>
   );
 }
 
-function DashedRing({ node, r, color }: { node: GeomNode; r: any; color: string }) {
+function DashedRing({ node, r, stroke, rgb }: { node: GeomNode; r: any; stroke: string; rgb: string }) {
   return (
     <Group>
-      <Circle cx={node.x} cy={node.y} r={node.r} opacity={0.35}>
+      {/* Inner glow — larger and stronger than before so the side-rings
+          don't disappear against the background on darker phones. */}
+      <Circle cx={node.x} cy={node.y} r={node.r * 1.4}>
         <RadialGradient
           c={vec(node.x, node.y)}
           r={node.r * 1.8}
-          colors={[color + '55', color + '00']}
+          colors={[`rgba(${rgb},0.35)`, `rgba(${rgb},0.10)`, `rgba(${rgb},0)`]}
         />
       </Circle>
-      <Circle cx={node.x} cy={node.y} r={r} color={color} style="stroke" strokeWidth={2.5}>
+      {/* Dashed ring with outer blur halo. */}
+      <Circle cx={node.x} cy={node.y} r={r} color={stroke} style="stroke" strokeWidth={3}>
+        <BlurMask blur={7} style="outer" respectCTM={false} />
+        <DashPathEffect intervals={[8, 4]} />
+      </Circle>
+      {/* Crisp dashed stroke on top of the blur. */}
+      <Circle cx={node.x} cy={node.y} r={r} color={stroke} style="stroke" strokeWidth={3}>
         <DashPathEffect intervals={[8, 4]} />
       </Circle>
     </Group>
   );
 }
 
-function SelfLikeDiamond({ d }: { d: GeomDiamond }) {
+function SelfLikeDiamond({ d, stroke, rgb }: { d: GeomDiamond; stroke: string; rgb: string }) {
   // Diamond built as a Path — easier than chaining four <Line>s.
   const path = Skia.Path.Make();
   path.moveTo(d.cx, d.cy - d.size);
@@ -320,8 +375,21 @@ function SelfLikeDiamond({ d }: { d: GeomDiamond }) {
   path.close();
   return (
     <Group>
-      <Path path={path} color={colors.selfLike + '33'} style="fill" />
-      <Path path={path} color={colors.selfLike} style="stroke" strokeWidth={2} />
+      {/* Inner glow behind the diamond */}
+      <Circle cx={d.cx} cy={d.cy} r={d.size * 2.2}>
+        <RadialGradient
+          c={vec(d.cx, d.cy)}
+          r={d.size * 2.5}
+          colors={[`rgba(${rgb},0.35)`, `rgba(${rgb},0.10)`, `rgba(${rgb},0)`]}
+        />
+      </Circle>
+      {/* Dim fill for the diamond interior */}
+      <Path path={path} color={`rgba(${rgb},0.22)`} style="fill" />
+      {/* Bold stroke with blur halo */}
+      <Path path={path} color={stroke} style="stroke" strokeWidth={3}>
+        <BlurMask blur={6} style="outer" respectCTM={false} />
+      </Path>
+      <Path path={path} color={stroke} style="stroke" strokeWidth={3} />
     </Group>
   );
 }
@@ -378,12 +446,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   labelText: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1.3,
+    // Bumped from 9 → 11 and font weight to '800' (extrabold on iOS). Shadow
+    // is doubled so the letters stay legible when they cross the ring stroke.
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.5,
     textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.7)',
-    textShadowRadius: 3,
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowRadius: 5,
+    textShadowOffset: { width: 0, height: 1 },
   },
-  labelTextSmall: { fontSize: 8, letterSpacing: 0.8 },
+  labelTextSmall: { fontSize: 9.5, letterSpacing: 1.0 },
 });
