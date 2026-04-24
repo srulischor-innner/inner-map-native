@@ -19,16 +19,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Notifications from 'expo-notifications';
 import { useFonts } from 'expo-font';
-import {
-  CormorantGaramond_400Regular,
-  CormorantGaramond_400Regular_Italic,
-  CormorantGaramond_600SemiBold,
-} from '@expo-google-fonts/cormorant-garamond';
-import {
-  DMSans_400Regular,
-  DMSans_500Medium,
-  DMSans_600SemiBold,
-} from '@expo-google-fonts/dm-sans';
 
 import { colors } from '../constants/theme';
 import { getOnboardingState, OnboardingState } from '../services/onboarding';
@@ -65,18 +55,23 @@ export default function RootLayout() {
   const responseSubRef = useRef<Notifications.Subscription | null>(null);
 
   // Load the custom font pairing (Cormorant Garamond for display, DM Sans
-  // for body). We intentionally don't BLOCK the Stack on font load —
-  // components fall back to system fonts during the brief load window and
-  // swap in the custom faces once `fontsLoaded` flips true. This keeps
-  // cold-start fast and avoids any chance of a font-load hang stranding
-  // the user on a white screen.
+  // for body). TTFs live in assets/fonts/ and are required directly — we
+  // used to pull them from @expo-google-fonts/* but that package's barrel
+  // export caused a resolve failure on some bundles, so we own the assets
+  // now. Keys passed to useFonts must match the `fontFamily` values in
+  // theme.ts exactly.
+  //
+  // We intentionally don't BLOCK the Stack on font load — components fall
+  // back to system fonts during the brief load window and swap in the
+  // custom faces once `fontsLoaded` flips true. This keeps cold-start
+  // fast and avoids any chance of a font-load hang stranding the user.
   const [fontsLoaded] = useFonts({
-    CormorantGaramond_400Regular,
-    CormorantGaramond_400Regular_Italic,
-    CormorantGaramond_600SemiBold,
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_600SemiBold,
+    CormorantGaramond_400Regular:         require('../assets/fonts/CormorantGaramond-Regular.ttf'),
+    CormorantGaramond_400Regular_Italic:  require('../assets/fonts/CormorantGaramond-Italic.ttf'),
+    CormorantGaramond_600SemiBold:        require('../assets/fonts/CormorantGaramond-SemiBold.ttf'),
+    DMSans_400Regular:                    require('../assets/fonts/DMSans-Regular.ttf'),
+    DMSans_500Medium:                     require('../assets/fonts/DMSans-Medium.ttf'),
+    DMSans_600SemiBold:                   require('../assets/fonts/DMSans-SemiBold.ttf'),
   });
   useEffect(() => {
     if (fontsLoaded) console.log('[boot] custom fonts loaded ✓');
