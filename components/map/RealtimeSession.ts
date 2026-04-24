@@ -258,9 +258,11 @@ export class RealtimeSession {
         if (this.responseTimeout) { clearTimeout(this.responseTimeout); this.responseTimeout = null; }
         this.setState('speaking');
         // Concatenate all collected PCM16 deltas and play as one WAV.
+        // After playback, return to idle — the user taps the mic again to
+        // start the next turn. No auto-resume (keeps the flow predictable:
+        // one tap = one action).
         this.playAccumulatedAudio().then(() => {
-          // After playback, restart recording so the next turn is instant.
-          this.resumeListening().catch(() => {});
+          this.setState('idle');
         });
         break;
       }
@@ -302,8 +304,11 @@ export class RealtimeSession {
     }
   }
 
-  private async resumeListening() {
-    if (this.closed || !this.recorderRef || !this.ws || this.ws.readyState !== 1) return;
+  /** Start recording the next user turn on the already-open socket. Called
+   *  from MapVoiceButton when the user taps mic after a 'speaking'→'idle'
+   *  transition so the WS session is reused across turns. */
+  async startNextTurn(): Promise<boolean> {
+    if (this.closed || !this.recorderRef || !this.ws || this.ws.readyState !== 1) return false;
     try {
       await setAudioModeAsync({
         allowsRecording: true,
@@ -315,9 +320,11 @@ export class RealtimeSession {
       this.recorderRef.record();
       this.recording = true;
       this.setState('listening');
+      return true;
     } catch (e) {
-      console.warn('[realtime] resumeListening failed:', (e as Error)?.message);
+      console.warn('[realtime] startNextTurn failed:', (e as Error)?.message);
       this.setState('idle');
+      return false;
     }
   }
 

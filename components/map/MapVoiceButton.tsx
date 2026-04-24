@@ -16,7 +16,7 @@
 // expo-audio can't emit live PCM16 chunks — that needs a custom native
 // audio module via a dev build. Output side is proper streaming.
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View, ActivityIndicator, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -104,16 +104,47 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   function setStateAnd(s: VoiceState) { setState(s); onStateChange?.(s); }
 
   /* =====================================================================
-   * TAP DISPATCH
+   * TAP DISPATCH — dead simple, two tap states only:
+   *   idle       → start recording
+   *   listening  → commit + send (NEVER stop the session from a tap)
+   *   anything   → no-op while thinking/speaking/connecting
+   *
+   * The session is only torn down when the user navigates away from the
+   * Map tab (see the unmount cleanup below). There is no cancel button.
    * ===================================================================== */
   async function onPress() {
     console.log('[map-voice] mic tapped — current state:', state);
+    Haptics.selectionAsync().catch(() => {});
+
+    // Commit the current turn (second tap while recording).
+    if (state === 'listening') {
+      if (realtimeRef.current) {
+        console.log('[map-voice] committing realtime turn');
+        await realtimeRef.current.commitTurn();
+      } else if (legacyActive.current) {
+        console.log('[map-voice] committing legacy turn (stop + transcribe)');
+        await legacyStopAndRespond();
+      } else {
+        console.warn('[map-voice] listening but no active session — resetting to idle');
+        setStateAnd('idle');
+      }
+      return;
+    }
+
+    // Start a new turn (first tap, or tap after the AI finished speaking).
     if (state === 'idle') {
-      // Realtime path — disabled behind USE_REALTIME until we have a proper
-      // PCM16 recorder. Skipping straight to the legacy pipeline is the
-      // reliable behavior today.
+      // If a realtime session is already open from a previous turn, reuse it.
+      if (realtimeRef.current) {
+        console.log('[map-voice] reusing open realtime session for next turn');
+        const ok = await realtimeRef.current.startNextTurn();
+        if (ok) return;
+        // Socket died — drop the stale session and fall through to fresh start.
+        console.log('[map-voice] session stale, opening a new one');
+        realtimeRef.current = null;
+      }
+
       if (USE_REALTIME) {
-        console.log('[map-voice] starting new session (trying realtime first)');
+        console.log('[map-voice] starting new realtime session');
         const rt = new RealtimeSession({
           onStateChange: setStateAnd,
           onPartDetected: (p, l) => onDetectedPart?.(p, l),
@@ -129,59 +160,34 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
         const ok = await rt.start();
         if (ok) { realtimeRef.current = rt; return; }
         console.log('[map-voice] realtime unavailable — falling back to legacy pipeline');
-      } else {
-        console.log('[map-voice] USE_REALTIME=false — using legacy pipeline directly');
       }
       realtimeRef.current = null;
       legacyStart();
       return;
     }
 
-    // We're already in a session.
-    if (realtimeRef.current) {
-      if (state === 'listening') {
-        console.log('[map-voice] mic tapped again — committing turn');
-        await realtimeRef.current.commitTurn();
-        return;
-      }
-      // Any other state → stop the whole session cleanly.
-      console.log('[map-voice] stopping session from state=', state);
-      realtimeRef.current.stop();
-      realtimeRef.current = null;
-      return;
-    }
-
-    // Legacy path — same tap semantics.
-    if (legacyActive.current) {
-      if (state === 'listening') {
-        console.log('[map-voice] legacy — mic tapped again, stopping + transcribing');
-        await legacyStopAndRespond();
-      } else if (state === 'speaking') {
-        console.log('[map-voice] legacy — interrupting playback');
-        try { audioPlayerRef.current?.pause(); audioPlayerRef.current?.remove(); } catch {}
-        audioPlayerRef.current = null;
-        legacyActive.current = false;
-        setStateAnd('idle');
-      }
-    }
+    // thinking / speaking / connecting / error → tap is a no-op. The user
+    // just waits for the AI to finish or for the error state to auto-clear.
+    console.log('[map-voice] tap ignored in state:', state);
   }
 
-  // Cancel — bail out of a session without sending anything.
-  async function onCancel() {
-    console.log('[map-voice] cancel tapped, state was:', state);
-    Haptics.selectionAsync().catch(() => {});
-    if (realtimeRef.current) {
-      realtimeRef.current.stop();
+  /* =====================================================================
+   * UNMOUNT CLEANUP — navigating away from Map tab ends the session.
+   * ===================================================================== */
+  useEffect(() => {
+    return () => {
+      console.log('[map-voice] unmounting — tearing down session');
+      try { realtimeRef.current?.stop(); } catch {}
       realtimeRef.current = null;
-    }
-    if (legacyActive.current) {
-      try { await recorder.stop(); } catch {}
       try { audioPlayerRef.current?.pause(); audioPlayerRef.current?.remove(); } catch {}
       audioPlayerRef.current = null;
-      legacyActive.current = false;
-    }
-    setStateAnd('idle');
-  }
+      if (legacyActive.current) {
+        try { recorder.stop(); } catch {}
+        legacyActive.current = false;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* =====================================================================
    * LEGACY FALLBACK PIPELINE (unchanged behavior from the previous build)
@@ -301,7 +307,10 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     } catch (e) {
       console.warn('[legacy] TTS failed:', (e as Error).message);
     } finally {
-      if (legacyActive.current) await legacyStart();
+      // Return to idle. User taps mic again to start the next turn — no
+      // auto-resume, so the flow is predictable.
+      legacyActive.current = false;
+      setStateAnd('idle');
     }
   }
 
@@ -316,14 +325,12 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
   // Explicit, instructive status text — tells the user exactly what to do next.
   const label =
-    state === 'listening'  ? 'Listening… tap to send' :
+    state === 'listening'  ? 'Recording… tap to send' :
     state === 'thinking'   ? 'Thinking…' :
     state === 'speaking'   ? 'Speaking…' :
     state === 'connecting' ? 'Connecting…' :
     state === 'error'      ? 'Something went wrong' :
     'Tap to speak';
-
-  const showCancel = state === 'listening';
 
   return (
     <View pointerEvents="box-none" style={styles.wrap}>
@@ -338,41 +345,28 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
         </Text>
       </View>
 
-      <View style={styles.row}>
-        {showCancel ? (
-          <Pressable
-            onPress={onCancel}
-            style={styles.cancelBtn}
-            accessibilityLabel="Cancel recording"
-            hitSlop={10}
-          >
-            <Ionicons name="close" size={18} color={colors.creamDim} />
-          </Pressable>
-        ) : null}
-
-        <Pressable
-          onPress={onPress}
-          style={[
-            styles.btn,
-            state === 'listening' && styles.btnListening,
-            state === 'speaking'  && styles.btnSpeaking,
-            state === 'thinking'  && styles.btnThinking,
-            state === 'connecting' && styles.btnThinking,
-            state === 'error'     && styles.btnThinking,
-          ]}
-          accessibilityLabel={state === 'listening' ? 'Tap to send' : 'Voice conversation'}
-        >
-          {state === 'thinking' || state === 'connecting' ? (
-            <ActivityIndicator color={colors.amber} />
-          ) : (
-            <Ionicons
-              name={iconName}
-              size={26}
-              color={state === 'idle' ? colors.amber : '#fff'}
-            />
-          )}
-        </Pressable>
-      </View>
+      <Pressable
+        onPress={onPress}
+        style={[
+          styles.btn,
+          state === 'listening' && styles.btnListening,
+          state === 'speaking'  && styles.btnSpeaking,
+          state === 'thinking'  && styles.btnThinking,
+          state === 'connecting' && styles.btnThinking,
+          state === 'error'     && styles.btnThinking,
+        ]}
+        accessibilityLabel={state === 'listening' ? 'Tap to send' : 'Voice conversation'}
+      >
+        {state === 'thinking' || state === 'connecting' ? (
+          <ActivityIndicator color={colors.amber} />
+        ) : (
+          <Ionicons
+            name={iconName}
+            size={26}
+            color={state === 'idle' ? colors.amber : '#fff'}
+          />
+        )}
+      </Pressable>
     </View>
   );
 }
@@ -409,13 +403,4 @@ const styles = StyleSheet.create({
   btnListening: { backgroundColor: '#d4726a', borderColor: '#d4726a' },
   btnSpeaking:  { backgroundColor: '#8A7AAA', borderColor: '#8A7AAA' },
   btnThinking:  { backgroundColor: colors.backgroundSecondary },
-
-  // Row that holds [cancel X] [mic]. Cancel is only rendered while listening.
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  cancelBtn: {
-    width: 34, height: 34, borderRadius: 17,
-    borderWidth: 1, borderColor: colors.border,
-    backgroundColor: 'rgba(20,19,26,0.9)',
-    alignItems: 'center', justifyContent: 'center',
-  },
 });
