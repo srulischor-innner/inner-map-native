@@ -51,6 +51,10 @@ export class RealtimeSession {
   private player: ReturnType<typeof createAudioPlayer> | null = null;
   private closed = false;
   private recording = false;
+  // Watchdog for response.done — if we ask the server for a response and
+  // nothing comes back in 30s we treat it as stuck and tear down cleanly
+  // rather than leaving the user on 'Thinking…' forever.
+  private responseTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(cb: RealtimeCallbacks = {}) { this.cb = cb; }
 
@@ -166,13 +170,34 @@ export class RealtimeSession {
         console.warn('[realtime] blob too small — mic may not have captured audio. Check mic permission.');
       }
       const b64 = await blobToBase64(blob);
+      // Sanity check: the first 4 decoded bytes of a RIFF/WAVE file are
+      //   0x52 0x49 0x46 0x46  ("RIFF"). If they're anything else, the
+      //   recorder gave us the wrong format (typically AAC-in-M4A) and the
+      //   strip-header path will produce garbage bytes the upstream rejects.
+      const rawBytes = base64ToBytes(b64);
+      const magic = Array.from(rawBytes.subarray(0, 4))
+        .map((b) => b.toString(16).padStart(2, '0')).join(' ');
+      const isWav = rawBytes[0] === 0x52 && rawBytes[1] === 0x49 && rawBytes[2] === 0x46 && rawBytes[3] === 0x46;
+      console.log('[realtime] first 4 bytes:', magic, isWav ? '(RIFF — WAV ✓)' : '(NOT WAV — upload will fail)');
+      if (!isWav) {
+        console.warn('[realtime] recorder did not produce WAV — aborting upload to avoid a stuck turn');
+        this.setState('error');
+        return;
+      }
       const pcmB64 = stripWavHeaderToPcm16Base64(b64);
       if (!pcmB64) { console.warn('[realtime] empty PCM after header strip'); this.setState('error'); return; }
       console.log('[realtime] uploading audio chunk — pcm bytes ≈', Math.round((pcmB64.length * 3) / 4));
       this.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcmB64 }));
       this.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       this.ws.send(JSON.stringify({ type: 'response.create' }));
-      console.log('[realtime] user turn committed, awaiting response.done');
+      // Watchdog — if no response.done in 30s, give up gracefully instead of
+      // leaving the user on 'Thinking…' forever.
+      if (this.responseTimeout) clearTimeout(this.responseTimeout);
+      this.responseTimeout = setTimeout(() => {
+        console.warn('[realtime] response.done timeout after 30s — stopping session');
+        this.cleanup();
+      }, 30000);
+      console.log('[realtime] user turn committed, awaiting response.done (30s watchdog armed)');
     } catch (e) {
       console.warn('[realtime] commitTurn failed:', (e as Error)?.message);
       this.setState('error');
@@ -230,6 +255,7 @@ export class RealtimeSession {
         }
         break;
       case 'response.done': {
+        if (this.responseTimeout) { clearTimeout(this.responseTimeout); this.responseTimeout = null; }
         this.setState('speaking');
         // Concatenate all collected PCM16 deltas and play as one WAV.
         this.playAccumulatedAudio().then(() => {
@@ -298,6 +324,7 @@ export class RealtimeSession {
   private cleanup() {
     if (this.closed) return;
     this.closed = true;
+    if (this.responseTimeout) { clearTimeout(this.responseTimeout); this.responseTimeout = null; }
     try { this.player?.pause(); this.player?.remove(); } catch {}
     this.player = null;
     try { if (this.recording && this.recorderRef) this.recorderRef.stop(); } catch {}
