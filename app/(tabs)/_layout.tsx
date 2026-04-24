@@ -10,14 +10,15 @@
 // Active tab gets amber text + a chunkier amber underline with a stronger glow
 // so it reads as "lit" even in bright environments.
 
-import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, Platform, Animated, Easing } from 'react-native';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../../constants/theme';
 import { HamburgerMenu } from '../../components/HamburgerMenu';
+import { subscribeMapPulse } from '../../utils/mapPulse';
 
 const TAB_ROUTES: { name: string; label: string; path: string }[] = [
   { name: 'index',   label: 'CHAT',    path: '/' },
@@ -30,6 +31,31 @@ const TAB_ROUTES: { name: string; label: string; path: string }[] = [
 function TopTabBar({ onMenu }: { onMenu: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
+
+  // MAP tab pulse — triggered via subscribeMapPulse() when CHAT_META arrives
+  // in Chat. Scale 1.0 → 1.1 → 1.0 (300ms out, 300ms in) and brightness ramp
+  // from dim → full amber → dim. RN Animated so it drives the same
+  // transform/opacity as regular tab state without fighting Reanimated.
+  const mapScale = useRef(new Animated.Value(1)).current;
+  const mapBrightness = useRef(new Animated.Value(0)).current; // 0 = normal, 1 = brightened
+  useEffect(() => {
+    const unsubscribe = subscribeMapPulse(() => {
+      mapScale.setValue(1);
+      mapBrightness.setValue(0);
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(mapScale, { toValue: 1.1, duration: 200, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+          Animated.timing(mapScale, { toValue: 1.0, duration: 300, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(mapBrightness, { toValue: 1, duration: 200, useNativeDriver: false }),
+          Animated.timing(mapBrightness, { toValue: 0, duration: 300, useNativeDriver: false }),
+        ]),
+      ]).start();
+    });
+    return unsubscribe;
+  }, [mapScale, mapBrightness]);
+
   return (
     <SafeAreaView edges={['top']} style={styles.safe}>
       <View style={styles.headerRow}>
@@ -43,6 +69,17 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
             r.path === '/'
               ? pathname === '/' || pathname === '/index'
               : pathname === r.path || pathname.startsWith(r.path + '/');
+          const isMap = r.name === 'map';
+          // Interpolate the map label color between its current state (active
+          // amber or inactive faint cream) and a pure full amber during pulse.
+          const mapColor = isMap
+            ? mapBrightness.interpolate({
+                inputRange: [0, 1],
+                outputRange: [active ? colors.amber : colors.creamFaint, colors.amber],
+              })
+            : undefined;
+          const TextNode = isMap ? Animated.Text : Text;
+          const animatedWrapStyle = isMap ? { transform: [{ scale: mapScale }] } : undefined;
           return (
             <Pressable
               key={r.name}
@@ -53,13 +90,19 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
               style={styles.tab}
               hitSlop={6}
             >
-              <Text
-                allowFontScaling={false}
-                numberOfLines={1}
-                style={[styles.label, active && styles.labelActive]}
-              >
-                {r.label}
-              </Text>
+              <Animated.View style={animatedWrapStyle}>
+                <TextNode
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  style={[
+                    styles.label,
+                    active && styles.labelActive,
+                    isMap && mapColor ? { color: mapColor as any } : null,
+                  ]}
+                >
+                  {r.label}
+                </TextNode>
+              </Animated.View>
               {active ? <View style={styles.underline} /> : null}
             </Pressable>
           );

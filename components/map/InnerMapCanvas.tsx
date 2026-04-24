@@ -34,6 +34,8 @@ import {
   withRepeat,
   withTiming,
   withSpring,
+  withSequence,
+  withDelay,
   Easing,
   useDerivedValue,
 } from 'react-native-reanimated';
@@ -136,12 +138,73 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
     );
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Per-leg pulse intensities. 0 = dim (normal breath), 1 = fully lit in the
+  // matched part's color. Envelope per the spec: brighten 300ms → hold 500ms
+  // → fade 800ms. We drive all three legs from shared values so the Skia
+  // paints can react without a React re-render.
+  const legWoundFixer   = useSharedValue(0);  // Wound ↔ Fixer edge
+  const legWoundSkeptic = useSharedValue(0);  // Wound ↔ Skeptic edge
+  const legFixerSkeptic = useSharedValue(0);  // Fixer ↔ Skeptic (bottom) edge
+
+  // Ripple state. rippleCx/cy lock to the activated node; rippleRadius and
+  // rippleAlpha drive the expanding circle. When a new part activates we
+  // reset and play the ripple once.
+  const rippleCx = useSharedValue(0);
+  const rippleCy = useSharedValue(0);
+  const rippleBaseR = useSharedValue(0);       // starting radius (= node.r)
+  const rippleProgress = useSharedValue(0);    // 0→1 over 600ms
+  const rippleColor = useSharedValue('rgba(255,255,255,0)');
+
   // React to activePart — spring the matching node up, snap the others back.
   useEffect(() => {
     (Object.keys(scaleByKey) as NodeKey[]).forEach((k) => {
       const target = k === activePart ? 1.25 : 1;
       scaleByKey[k].value = withSpring(target, { damping: 12, stiffness: 110 });
     });
+
+    if (!activePart) return;
+
+    // Envelope used by every leg highlight — ramp up, hold, fade back.
+    const pulseEnvelope = () => withSequence(
+      withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) }),
+      withDelay(500, withTiming(0, { duration: 800, easing: Easing.in(Easing.ease) })),
+    );
+
+    // Which legs should light up for this part? Wound→Fixer when Fixer
+    // activates, Wound→Skeptic when Skeptic activates, all three (purple)
+    // when Self activates. Other nodes don't light any leg.
+    if (activePart === 'fixer') {
+      legWoundFixer.value = pulseEnvelope();
+    } else if (activePart === 'skeptic') {
+      legWoundSkeptic.value = pulseEnvelope();
+    } else if (activePart === 'self') {
+      legWoundFixer.value   = pulseEnvelope();
+      legWoundSkeptic.value = pulseEnvelope();
+      legFixerSkeptic.value = pulseEnvelope();
+    }
+
+    // Trigger the ripple from the activated node's center. Use the brighter
+    // MAP_STROKE palette so the ripple color matches the glow palette.
+    const nodeCenter = (() => {
+      switch (activePart) {
+        case 'wound':       return { x: geom.wound.x,       y: geom.wound.y,       r: geom.wound.r,       color: MAP_STROKE.wound };
+        case 'fixer':       return { x: geom.fixer.x,       y: geom.fixer.y,       r: geom.fixer.r,       color: MAP_STROKE.fixer };
+        case 'skeptic':     return { x: geom.skeptic.x,     y: geom.skeptic.y,     r: geom.skeptic.r,     color: MAP_STROKE.skeptic };
+        case 'self':        return { x: geom.self.x,        y: geom.self.y,        r: geom.self.r,        color: MAP_STROKE.self };
+        case 'self-like':   return { x: geom.selfLike.cx,   y: geom.selfLike.cy,   r: geom.selfLike.size, color: MAP_STROKE.selfLike };
+        case 'manager':     return { x: geom.managers.x,    y: geom.managers.y,    r: geom.managers.r,    color: MAP_STROKE.managers };
+        case 'firefighter': return { x: geom.firefighters.x, y: geom.firefighters.y, r: geom.firefighters.r, color: MAP_STROKE.firefighters };
+        default: return null;
+      }
+    })();
+    if (nodeCenter) {
+      rippleCx.value = nodeCenter.x;
+      rippleCy.value = nodeCenter.y;
+      rippleBaseR.value = nodeCenter.r;
+      rippleColor.value = nodeCenter.color;
+      rippleProgress.value = 0;
+      rippleProgress.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.ease) });
+    }
   }, [activePart]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Skia-specific derived values (forces re-read on the UI thread).
@@ -175,6 +238,18 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
     [geom.firefighters.r, subtleScale, scaleFirefighter],
   );
 
+  // Ripple derived values.
+  // Radius grows from nodeR → 2×nodeR over the 0→1 progress.
+  // Alpha drops from 0.6 → 0 across the same span.
+  const rippleR = useDerivedValue(
+    () => rippleBaseR.value * (1 + rippleProgress.value),
+    [rippleBaseR, rippleProgress],
+  );
+  const rippleOpacity = useDerivedValue(
+    () => 0.6 * (1 - rippleProgress.value),
+    [rippleProgress],
+  );
+
   // Now that the shared breath value is named `atmosphereBreath`, this
   // destructure is unambiguous — `atmosphere` refers to the ellipse geometry.
   const { width, height, wound, fixer, skeptic, self, selfLike, managers, firefighters, triangle, atmosphere } = geom;
@@ -197,32 +272,40 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
 
         {/* Triangle outline — each leg is gradient-stroked from the wound color
             at the top vertex down to the node color at the bottom vertex so the
-            backbone reads with depth rather than a flat grey. */}
+            backbone reads with depth rather than a flat grey. Legs also pulse
+            lit when a part is detected: Wound↔Fixer brightens when Fixer
+            activates, Wound↔Skeptic when Skeptic, all three when Self. */}
         <Group opacity={triangleOpacity}>
-          {[0, 1, 2].map((i) => {
-            const a = triangle[i];
-            const b = triangle[i + 1];
-            // Map endpoints → which colors to blend. Edge 0 = wound→fixer, edge
-            // 1 = fixer→skeptic (bottom), edge 2 = skeptic→wound.
-            const endA = i === 0 ? MAP_STROKE.wound   : i === 1 ? MAP_STROKE.fixer   : MAP_STROKE.skeptic;
-            const endB = i === 0 ? MAP_STROKE.fixer   : i === 1 ? MAP_STROKE.skeptic : MAP_STROKE.wound;
-            return (
-              <Line
-                key={i}
-                p1={vec(a.x, a.y)}
-                p2={vec(b.x, b.y)}
-                style="stroke"
-                strokeWidth={2.5}
-              >
-                <LinearGradient
-                  start={vec(a.x, a.y)}
-                  end={vec(b.x, b.y)}
-                  colors={[endA + 'AA', endB + 'AA']}
-                />
-              </Line>
-            );
-          })}
+          <TriangleLeg
+            a={triangle[0]} b={triangle[1]}
+            baseA={MAP_STROKE.wound + 'AA'} baseB={MAP_STROKE.fixer + 'AA'}
+            pulse={legWoundFixer} pulseColor="#F0C070"
+          />
+          <TriangleLeg
+            a={triangle[1]} b={triangle[2]}
+            baseA={MAP_STROKE.fixer + 'AA'} baseB={MAP_STROKE.skeptic + 'AA'}
+            pulse={legFixerSkeptic} pulseColor="#D4B8E8"
+          />
+          <TriangleLeg
+            a={triangle[2]} b={triangle[3]}
+            baseA={MAP_STROKE.skeptic + 'AA'} baseB={MAP_STROKE.wound + 'AA'}
+            pulse={legWoundSkeptic} pulseColor="#90C8E8"
+          />
         </Group>
+
+        {/* RIPPLE — expanding circle from an activated node. Drawn BEFORE the
+            nodes so it feels like the node pushes the ripple outward. Color
+            is driven by the shared value set when activePart changes. */}
+        <Circle
+          cx={rippleCx}
+          cy={rippleCy}
+          r={rippleR}
+          color={rippleColor}
+          style="stroke"
+          strokeWidth={2.5}
+          opacity={rippleOpacity}
+        />
+
 
         {/* MANAGERS — dashed green ring on the left */}
         <DashedRing node={managers} r={managersR} stroke={MAP_STROKE.managers} rgb={MAP_RGB.managers} />
@@ -301,6 +384,45 @@ function NodeLabel({
 }
 
 // ---------- Skia drawing sub-components ----------
+
+// A single triangle leg rendered as two stacked lines: the base gradient
+// stroke (always visible) plus a pulse overlay whose opacity is driven by a
+// shared value. When a connected part is detected in conversation the pulse
+// ramps up over 300ms, holds 500ms, then fades over 800ms — done via
+// withSequence in the parent. The pulse color + stroke width are a bit
+// stronger than the base so the leg reads as "lit" during the hold phase.
+function TriangleLeg({
+  a, b, baseA, baseB, pulse, pulseColor,
+}: {
+  a: { x: number; y: number };
+  b: { x: number; y: number };
+  baseA: string;
+  baseB: string;
+  pulse: ReturnType<typeof useSharedValue<number>>;
+  pulseColor: string;
+}) {
+  const overlayOpacity = useDerivedValue(() => pulse.value, [pulse]);
+  return (
+    <Group>
+      <Line p1={vec(a.x, a.y)} p2={vec(b.x, b.y)} style="stroke" strokeWidth={2.5}>
+        <LinearGradient
+          start={vec(a.x, a.y)}
+          end={vec(b.x, b.y)}
+          colors={[baseA, baseB]}
+        />
+      </Line>
+      {/* Bright pulse overlay — only visible during the highlight envelope. */}
+      <Line
+        p1={vec(a.x, a.y)}
+        p2={vec(b.x, b.y)}
+        color={pulseColor}
+        style="stroke"
+        strokeWidth={3.5}
+        opacity={overlayOpacity}
+      />
+    </Group>
+  );
+}
 
 function GlowCircle({
   cx, cy, r, stroke, rgb, gradientR, strokeWidth,

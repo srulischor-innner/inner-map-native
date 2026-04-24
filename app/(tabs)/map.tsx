@@ -56,14 +56,19 @@ export default function MapScreen() {
   // Node-specific haptic patterns. Heavier impact for parts that carry heavier
   // somatic weight (wound, firefighter), soft notification for Self. Matches the
   // clinical spec that each part has its own felt-sense.
+  // Per-node haptic pattern. Matches the clinical weight each part carries:
+  //   heavier parts (wound) → heavier impact
+  //   medium-weight (fixer, firefighter) → medium
+  //   lighter protectors + soft-self (skeptic, manager, self-like) → light
+  //   true Self → soft success notification (the landed feeling)
   function tapHaptic(k: NodeKey) {
     switch (k) {
       case 'wound':       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}); break;
-      case 'firefighter': Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}); break;
       case 'fixer':       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); break;
-      case 'self-like':   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); break;
+      case 'firefighter': Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); break;
       case 'skeptic':     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); break;
       case 'manager':     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); break;
+      case 'self-like':   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); break;
       case 'self':        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {}); break;
     }
   }

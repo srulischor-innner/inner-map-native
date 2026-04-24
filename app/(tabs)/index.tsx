@@ -20,6 +20,9 @@ import {
   Platform,
   StyleSheet,
   Keyboard,
+  Animated,
+  Easing,
+  Text,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -29,6 +32,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { api, ChatMessage } from '../../services/api';
 import { parseChatMeta, stripMarkers } from '../../utils/markers';
 import { colors, spacing } from '../../constants/theme';
+import { pulseMapTab } from '../../utils/mapPulse';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { TypingIndicator } from '../../components/TypingIndicator';
@@ -57,6 +61,13 @@ export default function ChatScreen() {
   // Contextual conversation starters returned by /api/returning-greeting —
   // grounded in the last session so the chips land on what's actually alive.
   const [starters, setStarters] = useState<string[]>([]);
+  // End-session transition. When the user commits, we fade the messages out
+  // then cross-fade a centered "Your map has been updated." overlay in for a
+  // beat, then fade that out and reload the fresh session. Done with RN
+  // Animated because we're driving straight View opacities.
+  const [endingTransition, setEndingTransition] = useState(false);
+  const messagesOpacity = useRef(new Animated.Value(1)).current;
+  const transitionOpacity = useRef(new Animated.Value(0)).current;
   // Safe-area top inset + top-bar chrome height — used as keyboardVerticalOffset
   // so the KeyboardAvoidingView pushes the input bar exactly above the keyboard
   // without leaving a gap or going too far.
@@ -205,6 +216,9 @@ export default function ChatScreen() {
                   detectedPart = meta.detectedPart;
                   partLabel = meta.partLabel ?? null;
                   Haptics.selectionAsync().catch(() => {});
+                  // Signal the top tab bar to pulse the MAP label — a gentle
+                  // "your map just updated" cue that doesn't interrupt chat.
+                  pulseMapTab();
                 }
               }
             },
@@ -284,21 +298,32 @@ export default function ChatScreen() {
             : 0
         }
       >
-        <ScrollView
-          ref={scrollRef}
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          onScrollBeginDrag={() => Keyboard.dismiss()}
-        >
-          {bubbleList}
-          {typing ? <TypingIndicator /> : null}
-          {/* Starter chips appear only before the user has said anything. They
-              disappear the moment the first user turn is added. */}
-          {messages.length > 0 && historyRef.current.every((m) => m.role !== 'user') ? (
-            <ConversationStarters onPick={handleSend} starters={starters} />
-          ) : null}
-        </ScrollView>
+        <Animated.View style={[styles.flex, { opacity: messagesOpacity }]}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            onScrollBeginDrag={() => Keyboard.dismiss()}
+          >
+            {bubbleList}
+            {typing ? <TypingIndicator /> : null}
+            {/* Starter chips appear only before the user has said anything. They
+                disappear the moment the first user turn is added. */}
+            {messages.length > 0 && historyRef.current.every((m) => m.role !== 'user') ? (
+              <ConversationStarters onPick={handleSend} starters={starters} />
+            ) : null}
+          </ScrollView>
+        </Animated.View>
+
+        {/* End-session overlay — only rendered while the transition is
+            active. Absolute-positioned so it sits on top of the messages
+            layer without affecting the keyboard-avoiding layout. */}
+        {endingTransition ? (
+          <Animated.View pointerEvents="none" style={[styles.transition, { opacity: transitionOpacity }]}>
+            <Text style={styles.transitionText}>Your map has been updated.</Text>
+          </Animated.View>
+        ) : null}
         <ChatInput disabled={sending} onSend={handleSend} />
         {/* End session: only appears once a real back-and-forth has happened.
             On commit, flush the transcript to /api/summary + /api/sessions so
@@ -308,27 +333,56 @@ export default function ChatScreen() {
           // has sent at least one message and the AI is responding/has
           // responded. Before that first turn there's nothing to save, and
           // forcing a 3-message threshold was arbitrary.
-          visible={historyRef.current.filter((m) => m.role === 'user').length >= 1}
+          visible={historyRef.current.filter((m) => m.role === 'user').length >= 1 && !endingTransition}
           onEnd={async () => {
-            try {
-              // Kick the summary build; the server handles the async part.
-              await fetch(api.baseUrl + '/api/summary', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ messages: historyRef.current, sessionId: sessionIdRef.current }),
-              }).catch(() => {});
-              await api.saveSession({ id: sessionIdRef.current, messages: historyRef.current });
-            } catch {}
-            // Start a fresh session on the same screen.
+            // === END SESSION TRANSITION ===
+            // 1) Fade messages out (500ms)
+            // 2) Soft success haptic as the "Your map has been updated." overlay
+            //    fades in
+            // 3) Hold 2s
+            // 4) Fade overlay out (500ms) while we reset + fetch fresh greeting
+            setEndingTransition(true);
+            Animated.timing(messagesOpacity, {
+              toValue: 0, duration: 500,
+              easing: Easing.inOut(Easing.ease), useNativeDriver: true,
+            }).start();
+
+            // Kick save/summary in parallel with the fade — no reason to block.
+            const saveWork = (async () => {
+              try {
+                await fetch(api.baseUrl + '/api/summary', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ messages: historyRef.current, sessionId: sessionIdRef.current }),
+                }).catch(() => {});
+                await api.saveSession({ id: sessionIdRef.current, messages: historyRef.current });
+              } catch {}
+            })();
+
+            await new Promise((r) => setTimeout(r, 500));
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            Animated.timing(transitionOpacity, {
+              toValue: 1, duration: 350, useNativeDriver: true,
+            }).start();
+
+            await new Promise((r) => setTimeout(r, 2000));
+            await saveWork;
+
+            // Reset session while overlay still covers the screen.
             historyRef.current = [];
             setMessages([]);
             sessionIdRef.current = uuidv4();
-            // Re-fetch the greeting + suggestions for the new session.
             const next = await api.getReturningGreeting();
             const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;
             if (next.suggestions.length) setStarters(next.suggestions);
             addAssistantMessage(greeting);
             historyRef.current.push({ role: 'assistant', content: greeting });
+
+            // Crossfade back to messages.
+            Animated.parallel([
+              Animated.timing(transitionOpacity, { toValue: 0, duration: 500, useNativeDriver: true }),
+              Animated.timing(messagesOpacity,   { toValue: 1, duration: 500, useNativeDriver: true }),
+            ]).start(() => setEndingTransition(false));
           }}
         />
       </KeyboardAvoidingView>
@@ -341,4 +395,17 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.md, paddingBottom: spacing.md },
+  transition: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  transitionText: {
+    color: colors.amberDim,
+    fontStyle: 'italic',
+    fontSize: 17,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
 });
