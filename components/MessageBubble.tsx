@@ -8,7 +8,7 @@
 //   - a blinking caret while the message is still streaming.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, Animated, Easing, StyleSheet, PanResponder, LayoutChangeEvent } from 'react-native';
+import { View, Text, Pressable, Animated, Easing, StyleSheet, PanResponder, LayoutChangeEvent, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import {
@@ -18,6 +18,7 @@ import {
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { api } from '../services/api';
 import { PartBadge } from './PartBadge';
+import { ensureTTS, getCachedTTS } from '../utils/ttsCache';
 
 export type ChatMsg = {
   id: string;
@@ -56,58 +57,116 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === 'user';
   const playingId = usePlayingId();
   const isPlaying = playingId === msg.id;
+  // Local player kept alive across pauses so Tap-pause → Tap-resume picks up
+  // exactly where it left off. Survives isPlaying toggles; only released on
+  // a different message claiming the slot (via the useEffect below) or on
+  // component unmount.
+  const localPlayerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const [loading, setLoading] = useState(false);
+  // Show the spinner only if the fetch takes more than 500ms — a cache hit
+  // feels instant and shouldn't flash a spinner for a single frame.
+  const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // When a different message claims the playing slot, tear down our local
+  // player — it's ours no longer and keeping it loaded wastes memory.
+  useEffect(() => {
+    if (playingId && playingId !== msg.id && localPlayerRef.current) {
+      try { localPlayerRef.current.pause(); localPlayerRef.current.remove(); } catch {}
+      localPlayerRef.current = null;
+    }
+  }, [playingId, msg.id]);
+
+  // Unmount cleanup — always release the native player and clear the
+  // singleton slot if we still own it.
+  useEffect(() => () => {
+    if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+    try { localPlayerRef.current?.pause(); localPlayerRef.current?.remove(); } catch {}
+    localPlayerRef.current = null;
+    if (currentPlayerOwnerId === msg.id) setPlayingId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function togglePlayback() {
     Haptics.selectionAsync().catch(() => {});
-    if (isPlaying) {
-      try { currentPlayer?.pause(); currentPlayer?.remove(); } catch {}
-      currentPlayer = null;
+    // --- Case 1: this message is already the one playing → pause ---
+    if (isPlaying && localPlayerRef.current) {
+      try { localPlayerRef.current.pause(); } catch {}
       setPlayingId(null);
       return;
     }
-    // Stop anything else currently playing first.
-    try { currentPlayer?.pause(); currentPlayer?.remove(); } catch {}
-    currentPlayer = null;
-    setPlayingId(null);
-
-    setLoading(true);
+    // --- Case 2: we already have a loaded player (paused earlier) → resume ---
+    if (localPlayerRef.current && !isPlaying) {
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false, playsInSilentMode: true,
+          interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
+        });
+      } catch {}
+      // Kick out whoever else holds the slot (other bubble / voice note).
+      setPlayingId(msg.id);
+      try { localPlayerRef.current.play(); } catch (e) {
+        console.warn('[tts] resume failed:', (e as Error)?.message);
+      }
+      watchForFinish(localPlayerRef.current, msg.id);
+      return;
+    }
+    // --- Case 3: first play — create a player, ideally from cache ---
+    // Delay the spinner by 500ms so cache hits don't flash.
+    if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+    loadingTimerRef.current = setTimeout(() => setLoading(true), 500);
     try {
       try {
         await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-          interruptionMode: 'mixWithOthers',
-          shouldPlayInBackground: false,
+          allowsRecording: false, playsInSilentMode: true,
+          interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
         });
       } catch {}
-      const buf = await api.speak(msg.text);
-      if (!buf) { setLoading(false); return; }
-      const dataUri = 'data:audio/mpeg;base64,' + bufferToBase64(buf);
-      const player = createAudioPlayer({ uri: dataUri });
-      currentPlayer = player;
-      setPlayingId(msg.id);
+      // Try cache first — instant path.
+      let uri = getCachedTTS(msg.id);
+      if (!uri) {
+        // Miss → await the in-flight prefetch (or kick one off). This is
+        // the slow path but the spinner already covers it.
+        const fallback = await ensureTTS(msg.id, msg.text);
+        uri = fallback || null;
+      }
+      if (loadingTimerRef.current) { clearTimeout(loadingTimerRef.current); loadingTimerRef.current = null; }
       setLoading(false);
-      player.play();
-      // Poll for completion — lightweight and doesn't depend on expo-audio
-      // event APIs that vary across SDK versions.
-      const watch = async () => {
-        while (currentPlayer === player) {
-          try {
-            const s = player.currentStatus;
-            if (s?.didJustFinish || s?.isLoaded === false) break;
-          } catch { break; }
-          await new Promise((r) => setTimeout(r, 250));
-        }
-        try { player.remove(); } catch {}
-        if (currentPlayer === player) { currentPlayer = null; setPlayingId(null); }
-      };
-      watch();
+      if (!uri) return;
+      const player = createAudioPlayer({ uri });
+      localPlayerRef.current = player;
+      setPlayingId(msg.id);
+      try { player.play(); } catch (e) {
+        console.warn('[tts] play failed:', (e as Error)?.message);
+      }
+      watchForFinish(player, msg.id);
     } catch (e) {
-      console.warn('[tts] play failed:', (e as Error).message);
+      console.warn('[tts] togglePlayback failed:', (e as Error)?.message);
+      if (loadingTimerRef.current) { clearTimeout(loadingTimerRef.current); loadingTimerRef.current = null; }
       setLoading(false);
       setPlayingId(null);
     }
+  }
+
+  /** Lightweight poll — when the clip finishes, reset UI + release the
+   *  native player so the next tap starts fresh from zero. */
+  function watchForFinish(player: ReturnType<typeof createAudioPlayer>, ownerId: string) {
+    const watch = async () => {
+      while (localPlayerRef.current === player) {
+        try {
+          const s = player.currentStatus;
+          if (s?.didJustFinish) break;
+          if (s?.isLoaded === false) break;
+        } catch { break; }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      // Finished cleanly — release + reset so a fresh tap starts at 0.
+      if (localPlayerRef.current === player) {
+        try { player.remove(); } catch {}
+        localPlayerRef.current = null;
+        if (currentPlayerOwnerId === ownerId) setPlayingId(null);
+      }
+    };
+    watch();
   }
 
   return (
@@ -129,23 +188,27 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
         {!isUser && msg.detectedPart ? (
           <PartBadge part={msg.detectedPart} label={msg.partLabel} />
         ) : null}
-        {/* Speaker button only on AI messages once streaming is complete. */}
+        {/* Speaker button only on AI messages once streaming is complete.
+            Three visual states per spec:
+              default: dim speaker (volume-medium-outline) in 40% cream
+              playing: amber pause icon (#E6B47A)
+              loading: ActivityIndicator — only shown after 500ms delay */}
         {!isUser && !msg.streaming && msg.text.trim() ? (
           <Pressable
             onPress={togglePlayback}
-            hitSlop={6}
+            hitSlop={12}
             style={styles.speakerBtn}
-            accessibilityLabel={isPlaying ? 'Stop reading aloud' : 'Read aloud'}
+            accessibilityLabel={isPlaying ? 'Pause reading aloud' : 'Read aloud'}
           >
-            <Ionicons
-              name={
-                loading ? 'sync' :
-                isPlaying ? 'volume-high' :
-                'volume-medium-outline'
-              }
-              size={14}
-              color={isPlaying ? colors.amber : colors.creamFaint}
-            />
+            {loading ? (
+              <ActivityIndicator size="small" color={colors.amber} />
+            ) : (
+              <Ionicons
+                name={isPlaying ? 'pause' : 'volume-medium-outline'}
+                size={16}
+                color={isPlaying ? '#E6B47A' : 'rgba(240,237,232,0.4)'}
+              />
+            )}
           </Pressable>
         ) : null}
       </View>

@@ -34,6 +34,7 @@ import { parseChatMeta, stripMarkers } from '../../utils/markers';
 import { colors, spacing } from '../../constants/theme';
 import { pulseMapTab } from '../../utils/mapPulse';
 import { consumeSelfMode } from '../../utils/selfMode';
+import { prefetchTTS, clearTTSCache } from '../../utils/ttsCache';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { TypingIndicator } from '../../components/TypingIndicator';
@@ -114,9 +115,11 @@ export default function ChatScreen() {
       if (greetingRes.suggestions.length > 0) setStarters(greetingRes.suggestions);
 
       const finalGreeting = (greetingRes.greeting && greetingRes.greeting.trim()) || FALLBACK_GREETING;
-      addAssistantMessage(finalGreeting);
+      const openerId = addAssistantMessage(finalGreeting);
       historyRef.current.push({ role: 'assistant', content: finalGreeting });
       setTyping(false);
+      // Warm TTS cache for the greeting so the speaker icon is instant.
+      prefetchTTS(openerId, finalGreeting);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -301,6 +304,10 @@ export default function ChatScreen() {
                 id: sessionIdRef.current,
                 messages: historyRef.current,
               });
+              // Warm the TTS cache so tapping the speaker on this bubble
+              // plays instantly instead of waiting on /api/speak. Keyed by
+              // the streaming bubble's id (same one MessageBubble uses).
+              prefetchTTS(streamId, target);
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
               setSending(false);
               setTyping(false);
@@ -446,6 +453,10 @@ export default function ChatScreen() {
 
             // Reset session while overlay still covers the screen. Self mode
             // is session-scoped — the next session starts in normal mode.
+            // TTS cache is also session-scoped; drop it so the new session's
+            // first bubble doesn't accidentally play audio from the old one
+            // if the new bubble happens to get the same (uuid-unlikely) id.
+            clearTTSCache();
             setSelfMode(false);
             historyRef.current = [];
             setMessages([]);
@@ -453,8 +464,9 @@ export default function ChatScreen() {
             const next = await api.getReturningGreeting();
             const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;
             if (next.suggestions.length) setStarters(next.suggestions);
-            addAssistantMessage(greeting);
+            const newOpenerId = addAssistantMessage(greeting);
             historyRef.current.push({ role: 'assistant', content: greeting });
+            prefetchTTS(newOpenerId, greeting);
 
             // Crossfade back to messages.
             Animated.parallel([
