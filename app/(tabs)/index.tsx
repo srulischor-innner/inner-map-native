@@ -304,7 +304,11 @@ export default function ChatScreen() {
             On commit, flush the transcript to /api/summary + /api/sessions so
             the reflection + title land in the Journal tab immediately. */}
         <EndSessionButton
-          visible={historyRef.current.filter((m) => m.role === 'user').length >= 3}
+          // Visible once the session has actually started — i.e. the user
+          // has sent at least one message and the AI is responding/has
+          // responded. Before that first turn there's nothing to save, and
+          // forcing a 3-message threshold was arbitrary.
+          visible={historyRef.current.filter((m) => m.role === 'user').length >= 1}
           onEnd={async () => {
             try {
               // Kick the summary build; the server handles the async part.

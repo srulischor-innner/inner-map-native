@@ -169,10 +169,12 @@ export function ChatInput({
 
 const styles = StyleSheet.create({
   wrap: {
-    // No top border, no secondary fill — the bar blends into the chat
-    // background so the input reads as part of the page, not a chrome layer
-    // pinned to the bottom.
-    backgroundColor: 'transparent',
+    // A little presence so the input reads as "a place to write" rather than
+    // an afterthought — faint white-on-dark wash + a 0.5px top border to
+    // separate it from the scrolling messages without dominating.
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(255,255,255,0.1)',
   },
   recordingRow: {
     flexDirection: 'row',
@@ -198,16 +200,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
+    // Taller bar — vertical padding bumped from 8 → 14 so the input feels
+    // like a proper writing surface rather than a thin strip.
+    paddingVertical: 14,
     gap: spacing.sm,
   },
   input: {
     flex: 1,
     color: colors.cream,
-    fontSize: 15,
-    lineHeight: 20,
-    minHeight: 40,
+    // Bumped from 15 → 16 for readability and to match the perceived weight
+    // of the expanded bar.
+    fontSize: 16,
+    lineHeight: 22,
+    minHeight: 44,
     maxHeight: 140,
     paddingVertical: 10,
     paddingHorizontal: 14,
