@@ -111,7 +111,14 @@ export class RealtimeSession {
       console.log('[realtime] WS status: open ✓');
 
       ws.onmessage = (ev: any) => this.handleServerEvent(ev);
-      ws.onclose = () => { console.log('[realtime] WS closed'); this.cleanup(); };
+      ws.onclose = (ev: any) => {
+        console.log('[realtime] WS closed (passive — upstream or proxy closed us):',
+          'code=' + (ev?.code ?? '?'),
+          'reason="' + (ev?.reason ?? '') + '"',
+          'wasClean=' + (ev?.wasClean ?? '?'),
+        );
+        this.cleanup();
+      };
       ws.onerror = (e: any) => { console.warn('[realtime] WS error', e?.message); };
 
       // Recorder uses the preset's sample rate — 44.1k on iOS default, the
@@ -138,6 +145,7 @@ export class RealtimeSession {
   /** Called when user taps the mic a second time — finalize the recording,
    *  upload the audio, and ask the server for a response. */
   async commitTurn(): Promise<void> {
+    console.log('[realtime] commitTurn called — NOT closing session, waiting for response');
     console.log(
       '[realtime] commitTurn() — ws?=', !!this.ws,
       'readyState=', this.ws?.readyState,
@@ -216,8 +224,10 @@ export class RealtimeSession {
     }
   }
 
-  /** Fully tear down: close WS, stop playback, end recording, fire onEnded. */
+  /** Fully tear down: close WS, stop playback, end recording, fire onEnded.
+   *  Only call this on unmount. commitTurn() NEVER calls this. */
   stop() {
+    console.log('[realtime] stop() called — tearing down session', new Error('stop trace').stack?.split('\n').slice(1, 5).join(' | '));
     this.cleanup();
   }
 
@@ -342,6 +352,9 @@ export class RealtimeSession {
 
   private cleanup() {
     if (this.closed) return;
+    console.log('[realtime] cleanup() — closing session. Caller:',
+      new Error('cleanup trace').stack?.split('\n').slice(1, 6).join(' | '),
+    );
     this.closed = true;
     if (this.responseTimeout) { clearTimeout(this.responseTimeout); this.responseTimeout = null; }
     try { this.player?.pause(); this.player?.remove(); } catch {}

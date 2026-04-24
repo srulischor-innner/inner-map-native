@@ -119,8 +119,9 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     // Commit the current turn (second tap while recording).
     if (state === 'listening') {
       if (realtimeRef.current) {
-        console.log('[map-voice] committing realtime turn');
+        console.log('[map-voice] SECOND TAP → commitTurn ONLY (no stop, no cleanup)');
         await realtimeRef.current.commitTurn();
+        console.log('[map-voice] commitTurn resolved, session still open — awaiting response.done');
       } else if (legacyActive.current) {
         console.log('[map-voice] committing legacy turn (stop + transcribe)');
         await legacyStopAndRespond();
