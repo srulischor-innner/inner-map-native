@@ -42,8 +42,13 @@ const PCM16_RECORDING: any = {
     bitRate: 384000,
   },
   ios: {
+    // 'lpcm' is the IOSOutputFormat.LINEARPCM enum value (native side expects
+    // a 4-char FourCC string here — 'lpcm' is correct).
     outputFormat: 'lpcm',
-    audioQuality: 'max',
+    // NUMERIC — expo-audio's AudioQuality enum. MAX = 127. The iOS bridge
+    // casts this field to Int; passing the string 'max' crashes with
+    // "Cannot cast max for field audioQuality of type Int".
+    audioQuality: 127,
     sampleRate: 24000,
     numberOfChannels: 1,
     bitRate: 384000,
