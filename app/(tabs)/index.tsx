@@ -154,25 +154,43 @@ export default function ChatScreen() {
     scrollToBottom();
   }
 
-  /** Append a user voice-note message: shows a playable bubble AND feeds
-   *  the transcript into the AI chat flow. If the transcript is empty we
-   *  still show the bubble but skip the AI turn — the user can type a
-   *  follow-up next. */
-  function handleSendVoice({ uri, durationSec, transcript }: { uri: string; durationSec: number; transcript: string }) {
+  /** Append a user voice-note message IMMEDIATELY (showing "Transcribing…"
+   *  underneath the waveform), then transcribe asynchronously. When the
+   *  transcript resolves we update the bubble in place AND push the text
+   *  into the chat history so the AI can reply. Empty transcript → bubble
+   *  remains in the list but no AI turn is triggered. */
+  async function handleSendVoice({ uri, durationSec }: { uri: string; durationSec: number }) {
+    const bubbleId = uuidv4();
     setMessages((prev) => [
       ...prev,
       {
-        id: uuidv4(),
+        id: bubbleId,
         role: 'user',
-        text: transcript,
-        voice: { uri, durationSec },
+        text: '', // the bubble body is the voice UI; text stays empty until transcript lands
+        voice: { uri, durationSec, transcript: null },
       },
     ]);
     scrollToBottom();
-    if (transcript.trim()) {
-      // Push to history (AI needs the text), then run the normal send
-      // pipeline — but skip addUserMessage inside handleSend since we
-      // already added the bubble above.
+    // Kick transcription. /api/transcribe is Whisper-backed; iOS records
+    // .m4a from expo-audio's HIGH_QUALITY preset.
+    const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
+    let transcript = '';
+    try {
+      const t = await api.transcribe(uri, mime);
+      transcript = (t || '').trim();
+    } catch (err) {
+      console.warn('[chat] voice transcribe failed:', (err as Error)?.message);
+    }
+    // Update the bubble in place — transcript becomes a real string (possibly
+    // empty-string, which the bubble renders as "(nothing heard)").
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === bubbleId && m.voice
+          ? { ...m, text: transcript, voice: { ...m.voice, transcript } }
+          : m,
+      ),
+    );
+    if (transcript) {
       historyRef.current.push({ role: 'user', content: transcript });
       runAssistantTurn();
     }

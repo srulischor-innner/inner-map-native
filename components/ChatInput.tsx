@@ -27,7 +27,6 @@ import {
   Pressable,
   Animated,
   StyleSheet,
-  ActivityIndicator,
   Alert,
   Easing,
   GestureResponderEvent,
@@ -36,7 +35,6 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
 import { colors, fonts, radii, spacing } from '../constants/theme';
-import { api } from '../services/api';
 
 // Swiping the finger this far left during a hold → cancel the recording.
 const CANCEL_SWIPE_PX = 80;
@@ -49,22 +47,23 @@ export function ChatInput({
   disabled?: boolean;
   onSend: (text: string) => void;
   /** Called when user releases a voice note hold without cancelling. The
-   *  parent shows the voice-note bubble + runs the transcript through
-   *  /api/chat. If transcript is empty, the parent can show the bubble
-   *  alone without triggering a chat turn. */
-  onSendVoice?: (opts: { uri: string; durationSec: number; transcript: string }) => void;
+   *  parent shows the voice-note bubble with a "Transcribing…" line, then
+   *  transcribes the audio and runs the resulting text through /api/chat. */
+  onSendVoice?: (opts: { uri: string; durationSec: number }) => void;
 }) {
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
-  const [processing, setProcessing] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  // Short-tap tooltip — appears above the mic when the user taps without
+  // holding long enough to trigger a recording. Fades after 1.5s.
+  const [showTapHint, setShowTapHint] = useState(false);
+  const tapHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const startXRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const didCancelRef = useRef(false);
 
   // Red pulse while recording.
   const pulse = useRef(new Animated.Value(1)).current;
@@ -80,7 +79,7 @@ export function ChatInput({
     return () => loop.stop();
   }, [recording, pulse]);
 
-  const canSend = text.trim().length > 0 && !disabled && !processing && !recording;
+  const canSend = text.trim().length > 0 && !disabled && !recording;
 
   async function handleSend() {
     const t = text.trim();
@@ -91,15 +90,23 @@ export function ChatInput({
   }
 
   // ------------------------------------------------------------------------
-  // Press-and-hold voice recording
+  // Press-and-hold voice recording — uses onLongPress (fires after 150ms of
+  // hold) so a quick tap can show the teaching tooltip without accidentally
+  // triggering a recording. Swipe-left cancel is tracked via onTouchMove so
+  // we need to keep the pointer events flowing even while the recorder is
+  // running.
   // ------------------------------------------------------------------------
-  async function beginHold(e: GestureResponderEvent) {
-    console.log('[mic] press-and-hold begin');
+  function beginTouch(e: GestureResponderEvent) {
+    // Remember the initial finger X so handleMove can compute dx for the
+    // swipe-left cancel gesture. Fires on EVERY touch down — recording
+    // itself waits for onLongPress.
     startXRef.current = e.nativeEvent.pageX;
-    didCancelRef.current = false;
+  }
+
+  async function startRecording() {
+    console.log('[mic] long-press fired → recording start');
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
-      console.log('[mic] permission:', perm.granted);
       if (!perm.granted) {
         Alert.alert('Microphone off', 'Grant mic access in Settings to record voice notes.');
         return;
@@ -116,13 +123,12 @@ export function ChatInput({
       setSeconds(0);
       startTimeRef.current = Date.now();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      // Tick the duration counter every 250ms — smooth but not every frame.
       tickRef.current = setInterval(() => {
         const s = Math.floor((Date.now() - startTimeRef.current) / 1000);
         setSeconds(s);
       }, 250);
     } catch (err) {
-      console.warn('[mic] beginHold failed:', (err as Error).message);
+      console.warn('[mic] startRecording failed:', (err as Error).message);
       setRecording(false);
     }
   }
@@ -132,8 +138,6 @@ export function ChatInput({
     const startX = startXRef.current;
     if (startX == null) return;
     const dx = e.nativeEvent.pageX - startX;
-    // Fingers drifting left past threshold arms the cancel state — the
-    // UI turns red-tinted and a release at that point will not send.
     const shouldArm = dx < -CANCEL_SWIPE_PX;
     if (shouldArm !== cancelArmed) {
       setCancelArmed(shouldArm);
@@ -141,9 +145,20 @@ export function ChatInput({
     }
   }
 
+  function handleShortTap() {
+    // Fires when the touch ends BEFORE the 150ms long-press timer. Shows
+    // a transient "Hold to record" hint so the gesture discovers itself
+    // without nagging the user.
+    if (tapHintTimer.current) clearTimeout(tapHintTimer.current);
+    setShowTapHint(true);
+    tapHintTimer.current = setTimeout(() => setShowTapHint(false), 1500);
+  }
+
   async function endHold() {
+    // If the recorder never started (short tap), bail cleanly. Swipe-cancel
+    // still runs through this path.
     if (!recording) return;
-    console.log('[mic] press-and-hold end, cancelArmed=', cancelArmed);
+    console.log('[mic] press-out, cancelArmed=', cancelArmed);
     const wasCancel = cancelArmed;
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
@@ -154,27 +169,14 @@ export function ChatInput({
       await recorder.stop();
       const uri = recorder.uri;
       if (wasCancel || !uri || heldSec < 0.3) {
-        // Canceled via left-swipe OR too short to count as a real message.
-        didCancelRef.current = true;
         Haptics.selectionAsync().catch(() => {});
         return;
       }
-      // Not cancelled — transcribe, then hand both uri + transcript to parent.
-      setProcessing(true);
-      const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
-      let transcript = '';
-      try {
-        const t = await api.transcribe(uri, mime);
-        transcript = (t || '').trim();
-      } catch (e) {
-        console.warn('[mic] transcribe failed:', (e as Error).message);
-      }
-      setProcessing(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      onSendVoice?.({ uri, durationSec: heldSec, transcript });
+      // Parent shows the voice bubble + runs transcription asynchronously.
+      onSendVoice?.({ uri, durationSec: heldSec });
     } catch (err) {
-      console.warn('[mic] endHold stop/transcribe failed:', (err as Error).message);
-      setProcessing(false);
+      console.warn('[mic] endHold stop failed:', (err as Error).message);
     }
   }
 
@@ -203,7 +205,7 @@ export function ChatInput({
           <TextInput
             value={text}
             onChangeText={setText}
-            editable={!disabled && !processing}
+            editable={!disabled}
             multiline
             placeholder={'Share what feels true…'}
             placeholderTextColor={colors.creamFaint}
@@ -218,38 +220,43 @@ export function ChatInput({
             <Ionicons name="arrow-up" size={20} color={colors.background} />
           </Pressable>
         ) : (
-          <Pressable
-            onPressIn={beginHold}
-            onPressOut={endHold}
-            onTouchMove={handleMove}
-            disabled={processing}
-            // Hit area expanded well beyond the visible 48px so the button
-            // reliably catches press-and-hold even with imprecise finger
-            // placement — previously reports of "mic not tappable" came
-            // from the tap area being exactly the visible 40px circle.
-            hitSlop={14}
-            style={styles.micPressable}
-            accessibilityLabel={recording ? 'Release to send voice note' : 'Hold to record voice note'}
-          >
-            <View
-              style={[
-                styles.btn,
-                styles.micBtn,
-                recording && styles.micRecording,
-                cancelArmed && styles.micCancel,
-              ]}
+          <View>
+            {showTapHint ? (
+              <View style={styles.tapHint} pointerEvents="none">
+                <Text style={styles.tapHintText}>Hold to record</Text>
+              </View>
+            ) : null}
+            <Pressable
+              onLongPress={startRecording}
+              delayLongPress={150}
+              onPress={handleShortTap}
+              onPressIn={beginTouch}
+              onPressOut={endHold}
+              onTouchMove={handleMove}
+              // Hit area expanded well beyond the visible 44px so the button
+              // reliably catches press-and-hold with imprecise finger
+              // placement — previously reports of "mic not tappable" were
+              // tracing to the tap area being exactly the visible 40px circle.
+              hitSlop={14}
+              style={styles.micPressable}
+              accessibilityLabel={recording ? 'Release to send voice note' : 'Hold to record voice note'}
             >
-              {processing ? (
-                <ActivityIndicator size="small" color={colors.amber} />
-              ) : (
+              <View
+                style={[
+                  styles.btn,
+                  styles.micBtn,
+                  recording && styles.micRecording,
+                  cancelArmed && styles.micCancel,
+                ]}
+              >
                 <Ionicons
-                  name={recording ? (cancelArmed ? 'close' : 'mic') : 'mic'}
+                  name={recording && cancelArmed ? 'close' : 'mic'}
                   size={20}
                   color={recording ? '#fff' : colors.amber}
                 />
-              )}
-            </View>
-          </Pressable>
+              </View>
+            </Pressable>
+          </View>
         )}
       </View>
     </View>
@@ -361,5 +368,28 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 11,
     fontStyle: 'italic',
+  },
+
+  // Short-tap tooltip. Sits above the mic; pointerEvents:none so it never
+  // steals a subsequent hold attempt.
+  tapHint: {
+    position: 'absolute',
+    bottom: 56,            // clears the 52px mic pressable + a little gap
+    right: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(20,19,26,0.95)',
+    borderRadius: 12,
+    borderWidth: 0.5,
+    borderColor: colors.amberDim,
+    // Small shadow helps it float above dark surfaces.
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  tapHintText: {
+    color: colors.cream,
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+    letterSpacing: 0.3,
   },
 });

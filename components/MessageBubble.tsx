@@ -27,9 +27,10 @@ export type ChatMsg = {
   partLabel?: string | null;
   streaming?: boolean;
   /** Present on user voice-note messages. The bubble renders a play button +
-   *  waveform + duration instead of the text string. The text field still
-   *  holds the transcript so the AI sees what was said. */
-  voice?: { uri: string; durationSec: number };
+   *  waveform + duration + the transcript below a hairline divider. While
+   *  the transcript is still being produced, `transcript` is null and the
+   *  bubble shows a "Transcribing…" line instead. */
+  voice?: { uri: string; durationSec: number; transcript: string | null };
 };
 
 // One shared player slot — tapping the speaker on a new bubble stops playback
@@ -113,7 +114,11 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
       <View style={[styles.bubble, isUser ? styles.user : styles.assistant]}>
         {msg.voice ? (
-          <VoiceNoteBubble uri={msg.voice.uri} durationSec={msg.voice.durationSec} />
+          <VoiceNoteBubble
+            uri={msg.voice.uri}
+            durationSec={msg.voice.durationSec}
+            transcript={msg.voice.transcript}
+          />
         ) : (
           <Text style={styles.text}>
             {msg.text}
@@ -153,9 +158,14 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
 // user released the press-and-hold mic in ChatInput. Singleton pattern with
 // currentPlayer lets tapping another voice note auto-stop the previous.
 // ============================================================================
-function VoiceNoteBubble({ uri, durationSec }: { uri: string; durationSec: number }) {
+function VoiceNoteBubble({
+  uri, durationSec, transcript,
+}: { uri: string; durationSec: number; transcript: string | null }) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
+  // 0..20 — how many bars to paint as "already played". Updates during
+  // playback via the polling watch loop below.
+  const [playedBars, setPlayedBars] = useState(0);
   const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
 
   // 20 fixed-height bars derived from the URI hash so the waveform is stable
@@ -202,12 +212,21 @@ function VoiceNoteBubble({ uri, durationSec }: { uri: string; durationSec: numbe
         while (playerRef.current === player) {
           try {
             const s = player.currentStatus;
+            // Map the current time into a 0..20 bar index so the waveform
+            // "fills up" left-to-right as the clip plays back.
+            const cur = typeof s?.currentTime === 'number' ? s.currentTime : 0;
+            const ratio = durationSec > 0 ? Math.min(1, cur / durationSec) : 0;
+            setPlayedBars(Math.floor(ratio * 20));
             if (s?.didJustFinish || s?.isLoaded === false) break;
           } catch { break; }
-          await new Promise((r) => setTimeout(r, 250));
+          await new Promise((r) => setTimeout(r, 100));
         }
         try { player.remove(); } catch {}
-        if (playerRef.current === player) { playerRef.current = null; setPlaying(false); }
+        if (playerRef.current === player) {
+          playerRef.current = null;
+          setPlaying(false);
+          setPlayedBars(0); // reset so a second tap starts from the left
+        }
       };
       watch();
     } catch (e) {
@@ -218,21 +237,51 @@ function VoiceNoteBubble({ uri, durationSec }: { uri: string; durationSec: numbe
   }
 
   return (
-    <Pressable onPress={toggle} style={voiceStyles.row} accessibilityLabel={playing ? 'Pause voice note' : 'Play voice note'}>
-      <View style={voiceStyles.playBtn}>
-        {loading ? (
-          <Ionicons name="sync" size={18} color={colors.amber} />
+    <View>
+      <Pressable
+        onPress={toggle}
+        style={voiceStyles.row}
+        accessibilityLabel={playing ? 'Pause voice note' : 'Play voice note'}
+      >
+        <View style={voiceStyles.playBtn}>
+          {loading ? (
+            <Ionicons name="sync" size={18} color={colors.amber} />
+          ) : (
+            <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.amber} />
+          )}
+        </View>
+        <View style={voiceStyles.waveform}>
+          {bars.map((h, i) => (
+            <View
+              key={i}
+              style={[
+                voiceStyles.bar,
+                {
+                  height: h,
+                  // Played bars glow full amber; unplayed bars sit at 30%
+                  // opacity so the progress indicator is legible at a glance.
+                  backgroundColor: i <= playedBars ? '#E6B47A' : 'rgba(230,180,122,0.3)',
+                },
+              ]}
+            />
+          ))}
+        </View>
+        <Text style={voiceStyles.duration}>{formatDuration(durationSec)}</Text>
+      </Pressable>
+
+      {/* Transcript row below the hairline divider. While transcript is
+          null we show "Transcribing…" in italic — it swaps to the real
+          text the moment /api/transcribe resolves. */}
+      <View style={voiceStyles.transcriptWrap}>
+        {transcript === null ? (
+          <Text style={voiceStyles.transcriptPending}>Transcribing…</Text>
+        ) : transcript.trim() ? (
+          <Text style={voiceStyles.transcriptText}>{transcript}</Text>
         ) : (
-          <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.amber} />
+          <Text style={voiceStyles.transcriptPending}>(nothing heard)</Text>
         )}
       </View>
-      <View style={voiceStyles.waveform}>
-        {bars.map((h, i) => (
-          <View key={i} style={[voiceStyles.bar, { height: h }]} />
-        ))}
-      </View>
-      <Text style={voiceStyles.duration}>{formatDuration(durationSec)}</Text>
-    </Pressable>
+    </View>
   );
 }
 
@@ -265,9 +314,8 @@ const voiceStyles = StyleSheet.create({
   },
   bar: {
     width: 2.5,
-    backgroundColor: colors.amber,
     borderRadius: 1.5,
-    opacity: 0.8,
+    // backgroundColor is set inline per-bar based on playback progress.
   },
   duration: {
     color: colors.creamDim,
@@ -276,6 +324,24 @@ const voiceStyles = StyleSheet.create({
     letterSpacing: 0.3,
     minWidth: 32,
     textAlign: 'right',
+  },
+  transcriptWrap: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(230,180,122,0.2)',
+  },
+  transcriptText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 13,
+    lineHeight: 20,
+    color: 'rgba(240,237,232,0.85)',
+  },
+  transcriptPending: {
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: 'rgba(240,237,232,0.55)',
   },
 });
 
