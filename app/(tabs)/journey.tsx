@@ -16,6 +16,7 @@ import { EnergiesBar, Energy } from '../../components/journey/EnergiesBar';
 import { LanguageChips } from '../../components/journey/LanguageChips';
 import { SpectrumBar } from '../../components/journey/SpectrumBar';
 import { PathTimeline, PathItem } from '../../components/journey/PathTimeline';
+import { SessionDetailModal } from '../../components/session/SessionDetailModal';
 
 type JourneyData = {
   totalSessions: number;
@@ -31,6 +32,7 @@ type JourneyData = {
 export default function JourneyScreen() {
   const [data, setData] = useState<JourneyData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     // Print the exact userId we're fetching sessions under so a mismatch
@@ -96,9 +98,18 @@ export default function JourneyScreen() {
         </Section>
 
         <Section title="Your path">
-          <PathTimeline items={data?.sessions || []} />
+          <PathTimeline
+            items={data?.sessions || []}
+            onItemPress={(id) => setSelectedSessionId(id)}
+          />
         </Section>
       </ScrollView>
+
+      <SessionDetailModal
+        visible={!!selectedSessionId}
+        sessionId={selectedSessionId}
+        onClose={() => setSelectedSessionId(null)}
+      />
     </SafeAreaView>
   );
 }

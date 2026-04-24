@@ -3,7 +3,8 @@
 // indicator if the session produced a map.
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { colors, radii, spacing } from '../../constants/theme';
 
 export type PathItem = {
@@ -16,7 +17,13 @@ export type PathItem = {
   messageCount?: number;
 };
 
-export function PathTimeline({ items }: { items: PathItem[] }) {
+export function PathTimeline({
+  items,
+  onItemPress,
+}: {
+  items: PathItem[];
+  onItemPress?: (id: string) => void;
+}) {
   if (!items || items.length === 0) {
     return (
       <View style={styles.empty}>
@@ -28,28 +35,39 @@ export function PathTimeline({ items }: { items: PathItem[] }) {
   }
   return (
     <View>
-      {items.map((it, idx) => (
-        <View key={it.id} style={styles.row}>
-          <View style={styles.rail}>
-            <View style={[styles.dot, it.hasMap && styles.dotMap]} />
-            {idx < items.length - 1 ? <View style={styles.line} /> : null}
-          </View>
-          <View style={styles.body}>
-            <Text style={styles.date}>
-              {formatDate(it.date)}
-              {it.time ? <Text style={styles.time}>{' · ' + it.time}</Text> : null}
-            </Text>
-            {it.title ? <Text style={styles.title}>{it.title}</Text> : null}
-            {it.preview ? (
-              <Text style={styles.preview} numberOfLines={2}>"{it.preview}"</Text>
-            ) : null}
-            <View style={styles.meta}>
-              <Text style={styles.metaText}>{it.messageCount || 0} messages</Text>
-              {it.hasMap ? <Text style={[styles.metaText, { color: colors.amber }]}>· map updated</Text> : null}
+      {items.map((it, idx) => {
+        const handlePress = () => {
+          if (!onItemPress) return;
+          Haptics.selectionAsync().catch(() => {});
+          onItemPress(it.id);
+        };
+        return (
+          <View key={it.id} style={styles.row}>
+            <View style={styles.rail}>
+              <View style={[styles.dot, it.hasMap && styles.dotMap]} />
+              {idx < items.length - 1 ? <View style={styles.line} /> : null}
             </View>
+            <Pressable
+              onPress={handlePress}
+              style={({ pressed }) => [styles.body, pressed && styles.bodyPressed]}
+              accessibilityLabel={`Open session from ${formatDate(it.date)}`}
+            >
+              <Text style={styles.date}>
+                {formatDate(it.date)}
+                {it.time ? <Text style={styles.time}>{' · ' + it.time}</Text> : null}
+              </Text>
+              {it.title ? <Text style={styles.title}>{it.title}</Text> : null}
+              {it.preview ? (
+                <Text style={styles.preview} numberOfLines={2}>"{it.preview}"</Text>
+              ) : null}
+              <View style={styles.meta}>
+                <Text style={styles.metaText}>{it.messageCount || 0} messages</Text>
+                {it.hasMap ? <Text style={[styles.metaText, { color: colors.amber }]}>· map updated</Text> : null}
+              </View>
+            </Pressable>
           </View>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -78,6 +96,7 @@ const styles = StyleSheet.create({
   },
   line: { flex: 1, width: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginTop: 2 },
   body: { flex: 1, backgroundColor: colors.backgroundCard, borderRadius: radii.md, padding: spacing.sm },
+  bodyPressed: { backgroundColor: 'rgba(230,180,122,0.08)', borderColor: colors.amberDim, borderWidth: 1 },
   date: { color: colors.amber, fontSize: 12, fontWeight: '600', letterSpacing: 0.3 },
   time: { color: colors.creamFaint, fontWeight: '400' },
   title: { color: colors.cream, fontSize: 15, fontWeight: '500', marginTop: 4 },

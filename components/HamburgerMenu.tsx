@@ -1,18 +1,17 @@
 // Full-height slide-in drawer triggered by the hamburger icon in the top bar.
 //
 // Sections (matches web app's side menu):
-//   1. Header — user name + small edit button (edit routes to intake)
-//   2. Settings — Audio on/off, Notifications on/off (both local-device toggles
-//      stored via services/settings.ts)
-//   3. About Inner Map → Guide tab
-//   4. Send feedback → opens mail link
-//   5. Privacy policy → opens URL
-//   6. Reset onboarding — long-press (500 ms) so it isn't accidentally tapped
-//   7. Version number in dim text at the bottom
+//   1. Header — user name + close button
+//   2. Recent Sessions — last 8 sessions from /api/sessions, each with date,
+//      AI-generated title, most-active-part colored dot. Tap opens the
+//      shared SessionDetailModal.
+//   3. Settings — Audio + Notifications toggles
+//   4. About / Feedback / Privacy links
+//   5. Reset onboarding (long-press) + version number
 
 import React, { useEffect, useState } from 'react';
 import {
-  Modal, View, Text, Pressable, Switch, StyleSheet,
+  Modal, View, Text, Pressable, Switch, ScrollView, StyleSheet,
   Linking, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +24,8 @@ import { colors, radii, spacing } from '../constants/theme';
 import { api } from '../services/api';
 import { getSettings, setAudioEnabled, setPushEnabled } from '../services/settings';
 import { resetOnboarding } from '../services/onboarding';
+import { PART_COLOR } from '../utils/markers';
+import { SessionDetailModal } from './session/SessionDetailModal';
 
 const PRIVACY_URL  = 'https://inner-map-production.up.railway.app/privacy';
 const FEEDBACK_TO  = 'hello@innermap.app';
@@ -39,20 +40,29 @@ export function HamburgerMenu({
   const [name, setName] = useState<string | null>(null);
   const [audioOn, setAudioOn] = useState(true);
   const [pushOn, setPushOn]   = useState(true);
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
     if (!visible) return;
     (async () => {
-      const [intake, settings] = await Promise.all([
+      const [intake, settings, sessionList] = await Promise.all([
         api.getIntake(),
         getSettings(),
+        api.listSessions(),
       ]);
       setName(intake?.name?.trim() || null);
       setAudioOn(settings.audioEnabled);
       setPushOn(settings.pushEnabled);
+      setSessions((sessionList || []).slice(0, 8));
     })();
   }, [visible]);
+
+  function openSession(id: string) {
+    Haptics.selectionAsync().catch(() => {});
+    setSelectedSessionId(id);
+  }
 
   function go(path: string) {
     Haptics.selectionAsync().catch(() => {});
@@ -105,6 +115,36 @@ export function HamburgerMenu({
           </Pressable>
         </View>
 
+        {/* The middle section scrolls — the reset row + version below the
+            ScrollView stay pinned to the bottom regardless of content length. */}
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: spacing.md }}
+          showsVerticalScrollIndicator={false}
+        >
+
+        {/* ===== RECENT SESSIONS ===== */}
+        <SectionLabel>RECENT SESSIONS</SectionLabel>
+        {sessions.length === 0 ? (
+          <Text style={styles.emptySessions}>
+            Your conversations will appear here after your first session.
+          </Text>
+        ) : (
+          <View>
+            {sessions.map((s) => (
+              <SessionRow
+                key={s.id}
+                date={s.date}
+                title={s.title || s.preview}
+                mostActivePart={s.mostActivePart}
+                onPress={() => openSession(s.id)}
+              />
+            ))}
+          </View>
+        )}
+
+        <View style={styles.divider} />
+
         {/* ===== SETTINGS ===== */}
         <SectionLabel>SETTINGS</SectionLabel>
         <Row
@@ -155,10 +195,9 @@ export function HamburgerMenu({
           }}
           icon="shield-checkmark-outline"
         />
+        </ScrollView>
 
-        <View style={{ flex: 1 }} />
-
-        {/* ===== RESET + VERSION ===== */}
+        {/* ===== RESET + VERSION (pinned) ===== */}
         <Pressable
           onLongPress={doReset}
           delayLongPress={500}
@@ -170,8 +209,47 @@ export function HamburgerMenu({
         </Pressable>
         <Text style={styles.version}>Inner Map · v{version}</Text>
       </SafeAreaView>
+
+      {/* Session transcript modal — shared with Journey tab. */}
+      <SessionDetailModal
+        visible={!!selectedSessionId}
+        sessionId={selectedSessionId}
+        onClose={() => setSelectedSessionId(null)}
+      />
     </Modal>
   );
+}
+
+// ---------- session row ----------
+function SessionRow({
+  date, title, mostActivePart, onPress,
+}: {
+  date?: string;
+  title?: string;
+  mostActivePart?: string | null;
+  onPress: () => void;
+}) {
+  const dotColor = mostActivePart ? (PART_COLOR[mostActivePart] || colors.amber) : 'rgba(255,255,255,0.2)';
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.sessionRow, pressed && { opacity: 0.65 }]}>
+      <View style={[styles.sessionDot, { backgroundColor: dotColor }]} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sessionDate}>{formatShortDate(date)}</Text>
+        <Text style={styles.sessionTitle} numberOfLines={1}>
+          {title?.trim() || 'Untitled session'}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function formatShortDate(iso?: string): string {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  if (!y) return iso;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mi = Math.max(0, Math.min(11, parseInt(m, 10) - 1));
+  return `${months[mi]} ${parseInt(d, 10)}`;
 }
 
 // ---------- reusable bits ----------
@@ -276,5 +354,39 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     marginBottom: spacing.sm,
     letterSpacing: 0.5,
+  },
+
+  emptySessions: {
+    color: colors.creamFaint,
+    fontStyle: 'italic',
+    fontSize: 12,
+    lineHeight: 18,
+    paddingVertical: 6,
+  },
+
+  sessionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 10,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 0.5,
+  },
+  sessionDot: {
+    width: 8, height: 8, borderRadius: 4,
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 3,
+  },
+  sessionDate: {
+    color: colors.creamFaint,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  sessionTitle: { color: colors.cream, fontSize: 14, marginTop: 2 },
+
+  divider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: spacing.md,
   },
 });
