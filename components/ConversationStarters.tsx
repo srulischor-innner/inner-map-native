@@ -1,26 +1,32 @@
 // Conversation starter chips shown below the opening greeting when there's
-// no user-turn yet. Picked from the same starter bank the web app uses so
-// new users have somewhere to begin.
+// no user-turn yet. Starters are passed in from the caller — the server's
+// /api/returning-greeting now returns 3 contextual suggestions grounded in
+// the last session so the chips land on what's actually alive for the user.
+// Falls back to a generic bank if the server couldn't produce any.
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, radii, spacing } from '../constants/theme';
 
-const STARTERS: string[] = [
+const FALLBACK_STARTERS: string[] = [
   "Something's been on my mind lately",
   "A pattern keeps showing up",
   "I don't know what I'm feeling",
-  "I need to process something",
-  "Just want to be heard",
 ];
 
-export function ConversationStarters({ onPick }: { onPick: (text: string) => void }) {
+export function ConversationStarters({
+  onPick,
+  starters,
+}: {
+  onPick: (text: string) => void;
+  starters?: string[] | null;
+}) {
+  const items = starters && starters.length > 0 ? starters : FALLBACK_STARTERS;
   return (
     <View style={styles.wrap}>
-      <Text style={styles.hint}>Or try one of these</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-        {STARTERS.map((s) => (
+        {items.map((s) => (
           <Pressable
             key={s}
             style={styles.chip}
@@ -38,14 +44,9 @@ export function ConversationStarters({ onPick }: { onPick: (text: string) => voi
 }
 
 const styles = StyleSheet.create({
+  // No "Or try one of these" label — chips just sit naturally below the
+  // greeting.
   wrap: { marginTop: spacing.sm, marginBottom: spacing.xs },
-  hint: {
-    color: colors.creamFaint,
-    fontSize: 10,
-    letterSpacing: 1.4,
-    marginBottom: 8,
-    marginLeft: 2,
-  },
   row: { paddingRight: spacing.md, gap: 8 },
   chip: {
     paddingHorizontal: 14,

@@ -20,7 +20,6 @@ import {
   Platform,
   StyleSheet,
   Keyboard,
-  Text,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -55,8 +54,9 @@ export default function ChatScreen() {
   // Mode for /api/chat — onboarding for brand-new users, ongoing once any core node is filled.
   const [mode, setMode] = useState<'onboarding' | 'ongoing'>('onboarding');
   const [sending, setSending] = useState(false);
-  // Name pulled from intake for the 'Hey [Name]' line — null when unknown.
-  const [userName, setUserName] = useState<string | null>(null);
+  // Contextual conversation starters returned by /api/returning-greeting —
+  // grounded in the last session so the chips land on what's actually alive.
+  const [starters, setStarters] = useState<string[]>([]);
   // Safe-area top inset + top-bar chrome height — used as keyboardVerticalOffset
   // so the KeyboardAvoidingView pushes the input bar exactly above the keyboard
   // without leaving a gap or going too far.
@@ -69,14 +69,12 @@ export default function ChatScreen() {
   useEffect(() => {
     setTyping(true);
     (async () => {
-      let greeting: string | null = null;
+      let greetingRes: { greeting: string | null; suggestions: string[] } = { greeting: null, suggestions: [] };
       let map: any = null;
-      let intake: any = null;
       try {
-        [greeting, map, intake] = await Promise.all([
+        [greetingRes, map] = await Promise.all([
           api.getReturningGreeting(),
           api.getLatestMap(),
-          api.getIntake(),
         ]);
       } catch (err) {
         console.warn('[chat] boot fetch failed:', (err as Error)?.message);
@@ -88,11 +86,9 @@ export default function ChatScreen() {
       console.log('[mode]', chosenMode, 'anyCoreFilled:', anyCoreFilled, 'mapData:', JSON.stringify(md).slice(0, 300));
       setMode(chosenMode);
 
-      if (intake?.name && typeof intake.name === 'string' && intake.name.trim()) {
-        setUserName(intake.name.trim().split(/\s+/)[0]);
-      }
+      if (greetingRes.suggestions.length > 0) setStarters(greetingRes.suggestions);
 
-      const finalGreeting = (greeting && greeting.trim()) || FALLBACK_GREETING;
+      const finalGreeting = (greetingRes.greeting && greetingRes.greeting.trim()) || FALLBACK_GREETING;
       addAssistantMessage(finalGreeting);
       historyRef.current.push({ role: 'assistant', content: finalGreeting });
       setTyping(false);
@@ -272,26 +268,19 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
-      {/* Personal greeting line below the top tabs. Only rendered when we have
-          a real name from intake — intentionally blank otherwise so there's no
-          "Hey friend" placeholder feel. */}
-      {userName ? (
-        <View style={styles.heyRow}>
-          <Text style={styles.heyText}>Hey {userName}</Text>
-        </View>
-      ) : null}
+      {/* "Hey [Name]" row removed — the greeting itself is personal enough. */}
       {/* Keyboard avoidance. `keyboardVerticalOffset` must equal the height of
           anything above this KeyboardAvoidingView on the screen: the iOS safe-
-          area top inset + the hamburger row (34) + the tab row (40) + the
-          optional 'Hey Name' row (~26). Without this the keyboard covers the
-          input bar on iPhone. `behavior: padding` shrinks the KAV by the
-          keyboard height, pushing our ScrollView + ChatInput up together. */}
+          area top inset + the hamburger row (34) + the tab row (40). Without
+          this the keyboard covers the input bar on iPhone. `behavior: padding`
+          shrinks the KAV by the keyboard height, pushing ScrollView + ChatInput
+          up together. */}
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={
           Platform.OS === 'ios'
-            ? insets.top + 34 /* hamburger row */ + 40 /* tabs */ + (userName ? 26 : 0)
+            ? insets.top + 34 /* hamburger row */ + 40 /* tabs */
             : 0
         }
       >
@@ -307,7 +296,7 @@ export default function ChatScreen() {
           {/* Starter chips appear only before the user has said anything. They
               disappear the moment the first user turn is added. */}
           {messages.length > 0 && historyRef.current.every((m) => m.role !== 'user') ? (
-            <ConversationStarters onPick={handleSend} />
+            <ConversationStarters onPick={handleSend} starters={starters} />
           ) : null}
         </ScrollView>
         <ChatInput disabled={sending} onSend={handleSend} />
@@ -315,7 +304,7 @@ export default function ChatScreen() {
             On commit, flush the transcript to /api/summary + /api/sessions so
             the reflection + title land in the Journal tab immediately. */}
         <EndSessionButton
-          visible={historyRef.current.filter((m) => m.role === 'user').length >= 2}
+          visible={historyRef.current.filter((m) => m.role === 'user').length >= 3}
           onEnd={async () => {
             try {
               // Kick the summary build; the server handles the async part.
@@ -330,8 +319,10 @@ export default function ChatScreen() {
             historyRef.current = [];
             setMessages([]);
             sessionIdRef.current = uuidv4();
-            // Re-fetch the greeting for the new session.
-            const greeting = (await api.getReturningGreeting()) || FALLBACK_GREETING;
+            // Re-fetch the greeting + suggestions for the new session.
+            const next = await api.getReturningGreeting();
+            const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;
+            if (next.suggestions.length) setStarters(next.suggestions);
             addAssistantMessage(greeting);
             historyRef.current.push({ role: 'assistant', content: greeting });
           }}
@@ -346,17 +337,4 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.md, paddingBottom: spacing.md },
-  empty: { color: colors.creamFaint, fontStyle: 'italic', textAlign: 'center', marginTop: spacing.xl },
-  heyRow: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-  },
-  heyText: {
-    color: colors.amberDim,        // dim amber per spec
-    fontSize: 12,
-    letterSpacing: 0.3,
-    fontStyle: 'italic',
-  },
 });

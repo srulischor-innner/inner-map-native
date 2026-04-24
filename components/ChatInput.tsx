@@ -169,9 +169,10 @@ export function ChatInput({
 
 const styles = StyleSheet.create({
   wrap: {
-    backgroundColor: colors.backgroundSecondary,
-    borderTopWidth: 0.5,
-    borderTopColor: colors.border,
+    // No top border, no secondary fill — the bar blends into the chat
+    // background so the input reads as part of the page, not a chrome layer
+    // pinned to the bottom.
+    backgroundColor: 'transparent',
   },
   recordingRow: {
     flexDirection: 'row',

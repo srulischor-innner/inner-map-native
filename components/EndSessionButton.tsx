@@ -1,43 +1,43 @@
-// "End session" button — subtle amber pill that appears below the chat input
-// once a conversation is underway. Matches the web app's long-press-to-confirm
-// pattern: tap-and-hold 1s to actually end, otherwise cancels cleanly.
+// "end session" — subtle text-only affordance at the very bottom of the
+// chat. No border, no pill, no fill — just dim amber text that reads as
+// a quiet opt-out rather than a call to action. Hold-to-confirm is kept
+// (1s press-and-hold) so it can't be triggered accidentally.
 
 import React, { useRef, useState } from 'react';
 import { Pressable, View, Text, Animated, StyleSheet, Easing } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { colors, radii, spacing } from '../constants/theme';
+import { colors } from '../constants/theme';
 
 const HOLD_MS = 1000;
 
 export function EndSessionButton({ onEnd, visible }: { onEnd: () => void; visible: boolean }) {
   const [charging, setCharging] = useState(false);
-  const fill = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0.5)).current;
   const committedRef = useRef(false);
 
   function down() {
     if (committedRef.current) return;
     setCharging(true);
-    fill.setValue(0);
     Haptics.selectionAsync().catch(() => {});
-    Animated.timing(fill, {
+    Animated.timing(opacity, {
       toValue: 1,
       duration: HOLD_MS,
       easing: Easing.linear,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished && charging) {
         committedRef.current = true;
         setCharging(false);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         onEnd();
-        setTimeout(() => { committedRef.current = false; fill.setValue(0); }, 1200);
+        setTimeout(() => { committedRef.current = false; opacity.setValue(0.5); }, 1200);
       }
     });
   }
   function up() {
     if (!charging) return;
     setCharging(false);
-    Animated.timing(fill, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(opacity, { toValue: 0.5, duration: 200, useNativeDriver: true }).start();
   }
 
   if (!visible) return null;
@@ -46,50 +46,21 @@ export function EndSessionButton({ onEnd, visible }: { onEnd: () => void; visibl
       <Pressable
         onPressIn={down}
         onPressOut={up}
-        style={[styles.btn, charging && styles.btnCharging]}
         accessibilityLabel="End session (hold)"
+        hitSlop={10}
       >
-        {/* Progress fill while holding */}
-        <Animated.View
-          style={[
-            styles.fill,
-            {
-              opacity: 0.25,
-              transform: [{ scaleX: fill }],
-            },
-          ]}
-        />
-        <Text style={styles.text}>End session</Text>
+        <Animated.Text style={[styles.text, { opacity }]}>end session</Animated.Text>
       </Pressable>
-      <Text style={styles.hint}>Hold to end</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center', paddingVertical: 4 },
-  btn: {
-    paddingHorizontal: 22,
-    paddingVertical: 7,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.amberDim,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  btnCharging: { borderColor: colors.amber },
-  fill: {
-    position: 'absolute',
-    left: 0, top: 0, right: 0, bottom: 0,
-    backgroundColor: colors.amber,
-    transformOrigin: 'left',
-  },
-  text: { color: colors.amber, fontSize: 11, fontWeight: '700', letterSpacing: 1.6 },
-  hint: {
-    color: colors.creamFaint,
-    fontSize: 10,
-    letterSpacing: 0.5,
-    marginTop: 2,
+  text: {
+    color: colors.amberDim,
+    fontSize: 11,
+    letterSpacing: 1.2,
     fontStyle: 'italic',
   },
 });

@@ -195,14 +195,18 @@ export const api = {
     } catch { return null; }
   },
 
-  async getReturningGreeting(): Promise<string | null> {
+  async getReturningGreeting(): Promise<{ greeting: string | null; suggestions: string[] }> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/returning-greeting', { label: 'returning-greeting', headers });
-      if (!res.ok) return null;
+      if (!res.ok) return { greeting: null, suggestions: [] };
       const j: any = await res.json();
-      return (j && (j.greeting || j.text)) || null;
-    } catch { return null; }
+      const greeting = (j && (j.greeting || j.text)) || null;
+      const suggestions = Array.isArray(j?.suggestions)
+        ? j.suggestions.filter((s: any) => typeof s === 'string' && s.trim()).slice(0, 3)
+        : [];
+      return { greeting, suggestions };
+    } catch { return { greeting: null, suggestions: [] }; }
   },
 
   async getJourney(): Promise<any | null> {

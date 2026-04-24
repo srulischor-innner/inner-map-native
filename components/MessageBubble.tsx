@@ -168,8 +168,11 @@ function StreamCaret() {
 
 const styles = StyleSheet.create({
   row: { marginBottom: spacing.sm, flexDirection: 'row' },
-  rowUser: { justifyContent: 'flex-end', paddingLeft: 40 },
-  rowAssistant: { justifyContent: 'flex-start', paddingRight: 40 },
+  // Wider bubbles — the old 40px indents made messages feel cramped. 16 lets
+  // the text breathe across the screen while still signalling user vs AI via
+  // left/right alignment.
+  rowUser: { justifyContent: 'flex-end', paddingLeft: 16 },
+  rowAssistant: { justifyContent: 'flex-start', paddingRight: 16 },
   bubble: {
     paddingHorizontal: 14,
     paddingVertical: 12,
