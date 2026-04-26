@@ -23,6 +23,10 @@ import { useRouter } from 'expo-router';
 import { colors, radii, spacing } from '../constants/theme';
 import { api } from '../services/api';
 import { getSettings, setAudioEnabled, setPushEnabled } from '../services/settings';
+import {
+  useExperienceLevel, setExperienceLevel,
+  LEVEL_OPTIONS, LEVEL_LABELS, ExperienceLevel,
+} from '../services/experienceLevel';
 import { resetOnboarding } from '../services/onboarding';
 import { PART_COLOR } from '../utils/markers';
 import { SessionDetailModal } from './session/SessionDetailModal';
@@ -171,6 +175,8 @@ export function HamburgerMenu({
             />
           }
         />
+        <ExperienceLevelRow />
+
 
         {/* ===== LINKS ===== */}
         <SectionLabel>ABOUT</SectionLabel>
@@ -250,6 +256,75 @@ function formatShortDate(iso?: string): string {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const mi = Math.max(0, Math.min(11, parseInt(m, 10) - 1));
   return `${months[mi]} ${parseInt(d, 10)}`;
+}
+
+// ---------- experience-level row + picker ----------
+function ExperienceLevelRow() {
+  const level = useExperienceLevel();
+  const [picking, setPicking] = useState(false);
+  return (
+    <>
+      <Pressable onPress={() => setPicking(true)} style={styles.row}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowLabel}>Your experience level</Text>
+          <Text style={styles.rowSub}>{LEVEL_LABELS[level]}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={colors.creamFaint} />
+      </Pressable>
+      <ExperienceLevelPicker
+        visible={picking}
+        current={level}
+        onClose={() => setPicking(false)}
+      />
+    </>
+  );
+}
+
+function ExperienceLevelPicker({
+  visible, current, onClose,
+}: { visible: boolean; current: ExperienceLevel; onClose: () => void }) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={styles.pickerBackdrop} onPress={onClose} />
+      <View style={styles.pickerSheet}>
+        <View style={styles.pickerHandle} />
+        <View style={styles.pickerHeader}>
+          <Text style={styles.pickerTitle}>Where are you in your journey?</Text>
+          <Pressable onPress={onClose} style={{ padding: 6 }} hitSlop={10}>
+            <Ionicons name="close" size={22} color={colors.creamFaint} />
+          </Pressable>
+        </View>
+        <Text style={styles.pickerBody}>
+          You can change this anytime — the new setting applies to your next reply.
+        </Text>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
+          {LEVEL_OPTIONS.map((opt) => {
+            const isHard = opt.level === 'hard';
+            const isCurrent = !isHard && opt.level === current;
+            return (
+              <Pressable
+                key={opt.level}
+                onPress={async () => {
+                  Haptics.selectionAsync().catch(() => {});
+                  // The 4th option ("hard place") sets level to curious;
+                  // doesn't re-trigger the resources screen from settings —
+                  // the user already saw it once if they picked it then.
+                  await setExperienceLevel(isHard ? 'curious' : (opt.level as ExperienceLevel));
+                  onClose();
+                }}
+                style={[styles.pickerOption, isCurrent && styles.pickerOptionSelected]}
+              >
+                <Text style={[styles.pickerOptionTitle, isCurrent && { color: colors.amber }]}>
+                  {opt.title}
+                </Text>
+                <Text style={styles.pickerOptionSubtitle}>{opt.subtitle}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
 }
 
 // ---------- reusable bits ----------
@@ -355,6 +430,44 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     letterSpacing: 0.5,
   },
+
+  // Experience-level picker — bottom sheet, matches the spectrum / part-
+  // folder modal grammar.
+  pickerBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+  pickerSheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    maxHeight: '80%',
+    backgroundColor: colors.backgroundCard,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingTop: 8,
+  },
+  pickerHandle: {
+    alignSelf: 'center',
+    width: 42, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    marginBottom: 8,
+  },
+  pickerHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 24, paddingBottom: 8,
+  },
+  pickerTitle: { color: colors.amber, fontSize: 18, fontWeight: '600', flex: 1, marginRight: 8 },
+  pickerBody: {
+    color: colors.creamDim, fontSize: 13, lineHeight: 19,
+    paddingHorizontal: 24, paddingBottom: 16,
+  },
+  pickerOption: {
+    backgroundColor: colors.background,
+    borderColor: colors.border, borderWidth: 1, borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+  },
+  pickerOptionSelected: {
+    borderColor: colors.amber,
+    backgroundColor: 'rgba(230,180,122,0.08)',
+  },
+  pickerOptionTitle: { color: colors.cream, fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  pickerOptionSubtitle: { color: colors.creamDim, fontSize: 12, lineHeight: 17 },
 
   emptySessions: {
     color: colors.creamFaint,

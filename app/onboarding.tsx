@@ -26,8 +26,11 @@ import { api } from '../services/api';
 import { GuideSlide } from '../components/guide/GuideSlide';
 import { GuideDots } from '../components/guide/GuideDots';
 import { WELCOME_SLIDES } from '../utils/guideContent';
+import {
+  ExperienceLevel, LEVEL_OPTIONS, setExperienceLevel,
+} from '../services/experienceLevel';
 
-type Phase = 'welcome' | 'terms' | 'intake';
+type Phase = 'welcome' | 'terms' | 'intake' | 'experience' | 'resources';
 
 export default function OnboardingScreen() {
   const [phase, setPhase] = useState<Phase>('welcome');
@@ -45,8 +48,21 @@ export default function OnboardingScreen() {
         <WelcomeSlides onDone={async () => { await markIntroSeen(); setPhase('terms'); }} />
       ) : phase === 'terms' ? (
         <TermsScreen onAccept={async () => { await markTermsAccepted(); await api.acceptTerms(); setPhase('intake'); }} />
+      ) : phase === 'intake' ? (
+        <IntakeFlow onDone={() => setPhase('experience')} />
+      ) : phase === 'experience' ? (
+        <ExperienceLevelStep
+          onPick={async (lvl, isHard) => {
+            // The 4th option ("I'm in a hard place right now") sets level
+            // to 'curious' so the AI uses the most-scaffolded voice, AND
+            // routes to the resources screen before entering chat.
+            await setExperienceLevel(isHard ? 'curious' : lvl);
+            if (isHard) setPhase('resources');
+            else finishAndEnterApp();
+          }}
+        />
       ) : (
-        <IntakeFlow onDone={finishAndEnterApp} />
+        <ResourcesScreen onContinue={finishAndEnterApp} />
       )}
     </SafeAreaView>
   );
@@ -396,6 +412,120 @@ function SkipLink({ onPress, label = 'Skip this' }: { onPress: () => void; label
 }
 
 // ============================================================================
+// 4. EXPERIENCE LEVEL — single-select question, sits between intake and chat
+// ============================================================================
+function ExperienceLevelStep({
+  onPick,
+}: {
+  onPick: (lvl: ExperienceLevel, isHard: boolean) => void;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  return (
+    <ScrollView contentContainerStyle={styles.expStepRoot} showsVerticalScrollIndicator={false}>
+      <Text style={styles.expStepTitle}>Where are you in your journey?</Text>
+      <Text style={styles.expStepBody}>
+        This work meets you where you are. Let us know what feels closest to true
+        for you right now — we'll adjust the experience to match. You can change
+        this anytime in settings.
+      </Text>
+
+      {LEVEL_OPTIONS.map((opt) => {
+        const isSelected = selected === opt.level;
+        return (
+          <Pressable
+            key={opt.level}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              setSelected(opt.level);
+            }}
+            style={[styles.expOption, isSelected && styles.expOptionSelected]}
+          >
+            <Text style={[styles.expOptionTitle, isSelected && styles.expOptionTitleSelected]}>
+              {opt.title}
+            </Text>
+            <Text style={styles.expOptionSubtitle}>{opt.subtitle}</Text>
+          </Pressable>
+        );
+      })}
+
+      <Pressable
+        onPress={() => {
+          if (!selected) return;
+          const opt = LEVEL_OPTIONS.find((o) => o.level === selected);
+          if (!opt) return;
+          const isHard = opt.level === 'hard';
+          // The "hard place" option maps to curious AND triggers the resources screen.
+          const lvl: ExperienceLevel = isHard ? 'curious' : (opt.level as ExperienceLevel);
+          onPick(lvl, isHard);
+        }}
+        disabled={!selected}
+        style={[styles.expContinueBtn, !selected && styles.expContinueBtnDisabled]}
+      >
+        <Text style={styles.expContinueText}>CONTINUE</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+// ============================================================================
+// 5. RESOURCES — shown only when the user picked "I'm in a hard place".
+// Real-world support pointers; does NOT block them from using the app.
+// ============================================================================
+function ResourcesScreen({ onContinue }: { onContinue: () => void }) {
+  return (
+    <ScrollView contentContainerStyle={styles.expStepRoot} showsVerticalScrollIndicator={false}>
+      <Text style={styles.expStepTitle}>You're not alone</Text>
+      <Text style={styles.expStepBody}>
+        Inner Map can be a thoughtful companion, but it's not a substitute for a
+        real person who knows you. If something is heavy, please also reach out
+        to one of these — even briefly:
+      </Text>
+
+      <View style={styles.resCard}>
+        <Text style={styles.resCardLabel}>IF YOU ARE IN IMMEDIATE CRISIS</Text>
+        <Text style={styles.resCardText}>
+          988 — Suicide & Crisis Lifeline (call or text, US/Canada).
+          Available 24/7. You don't have to be in crisis to call.
+        </Text>
+        <Text style={styles.resCardText}>
+          116 123 — Samaritans (UK & Ireland, free 24/7).
+        </Text>
+        <Text style={styles.resCardText}>
+          For other countries: findahelpline.com lists local options worldwide.
+        </Text>
+      </View>
+
+      <View style={styles.resCard}>
+        <Text style={styles.resCardLabel}>IF YOU CAN GET TO A THERAPIST</Text>
+        <Text style={styles.resCardText}>
+          A real therapist who knows you over time is the single most useful
+          resource for the kind of work this app touches. Inner Map can help
+          you go deeper in those sessions — it isn't a replacement.
+        </Text>
+        <Text style={styles.resCardText}>
+          openpathcollective.org and inclusivetherapists.com both list
+          sliding-scale therapists if cost is a concern.
+        </Text>
+      </View>
+
+      <View style={styles.resCard}>
+        <Text style={styles.resCardLabel}>RIGHT NOW</Text>
+        <Text style={styles.resCardText}>
+          One person you trust, even if the relationship is imperfect. A walk
+          outside. A few slow breaths. None of that "fixes" anything — but
+          they all bring you back to your own body, which is where the work
+          actually happens.
+        </Text>
+      </View>
+
+      <Pressable onPress={onContinue} style={styles.expContinueBtn}>
+        <Text style={styles.expContinueText}>I'M READY — ENTER INNER MAP</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+// ============================================================================
 // STYLES
 // ============================================================================
 const styles = StyleSheet.create({
@@ -500,5 +630,72 @@ const styles = StyleSheet.create({
   disclaimer: {
     color: colors.creamFaint, fontSize: 11, fontStyle: 'italic', textAlign: 'center',
     marginTop: spacing.md, maxWidth: 320,
+  },
+
+  // Experience-level step + resources screen — shared style block since
+  // they have the same vertical rhythm and option-card visual language.
+  expStepRoot: {
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    maxWidth: 600, alignSelf: 'center', width: '100%',
+  },
+  expStepTitle: {
+    color: colors.cream, fontFamily: fonts.serifBold,
+    fontSize: 28, letterSpacing: 0.3, marginBottom: spacing.md,
+  },
+  expStepBody: {
+    color: colors.creamDim, fontFamily: fonts.sans,
+    fontSize: 15, lineHeight: 23, marginBottom: spacing.lg,
+  },
+  expOption: {
+    backgroundColor: colors.backgroundCard,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  expOptionSelected: {
+    borderColor: colors.amber,
+    backgroundColor: 'rgba(230,180,122,0.08)',
+  },
+  expOptionTitle: {
+    color: colors.cream, fontFamily: fonts.sansBold,
+    fontSize: 15, marginBottom: 4,
+  },
+  expOptionTitleSelected: { color: colors.amber },
+  expOptionSubtitle: {
+    color: colors.creamDim, fontFamily: fonts.sans,
+    fontSize: 13, lineHeight: 19,
+  },
+  expContinueBtn: {
+    alignSelf: 'center',
+    paddingHorizontal: 32, paddingVertical: 14,
+    borderRadius: radii.pill,
+    borderWidth: 1.5, borderColor: colors.amber,
+    marginTop: spacing.lg,
+    shadowColor: colors.amber, shadowOpacity: 0.35,
+    shadowRadius: 12, shadowOffset: { width: 0, height: 0 },
+  },
+  expContinueBtnDisabled: { borderColor: colors.border, shadowOpacity: 0 },
+  expContinueText: {
+    color: colors.amber, fontFamily: fonts.sansBold,
+    fontSize: 12, letterSpacing: 2,
+  },
+  resCard: {
+    backgroundColor: colors.backgroundCard,
+    borderLeftColor: colors.amber, borderLeftWidth: 2,
+    borderColor: colors.border, borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  resCardLabel: {
+    color: colors.amber, fontFamily: fonts.sansBold,
+    fontSize: 11, letterSpacing: 2, marginBottom: spacing.sm,
+  },
+  resCardText: {
+    color: colors.cream, fontFamily: fonts.sans,
+    fontSize: 14, lineHeight: 22, marginBottom: 8,
   },
 });

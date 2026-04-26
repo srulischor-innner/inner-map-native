@@ -112,6 +112,7 @@ export const api = {
       sessionId: string;
       wasInterrupted?: boolean;
       selfMode?: boolean;
+      experienceLevel?: 'curious' | 'familiar' | 'experienced';
     },
     cb: StreamCallbacks,
   ): Promise<() => void> {
@@ -125,6 +126,7 @@ export const api = {
       wasInterrupted: !!params.wasInterrupted,
     };
     if (params.selfMode) bodyObj.selfMode = true;
+    if (params.experienceLevel) bodyObj.experienceLevel = params.experienceLevel;
     console.log(
       `[chat] sending mode=${bodyObj.mode} msgCount=${params.messages.length} lastRole=${params.messages[params.messages.length - 1]?.role}`,
     );

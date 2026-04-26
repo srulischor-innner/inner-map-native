@@ -38,6 +38,7 @@ import { pulseMapTab } from '../../utils/mapPulse';
 import { consumeSelfMode } from '../../utils/selfMode';
 import { prefetchTTS, clearTTSCache } from '../../utils/ttsCache';
 import { getAudioMode, playTTS, setAudioMode, stopAll as stopAllAudio } from '../../utils/ttsPlayer';
+import { useExperienceLevel } from '../../services/experienceLevel';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { TypingIndicator } from '../../components/TypingIndicator';
@@ -71,6 +72,9 @@ export default function ChatScreen() {
   // this is true carries selfMode:true so the server prepends the Self-mode
   // system prompt addendum. Cleared when the session ends.
   const [selfMode, setSelfMode] = useState(false);
+  // Experience level — drives which voice mode the AI uses on the server.
+  // Synced from AsyncStorage; updates immediately when changed in settings.
+  const experienceLevel = useExperienceLevel();
   // End-session transition. When the user commits, we fade the messages out
   // then cross-fade a centered "Your map has been updated." overlay in for a
   // beat, then fade that out and reload the fresh session. Done with RN
@@ -275,6 +279,7 @@ export default function ChatScreen() {
             mode,
             sessionId: sessionIdRef.current,
             selfMode,
+            experienceLevel,
           },
           {
             onDelta: (delta) => {
@@ -363,7 +368,7 @@ export default function ChatScreen() {
         setTyping(false);
       }
     },
-    [sending, mode, typing, selfMode],
+    [sending, mode, typing, selfMode, experienceLevel],
   );
 
   // Thin wrapper used by the text-send path: push bubble + history, then run
