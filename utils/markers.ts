@@ -9,6 +9,25 @@ export type ChatMeta = {
   confidence?: number;
 };
 
+/** Three-state ambient awareness indicator emitted by the AI. Drives the
+ *  small breathing dot in the chat header. NEVER quantitative — these are
+ *  qualitative ambient states only. */
+export type AttentionState = 'quiet' | 'listening' | 'noticing';
+
+/** Parse the latest ATTENTION_STATE marker from streaming text. The AI
+ *  emits these as `[ATTENTION_STATE:listening]` (line- or inline-safe).
+ *  Returns the LAST occurrence so a later state in the same turn wins. */
+export function parseAttentionState(text: string): AttentionState | null {
+  if (!text) return null;
+  const re = /\[?ATTENTION_STATE:\s*(quiet|listening|noticing)\s*\]?/gi;
+  let m: RegExpExecArray | null;
+  let last: AttentionState | null = null;
+  while ((m = re.exec(text)) !== null) {
+    last = m[1].toLowerCase() as AttentionState;
+  }
+  return last;
+}
+
 /**
  * Extract CHAT_META JSON from an assistant reply. Forgiving — returns null if the
  * marker is absent or the JSON is malformed (which happens mid-stream before the
@@ -33,6 +52,8 @@ export function stripMarkers(text: string): string {
   return text
     .replace(/\[CHAT_META:[\s\S]*?\]/g, '')
     .replace(/\[(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|SUMMARY_META):[\s\S]*?\]/g, '')
+    // ATTENTION_STATE — bracketed and bare forms both stripped from visible text.
+    .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)\s*\]?/gi, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();

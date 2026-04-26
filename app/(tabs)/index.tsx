@@ -30,8 +30,10 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
 import { api, ChatMessage } from '../../services/api';
-import { parseChatMeta, stripMarkers } from '../../utils/markers';
+import { parseChatMeta, parseAttentionState, stripMarkers } from '../../utils/markers';
+import { setAttentionState, resetAttentionState } from '../../utils/attentionState';
 import { colors, spacing } from '../../constants/theme';
+import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
 import { consumeSelfMode } from '../../utils/selfMode';
 import { prefetchTTS, clearTTSCache } from '../../utils/ttsCache';
@@ -85,12 +87,13 @@ export default function ChatScreen() {
   // Instead of inserting a placeholder bubble that then gets swapped (which
   // read as a glitch), we show the typing indicator immediately and insert
   // the greeting bubble only once — when the real text is ready.
-  // Tab-level audio cleanup — stop any playing clip + flip audio mode
-  // off when the chat screen unmounts (user navigates away). The user
-  // shouldn't keep hearing TTS while looking at the Map tab.
+  // Tab-level cleanup — stop any playing clip, flip audio mode off, and
+  // reset the ambient attention indicator to 'quiet' when the chat
+  // screen unmounts. None of those should leak across tab switches.
   useEffect(() => () => {
     stopAllAudio().catch(() => {});
     setAudioMode(false).catch(() => {});
+    resetAttentionState();
   }, []);
 
   useEffect(() => {
@@ -292,6 +295,13 @@ export default function ChatScreen() {
                   pulseMapTab();
                 }
               }
+              // Update the ambient attention indicator if the AI emitted a
+              // new ATTENTION_STATE marker. The parser returns the LAST
+              // value in the accumulated text so a later state overrides
+              // an earlier one within the same turn (e.g. AI moved from
+              // "noticing" → "listening" once it asked permission).
+              const attn = parseAttentionState(rawAccum);
+              if (attn) setAttentionState(attn);
             },
             onDone: (full) => {
               rawAccum = full || rawAccum;
@@ -377,19 +387,25 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
-      {/* "Hey [Name]" row removed — the greeting itself is personal enough. */}
+      {/* Tiny ambient attention indicator pinned to the top-right of the
+          chat tab — sits BELOW the global tab bar (which is rendered by the
+          parent _layout). Low-visibility on purpose; reflects the AI's
+          processing state without competing with the conversation. */}
+      <View style={styles.headerStrip}>
+        <AttentionIndicator />
+      </View>
       {/* Keyboard avoidance. `keyboardVerticalOffset` must equal the height of
           anything above this KeyboardAvoidingView on the screen: the iOS safe-
-          area top inset + the hamburger row (34) + the tab row (40). Without
-          this the keyboard covers the input bar on iPhone. `behavior: padding`
-          shrinks the KAV by the keyboard height, pushing ScrollView + ChatInput
-          up together. */}
+          area top inset + the hamburger row (34) + the tab row (40) + the
+          ~22px attention strip. Without this the keyboard covers the input
+          bar on iPhone. `behavior: padding` shrinks the KAV by the keyboard
+          height, pushing ScrollView + ChatInput up together. */}
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={
           Platform.OS === 'ios'
-            ? insets.top + 34 /* hamburger row */ + 40 /* tabs */
+            ? insets.top + 34 /* hamburger row */ + 40 /* tabs */ + 22 /* attention strip */
             : 0
         }
       >
@@ -477,6 +493,7 @@ export default function ChatScreen() {
             await stopAllAudio();
             await setAudioMode(false);
             clearTTSCache();
+            resetAttentionState();
             setSelfMode(false);
             historyRef.current = [];
             setMessages([]);
@@ -505,6 +522,15 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.md, paddingBottom: spacing.md },
+  // 22px-tall sliver below the tab bar that just holds the right-aligned
+  // attention indicator. Kept skinny so it doesn't read as chrome.
+  headerStrip: {
+    height: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: spacing.md,
+  },
   transition: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

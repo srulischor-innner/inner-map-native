@@ -1,0 +1,213 @@
+// Tiny ambient indicator that lives in the chat tab header. Reflects the
+// AI's processing state — never a percentage, never a "level" the user
+// can climb toward. Three qualitative states only:
+//
+//   quiet     — barely visible, no animation
+//   listening — gentle slow breathing (3s cycle)
+//   noticing  — slightly faster breathing (2s cycle)
+//
+// Tap → opens an explanation bottom-sheet with the approved copy.
+// First-time discovery: pulses ONCE the very first time it leaves 'quiet'
+// (gated by an AsyncStorage flag), then never explicitly draws attention
+// again. Cross-fades smoothly between states with a 350ms timing.
+
+import React, { useEffect, useState } from 'react';
+import { View, Text, Pressable, Modal, ScrollView, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { Canvas, Path, Skia, Group } from '@shopify/react-native-skia';
+import {
+  useSharedValue, withRepeat, withTiming, withSequence, Easing,
+  useDerivedValue, runOnJS,
+} from 'react-native-reanimated';
+
+import { colors, fonts, radii, spacing } from '../constants/theme';
+import type { AttentionState } from '../utils/markers';
+import {
+  useAttentionState, hasSeenFirstTransition, markFirstTransitionSeen,
+} from '../utils/attentionState';
+
+const SIZE = 14;        // visible dot size
+const TAP = 32;         // touch target
+
+// Per-state visual targets. Opacity oscillates between [low, high] over
+// the given duration. 'quiet' is a single value — no oscillation.
+type StateVisual = { low: number; high: number; duration: number };
+const VISUALS: Record<AttentionState, StateVisual> = {
+  quiet:     { low: 0.15, high: 0.15, duration: 0    },
+  listening: { low: 0.30, high: 0.50, duration: 3000 },
+  noticing:  { low: 0.60, high: 1.00, duration: 2000 },
+};
+
+export function AttentionIndicator() {
+  const state = useAttentionState();
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  // Drives the smooth cross-fade between state visuals AND the per-state
+  // breathing oscillation. Held as one shared value so transitions read
+  // as a single warm motion rather than two stacked animations.
+  const opacity = useSharedValue(VISUALS.quiet.low);
+  // Separate pulse value used only for the once-per-app first-transition
+  // attention beacon — multiplies the base opacity briefly.
+  const pulse = useSharedValue(1);
+
+  // Re-arm the breathing loop whenever state changes. The first-time
+  // pulse is layered on top: state goes quiet → listening, opacity
+  // ramps to listening's `high`, the pulse value briefly rises and
+  // falls so the dot reads as "look here" once.
+  useEffect(() => {
+    const v = VISUALS[state];
+    if (v.duration === 0) {
+      // Quiet — single value, no loop.
+      opacity.value = withTiming(v.low, { duration: 350, easing: Easing.inOut(Easing.ease) });
+    } else {
+      // Smooth cross-fade to the new low, then start the breath loop.
+      opacity.value = withTiming(v.low, { duration: 350, easing: Easing.inOut(Easing.ease) }, () => {
+        opacity.value = withRepeat(
+          withTiming(v.high, { duration: v.duration, easing: Easing.inOut(Easing.ease) }),
+          -1, true,
+        );
+      });
+    }
+  }, [state, opacity]);
+
+  // First-time-discovery pulse. Fires exactly once across the app's
+  // lifetime — when the indicator transitions out of 'quiet' for the
+  // first time. After that, all transitions are smooth and ambient.
+  useEffect(() => {
+    if (state === 'quiet') return;
+    let cancelled = false;
+    (async () => {
+      const seen = await hasSeenFirstTransition();
+      if (seen || cancelled) return;
+      // Brief amplitude boost — three short ramps so the user notices.
+      pulse.value = withSequence(
+        withTiming(2.0, { duration: 280, easing: Easing.out(Easing.ease) }),
+        withTiming(1.0, { duration: 380, easing: Easing.in(Easing.ease) }),
+        withTiming(1.6, { duration: 240, easing: Easing.out(Easing.ease) }),
+        withTiming(1.0, { duration: 380, easing: Easing.in(Easing.ease) },
+          () => { runOnJS(markFirstTransitionSeen)(); },
+        ),
+      );
+    })();
+    return () => { cancelled = true; };
+  }, [state, pulse]);
+
+  // Final opacity Skia reads — base oscillation × pulse multiplier, capped at 1.
+  const groupOpacity = useDerivedValue(() => Math.min(1, opacity.value * pulse.value), [opacity, pulse]);
+
+  // Triangle path — same equilateral shape as the typing indicator so the
+  // map's visual identity is reinforced.
+  const triPath = (() => {
+    const p = Skia.Path.Make();
+    const pad = 1.5;
+    const top = { x: SIZE / 2, y: pad };
+    const bl  = { x: pad, y: SIZE - pad };
+    const br  = { x: SIZE - pad, y: SIZE - pad };
+    p.moveTo(top.x, top.y);
+    p.lineTo(br.x, br.y);
+    p.lineTo(bl.x, bl.y);
+    p.close();
+    return p;
+  })();
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setPanelOpen(true)}
+        style={styles.tapTarget}
+        accessibilityLabel="The map is listening — tap to learn what this indicator means"
+        hitSlop={6}
+      >
+        <Canvas style={{ width: SIZE, height: SIZE }}>
+          <Group opacity={groupOpacity}>
+            <Path path={triPath} color="#E6B47A" style="stroke" strokeWidth={1.4} />
+            <Path path={triPath} color="#E6B47A33" style="fill" />
+          </Group>
+        </Canvas>
+      </Pressable>
+      <ExplanationPanel visible={panelOpen} onClose={() => setPanelOpen(false)} />
+    </>
+  );
+}
+
+// ============================================================================
+// EXPLANATION PANEL — same bottom-sheet grammar as the spectrum / part-folder
+// modals. Drag handle, X close, dark background, safe-area padding.
+// ============================================================================
+function ExplanationPanel({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <Pressable style={styles.backdrop} onPress={onClose} />
+      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
+        <View style={styles.handle} />
+        <View style={styles.header}>
+          <Text style={styles.title}>The map is listening</Text>
+          <Pressable onPress={onClose} style={styles.close} accessibilityLabel="Close" hitSlop={10}>
+            <Ionicons name="close" size={22} color={colors.creamFaint} />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+          <Text style={styles.paragraph}>
+            The map pays attention to your conversation as you talk. This small
+            indicator reflects what it's noticing — quietly attentive most of
+            the time, a little brighter when something is starting to take shape.
+          </Text>
+          <Text style={styles.paragraph}>
+            It's not measuring you. It's not counting. It only ever shows where
+            the map's attention is right now.
+          </Text>
+          <Text style={styles.paragraph}>
+            The map will always ask before adding anything to it. Nothing is
+            added without your permission.
+          </Text>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ============================================================================
+const styles = StyleSheet.create({
+  tapTarget: {
+    width: TAP, height: TAP,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.overlay },
+  sheet: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 0,
+    maxHeight: '60%',
+    backgroundColor: colors.backgroundCard,
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    borderTopWidth: 0.5,
+    borderTopColor: colors.borderAmber,
+    paddingTop: spacing.sm,
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 42, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    marginBottom: spacing.sm,
+  },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingBottom: spacing.sm,
+  },
+  title: { color: colors.amber, fontFamily: fonts.serifBold, fontSize: 22, letterSpacing: 0.3 },
+  close: { padding: 6 },
+  body: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
+  paragraph: {
+    color: colors.cream, fontFamily: fonts.sans,
+    fontSize: 15, lineHeight: 24, marginBottom: spacing.md,
+  },
+});
