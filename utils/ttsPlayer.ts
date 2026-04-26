@@ -129,12 +129,27 @@ export function releaseSlot(id: string): void {
   emitPlayingId(null);
 }
 
+// Pluggable hook so the streaming-TTS layer can cancel its queue when
+// audio mode is turned off, without ttsPlayer needing to import it
+// (which would create a circular dependency).
+type ModeOffHook = () => void;
+const modeOffHooks = new Set<ModeOffHook>();
+export function onAudioModeOff(fn: ModeOffHook): () => void {
+  modeOffHooks.add(fn);
+  return () => { modeOffHooks.delete(fn); };
+}
+
 /** Flip session-wide auto-play mode. Turning OFF also stops any
- *  currently playing clip. Turning ON does NOT auto-start anything —
- *  the caller (typically a tap on a speaker icon) supplies what to play. */
+ *  currently playing clip AND fires every onAudioModeOff hook so the
+ *  streaming-TTS controller can cancel its in-flight queue. Turning ON
+ *  does NOT auto-start anything — the caller (typically a tap on a
+ *  speaker icon) supplies what to play. */
 export async function setAudioMode(on: boolean): Promise<void> {
   emitAudioMode(on);
-  if (!on) await stopAll();
+  if (!on) {
+    for (const h of modeOffHooks) { try { h(); } catch {} }
+    await stopAll();
+  }
 }
 
 /** Public stop — used by chat screen on session reset / tab unmount and

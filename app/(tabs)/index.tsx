@@ -38,6 +38,10 @@ import { pulseMapTab } from '../../utils/mapPulse';
 import { consumeSelfMode } from '../../utils/selfMode';
 import { prefetchTTS, clearTTSCache } from '../../utils/ttsCache';
 import { getAudioMode, playTTS, setAudioMode, stopAll as stopAllAudio } from '../../utils/ttsPlayer';
+import {
+  startStream as startTTSStream, appendStreamText as appendTTSStream,
+  finishStream as finishTTSStream, cancelStream as cancelTTSStream,
+} from '../../utils/ttsStream';
 import { useExperienceLevel } from '../../services/experienceLevel';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
@@ -91,10 +95,12 @@ export default function ChatScreen() {
   // Instead of inserting a placeholder bubble that then gets swapped (which
   // read as a glitch), we show the typing indicator immediately and insert
   // the greeting bubble only once — when the real text is ready.
-  // Tab-level cleanup — stop any playing clip, flip audio mode off, and
-  // reset the ambient attention indicator to 'quiet' when the chat
-  // screen unmounts. None of those should leak across tab switches.
+  // Tab-level cleanup — stop any playing clip, cancel any in-flight
+  // streaming-TTS queue, flip audio mode off, and reset the ambient
+  // attention indicator to 'quiet' when the chat screen unmounts. None
+  // of those should leak across tab switches.
   useEffect(() => () => {
+    cancelTTSStream();
     stopAllAudio().catch(() => {});
     setAudioMode(false).catch(() => {});
     resetAttentionState();
@@ -272,6 +278,17 @@ export default function ChatScreen() {
         { id: streamId, role: 'assistant', text: '', streaming: true },
       ]);
 
+      // If session-wide audio mode is on, start the streaming TTS path
+      // BEFORE the first delta arrives. Each onDelta will feed the
+      // controller; onDone will flush. The streaming controller stops
+      // the single-clip ttsPlayer internally so the two layers can't
+      // both produce sound. Capture the mode at start so a mid-stream
+      // flip doesn't half-start things.
+      const streamingTTSStarted = getAudioMode();
+      if (streamingTTSStarted) {
+        startTTSStream(streamId).catch(() => {});
+      }
+
       try {
         await api.streamChat(
           {
@@ -307,6 +324,12 @@ export default function ChatScreen() {
               // "noticing" → "listening" once it asked permission).
               const attn = parseAttentionState(rawAccum);
               if (attn) setAttentionState(attn);
+              // Stream new cleaned text into the TTS controller. It will
+              // chunk on sentence boundaries (≥80 chars per chunk) and
+              // queue audio so playback begins shortly after the first
+              // sentence finishes streaming, instead of after the full
+              // reply lands.
+              if (streamingTTSStarted) appendTTSStream(target);
             },
             onDone: (full) => {
               rawAccum = full || rawAccum;
@@ -329,15 +352,18 @@ export default function ChatScreen() {
                 messages: historyRef.current,
               });
               // Warm the TTS cache so tapping the speaker on this bubble
-              // plays instantly instead of waiting on /api/speak. Keyed by
-              // the streaming bubble's id (same one MessageBubble uses).
+              // later plays the FULL message instantly (not from the
+              // streaming-sentences queue). Keyed by the streaming bubble's
+              // id (same one MessageBubble uses).
               prefetchTTS(streamId, target);
-              // Session-wide audio mode: if the user has it on, auto-play
-              // this new reply the moment it finishes streaming. The
-              // shared player guarantees only one clip plays at a time —
-              // if a previous message is still playing, it stops cleanly.
-              if (getAudioMode() && target) {
-                playTTS(streamId, target).catch(() => {});
+              // If we started a streaming TTS for this reply, flush the
+              // tail of the buffer so the final partial sentence (if any)
+              // is also queued for playback. The queue then drains on its
+              // own — onDone returns immediately.
+              // If audio mode was OFF when streaming started, we DO NOT
+              // auto-play here either — the user opted to read silently.
+              if (streamingTTSStarted) {
+                finishTTSStream();
               }
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
               setSending(false);
@@ -495,6 +521,7 @@ export default function ChatScreen() {
             // if the new bubble happens to get the same (uuid-unlikely) id.
             // Audio mode + any playing clip also reset to OFF so the new
             // session starts quiet (user opts back in by tapping a speaker).
+            cancelTTSStream();
             await stopAllAudio();
             await setAudioMode(false);
             clearTTSCache();
