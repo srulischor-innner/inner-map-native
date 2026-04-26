@@ -49,6 +49,11 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'nodeDetect'           ? <NodeDetect cx={cx} cy={cy} W={W} /> : null}
       {kind === 'privacy'              ? <PrivacyLock cx={cx} cy={cy} W={W} H={H} /> : null}
       {kind === 'readyToBegin'         ? <ReadyToBegin W={W} H={H} /> : null}
+      {kind === 'twoSides'             ? <TwoSides W={W} H={H} /> : null}
+      {kind === 'capacity'             ? <Capacity W={W} H={H} /> : null}
+      {kind === 'buildBase'            ? <BuildBase W={W} H={H} /> : null}
+      {kind === 'fromSafety'           ? <FromSafety cx={cx} cy={cy} W={W} /> : null}
+      {kind === 'inFlow'               ? <InFlow W={W} H={H} /> : null}
     </Canvas>
   );
 }
@@ -1098,6 +1103,254 @@ function ReadyToBegin({ W, H }: { W: number; H: number }) {
       </Circle>
       <Circle cx={center.x} cy={center.y} r={nodeR * 1.3} color={colors.self} style="stroke" strokeWidth={2.5} />
       <Circle cx={center.x} cy={center.y} r={nodeR * 0.7} color={colors.self + '55'} style="fill" />
+    </Group>
+  );
+}
+
+// ============================================================================
+// === "WHAT HOLDS YOU" VISUALS — 5 unique animated scenes for the slides ====
+// that open the HEALING pill in the Guide tab.
+// ============================================================================
+
+// 1. TWO SIDES — left half: a soft wave rising upward (energy surfacing).
+//    right half: a steady horizontal ground layer with a contained circle
+//    resting on it. Both glow at different rhythms — paired, not opposed.
+function TwoSides({ W, H }: { W: number; H: number }) {
+  const leftBreath = useSharedValue(0.4);
+  const rightBreath = useSharedValue(0.4);
+  useEffect(() => {
+    leftBreath.value  = withRepeat(withTiming(1, { duration: 3000, easing: Easing.inOut(Easing.ease) }), -1, true);
+    rightBreath.value = withRepeat(withTiming(1, { duration: 4500, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [leftBreath, rightBreath]);
+
+  // Tiny mote travels up the wave path — "rising" feel.
+  const wavePhase = useSharedValue(0);
+  useEffect(() => {
+    wavePhase.value = withRepeat(withTiming(1, { duration: 2200, easing: Easing.linear }), -1, false);
+  }, [wavePhase]);
+
+  const leftCx = W * 0.28;
+  const rightCx = W * 0.72;
+  const baseY = H * 0.7;
+
+  const wavePath = (() => {
+    const p = Skia.Path.Make();
+    const w = W * 0.32;
+    const h = H * 0.4;
+    const x0 = leftCx - w / 2;
+    p.moveTo(x0, baseY);
+    p.cubicTo(x0 + w * 0.25, baseY - h * 0.6, x0 + w * 0.5, baseY - h, x0 + w * 0.75, baseY - h * 0.7);
+    p.cubicTo(x0 + w * 0.9, baseY - h * 0.4, x0 + w, baseY - h * 0.3, x0 + w, baseY);
+    return p;
+  })();
+
+  const leftOpacity  = useDerivedValue(() => 0.45 + 0.5 * leftBreath.value, [leftBreath]);
+  const rightOpacity = useDerivedValue(() => 0.45 + 0.4 * rightBreath.value, [rightBreath]);
+  const moteY = useDerivedValue(() => baseY - H * 0.35 * wavePhase.value, [wavePhase, baseY]);
+  const moteX = useDerivedValue(() => leftCx + Math.sin(wavePhase.value * Math.PI * 2) * W * 0.04, [wavePhase, leftCx]);
+  const moteOpacity = useDerivedValue(() => 1 - wavePhase.value, [wavePhase]);
+
+  const amberAA = colors.amber + 'AA';
+  const amber22 = colors.amber + '22';
+  const amber33 = colors.amber + '33';
+
+  return (
+    <Group>
+      {/* Left side — "what's rising": a soft wave + a rising mote */}
+      <Group opacity={leftOpacity}>
+        <Path path={wavePath} color={amberAA} style="stroke" strokeWidth={2} />
+        <Path path={wavePath} color={amber22} style="fill" />
+      </Group>
+      <Circle cx={moteX} cy={moteY} r={3} color={colors.amber} opacity={moteOpacity} />
+      {/* Right side — "what's holding": ground + contained resting circle */}
+      <Group opacity={rightOpacity}>
+        <Line p1={vec(rightCx - W * 0.18, baseY)} p2={vec(rightCx + W * 0.18, baseY)}
+              color={colors.amber} strokeWidth={2} style="stroke" />
+        <Circle cx={rightCx} cy={baseY - W * 0.1} r={W * 0.09} color={colors.amber} style="stroke" strokeWidth={2} />
+        <Circle cx={rightCx} cy={baseY - W * 0.1} r={W * 0.06} color={amber33} style="fill" />
+      </Group>
+    </Group>
+  );
+}
+
+// 2. CAPACITY — horizontal threshold line that rises slowly. Below: a
+//    contained soft amber glow (everything fits). Above: red flooding
+//    outward. As the threshold rises, the red retreats — visual proof
+//    that "healing is your capacity getting bigger."
+function Capacity({ W, H }: { W: number; H: number }) {
+  const rise = useSharedValue(0);
+  useEffect(() => {
+    rise.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 6000, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 1500 }),
+        withTiming(0, { duration: 1500, easing: Easing.in(Easing.ease) }),
+      ),
+      -1, false,
+    );
+  }, [rise]);
+
+  const startY = H * 0.78;
+  const endY   = H * 0.32;
+  const lineY = useDerivedValue(() => startY + (endY - startY) * rise.value, [rise]);
+  const p1 = useDerivedValue(() => vec(W * 0.08, lineY.value), [lineY]);
+  const p2 = useDerivedValue(() => vec(W * 0.92, lineY.value), [lineY]);
+
+  // Below: contained glow whose center sits halfway between bottom and threshold.
+  const belowCy = useDerivedValue(() => (lineY.value + H * 0.92) / 2, [lineY]);
+  const belowR  = useDerivedValue(() => Math.max(8, (H * 0.92 - lineY.value) * 0.45), [lineY]);
+  const belowCenter = useDerivedValue(() => vec(W / 2, belowCy.value), [belowCy]);
+
+  // Above: red flooding. Intensity decreases as threshold rises.
+  const floodR = useDerivedValue(() => Math.max(0, (1 - rise.value) * W * 0.35), [rise]);
+  const floodOpacity = useDerivedValue(() => 0.55 * (1 - rise.value), [rise]);
+
+  return (
+    <Group>
+      <Circle cx={W / 2} cy={H * 0.18} r={floodR} opacity={floodOpacity}>
+        <RadialGradient c={vec(W / 2, H * 0.18)} r={W * 0.4}
+          colors={[colors.wound + 'CC', colors.wound + '33', colors.wound + '00']} />
+      </Circle>
+      <Circle cx={W / 2} cy={belowCy} r={belowR} opacity={0.7}>
+        <RadialGradient c={belowCenter} r={W * 0.45}
+          colors={[colors.amber + 'AA', colors.amber + '22', colors.amber + '00']} />
+      </Circle>
+      <Line p1={p1} p2={p2} color={colors.cream} strokeWidth={1.5} style="stroke" opacity={0.85} />
+    </Group>
+  );
+}
+
+// 3. BUILD BASE — small light points (sleep, food, people, therapy)
+//    appear in sequence at the bottom. The threshold line above them
+//    rises as the base fills in.
+function BuildBase({ W, H }: { W: number; H: number }) {
+  const phase = useSharedValue(0);
+  useEffect(() => {
+    phase.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 4000, easing: Easing.out(Easing.ease) }),
+        withTiming(1, { duration: 1500 }),
+        withTiming(0, { duration: 1000 }),
+      ),
+      -1, false,
+    );
+  }, [phase]);
+
+  const baseY = H * 0.82;
+  const startThreshold = H * 0.7;
+  const endThreshold   = H * 0.42;
+  const lineY = useDerivedValue(() => startThreshold + (endThreshold - startThreshold) * phase.value, [phase]);
+  const lp1 = useDerivedValue(() => vec(W * 0.1, lineY.value), [lineY]);
+  const lp2 = useDerivedValue(() => vec(W * 0.9, lineY.value), [lineY]);
+
+  const dotXs = [0.18, 0.32, 0.46, 0.58, 0.72, 0.86];
+  return (
+    <Group>
+      {dotXs.map((fx, i) => (
+        <SequencedBaseLight
+          key={i} cx={W * fx} cy={baseY} r={W * 0.025}
+          phase={phase} myStart={i / dotXs.length}
+        />
+      ))}
+      <Line p1={lp1} p2={lp2} color={colors.cream} strokeWidth={1.5} style="stroke" opacity={0.7} />
+    </Group>
+  );
+}
+
+function SequencedBaseLight({
+  cx, cy, r, phase, myStart,
+}: {
+  cx: number; cy: number; r: number;
+  phase: ReturnType<typeof useSharedValue<number>>;
+  myStart: number;
+}) {
+  const slot = 0.16;
+  const opacity = useDerivedValue(() => {
+    const v = phase.value;
+    if (v < myStart) return 0.1;
+    if (v < myStart + slot) return 0.1 + 0.9 * ((v - myStart) / slot);
+    return 1;
+  }, [phase, myStart]);
+  return (
+    <Group opacity={opacity}>
+      <Circle cx={cx} cy={cy} r={r * 2.4} opacity={0.35}>
+        <RadialGradient c={vec(cx, cy)} r={r * 2.6} colors={[colors.amber + 'AA', colors.amber + '00']} />
+      </Circle>
+      <Circle cx={cx} cy={cy} r={r} color={colors.amber} style="fill" />
+    </Group>
+  );
+}
+
+// 4. FROM SAFETY — central circle held by an outer containing structure.
+//    Two concentric rings + soft halo + steady inner core. Calm. The
+//    geometry is RESTING — only the halo opacity breathes slowly.
+function FromSafety({ cx, cy, W }: { cx: number; cy: number; W: number }) {
+  const breath = useSharedValue(0.55);
+  useEffect(() => {
+    breath.value = withRepeat(withTiming(1, { duration: 5000, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [breath]);
+  const haloOpacity = useDerivedValue(() => 0.35 + 0.35 * breath.value, [breath]);
+  return (
+    <Group>
+      <Circle cx={cx} cy={cy} r={W * 0.42} color={colors.amber} style="stroke" strokeWidth={1.2} opacity={0.45} />
+      <Circle cx={cx} cy={cy} r={W * 0.32} color={colors.amber} style="stroke" strokeWidth={1.5} opacity={0.55}>
+        <DashPathEffect intervals={[6, 5]} />
+      </Circle>
+      <Group opacity={haloOpacity}>
+        <Circle cx={cx} cy={cy} r={W * 0.28}>
+          <RadialGradient c={vec(cx, cy)} r={W * 0.32}
+            colors={[colors.amber + 'AA', colors.amber + '22', colors.amber + '00']} />
+        </Circle>
+      </Group>
+      <Circle cx={cx} cy={cy} r={W * 0.13} color={colors.amber} style="stroke" strokeWidth={2.5} />
+      <Circle cx={cx} cy={cy} r={W * 0.07} color={colors.amber + '66'} style="fill" />
+    </Group>
+  );
+}
+
+// 5. IN FLOW — full picture. Built base, raised threshold, contained
+//    center, energy mote rising and being held. The system in flow.
+function InFlow({ W, H }: { W: number; H: number }) {
+  const baseY = H * 0.84;
+  const thresholdY = H * 0.42;
+  const centerCy = (baseY + thresholdY) / 2 + H * 0.04;
+
+  const breath = useSharedValue(0.5);
+  useEffect(() => {
+    breath.value = withRepeat(withTiming(1, { duration: 4500, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [breath]);
+  const haloOpacity = useDerivedValue(() => 0.45 + 0.4 * breath.value, [breath]);
+
+  const motePhase = useSharedValue(0);
+  useEffect(() => {
+    motePhase.value = withRepeat(withTiming(1, { duration: 3500, easing: Easing.linear }), -1, false);
+  }, [motePhase]);
+  const moteY = useDerivedValue(() => centerCy - (centerCy - thresholdY * 0.9) * motePhase.value, [motePhase]);
+  const moteOpacity = useDerivedValue(() => 0.8 * (1 - Math.abs(motePhase.value - 0.4) * 1.5), [motePhase]);
+
+  const dotXs = [0.18, 0.32, 0.46, 0.58, 0.72, 0.86];
+  return (
+    <Group>
+      {dotXs.map((fx, i) => (
+        <Group key={i}>
+          <Circle cx={W * fx} cy={baseY} r={W * 0.06} opacity={0.35}>
+            <RadialGradient c={vec(W * fx, baseY)} r={W * 0.07} colors={[colors.amber + 'AA', colors.amber + '00']} />
+          </Circle>
+          <Circle cx={W * fx} cy={baseY} r={W * 0.025} color={colors.amber} style="fill" />
+        </Group>
+      ))}
+      <Line p1={vec(W * 0.08, thresholdY)} p2={vec(W * 0.92, thresholdY)}
+            color={colors.cream} strokeWidth={1.5} style="stroke" opacity={0.6} />
+      <Circle cx={W / 2} cy={centerCy} r={W * 0.27} color={colors.amber} style="stroke" strokeWidth={1.2} opacity={0.4} />
+      <Group opacity={haloOpacity}>
+        <Circle cx={W / 2} cy={centerCy} r={W * 0.18}>
+          <RadialGradient c={vec(W / 2, centerCy)} r={W * 0.22}
+            colors={[colors.amber + 'AA', colors.amber + '22', colors.amber + '00']} />
+        </Circle>
+      </Group>
+      <Circle cx={W / 2} cy={centerCy} r={W * 0.1} color={colors.amber} style="stroke" strokeWidth={2.5} />
+      <Circle cx={W / 2} cy={centerCy} r={W * 0.05} color={colors.amber + '66'} style="fill" />
+      <Circle cx={W / 2} cy={moteY} r={3} color={colors.amber} opacity={moteOpacity} />
     </Group>
   );
 }

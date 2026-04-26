@@ -27,7 +27,13 @@ export type NodeVisualKind =
   | 'chatBubble'           // chat bubble silhouette with breathing triangle inside
   | 'nodeDetect'           // node fades in, ripple expands outward, fades
   | 'privacy'              // breathing amber rings around a small lock glyph
-  | 'readyToBegin';        // full map fades in; Self brightens last and holds
+  | 'readyToBegin'         // full map fades in; Self brightens last and holds
+  // ----- "what holds you" — opens the HEALING section -----
+  | 'twoSides'             // wave rising on left, steady ground on right
+  | 'capacity'             // threshold line; below contained, above flooding
+  | 'buildBase'            // base layer fills in beneath threshold; threshold rises
+  | 'fromSafety'           // central circle held by an outer containing structure
+  | 'inFlow';              // full picture — ground + raised threshold + held center
 
 export type GuideSlide = {
   visual: NodeVisualKind;
@@ -211,7 +217,70 @@ export const MAP_SLIDES: GuideSlide[] = [
 ];
 
 // ===== SECTION 2: HEALING =====
+// ===== "WHAT HOLDS YOU" — opens the HEALING section =====
+// Foundational framework material about why building life-capacity is
+// inseparable from inner work. These slides land FIRST in the HEALING
+// pill so they set up everything that follows about the three stages.
+export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
+  {
+    visual: 'twoSides',
+    title: 'Two sides',
+    body: [
+      "Healing has two sides.",
+      "There's what's rising in you — old feelings, memories, parts becoming visible, energy that's been quietly stuck wanting to move.",
+      "And there's what holds you — your body, your sleep, your relationships, your sense that you can come back to baseline when something hard rises. The structure of your life.",
+      "Both sides matter. They build each other.",
+    ],
+  },
+  {
+    visual: 'capacity',
+    title: 'Your capacity',
+    body: [
+      "Everyone has a capacity for what they can feel and let pass through — and a threshold where that capacity ends.",
+      "When something rises inside your capacity, you can stay with it. Maybe it's hard. But you can be present with it, and eventually it moves through.",
+      "When something rises beyond your capacity, you flood. The system protects itself — sometimes by shutting down, sometimes by reaching for something to numb, sometimes by going into panic.",
+      "Healing isn't about pushing past your capacity. Healing is your capacity getting bigger over time.",
+    ],
+  },
+  {
+    visual: 'buildBase',
+    title: 'What builds it',
+    body: [
+      "Your capacity grows through what holds you.",
+      "Sleep. Food. Movement. People you trust. Real conversations. Therapy. Time. Rhythm. Basic safety.",
+      "None of this is separate from inner work. All of it is what makes inner work safe enough to do.",
+      "When your capacity is built up, more can rise without overwhelming you. When it's thin, even small things flood the system.",
+    ],
+  },
+  {
+    visual: 'fromSafety',
+    title: 'From safety, not desperation',
+    body: [
+      "Healing doesn't usually happen when you're at your most desperate.",
+      "It happens when you've built up enough safety that it's okay to feel.",
+      "The friend you've been meaning to call. The sleep you've been skipping. The therapist you've been thinking about. The daily rhythms that ground you.",
+      "None of this is procrastinating from the real work. This is the real work.",
+    ],
+  },
+  {
+    visual: 'inFlow',
+    title: 'Both sides build each other',
+    body: [
+      "As you do inner work — here, in therapy, in your life — pay attention to both sides.",
+      "What's rising matters. The protectors getting loud, the wound becoming visible, feelings starting to move — that's the work surfacing.",
+      "What's holding you matters too. If your life feels thin, build that first. Sometimes the most important inner work is calling someone back. Going to bed earlier. Eating real meals. Asking for help.",
+      "When the inner and the outer build each other, healing becomes possible. When one outpaces the other, the system protects itself — and that protection isn't failure. It's wisdom.",
+    ],
+  },
+];
+
 export const HEALING_SLIDES: GuideSlide[] = [
+  // The 5 "What Holds You" slides land first — this section is the
+  // foundation everything else in HEALING (the three stages + creating
+  // something new) builds on. Concatenated rather than rendered as a
+  // separate sub-section so the user just scrolls through one ordered
+  // sequence within the HEALING pill.
+  ...WHAT_HOLDS_YOU_SLIDES,
   {
     visual: 'seed',
     title: 'How healing actually happens',
