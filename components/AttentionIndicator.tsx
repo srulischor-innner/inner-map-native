@@ -16,19 +16,21 @@ import { View, Text, Pressable, Modal, ScrollView, StyleSheet } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Canvas, Path, Skia, Group } from '@shopify/react-native-skia';
-import {
+import ReanimatedDefault, {
   useSharedValue, withRepeat, withTiming, withSequence, Easing,
-  useDerivedValue, runOnJS,
+  useDerivedValue, useAnimatedStyle, runOnJS,
 } from 'react-native-reanimated';
+const ReanimatedView = ReanimatedDefault.View;
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import type { AttentionState } from '../utils/markers';
 import {
   useAttentionState, hasSeenFirstTransition, markFirstTransitionSeen,
+  hasSeenFirstSessionLabel, markFirstSessionLabelSeen,
 } from '../utils/attentionState';
 
-const SIZE = 14;        // visible dot size
-const TAP = 32;         // touch target
+const SIZE = 22;        // visible triangle size — bumped from 14 for discoverability
+const TAP = 44;         // 44x44 iOS HIG tap target
 
 // Per-state visual targets. Opacity oscillates between [low, high] over
 // the given duration. 'quiet' is a single value — no oscillation.
@@ -100,7 +102,7 @@ export function AttentionIndicator() {
   // map's visual identity is reinforced.
   const triPath = (() => {
     const p = Skia.Path.Make();
-    const pad = 1.5;
+    const pad = 2;
     const top = { x: SIZE / 2, y: pad };
     const bl  = { x: pad, y: SIZE - pad };
     const br  = { x: SIZE - pad, y: SIZE - pad };
@@ -111,21 +113,59 @@ export function AttentionIndicator() {
     return p;
   })();
 
+  // First-session text label — shown ONCE per device for 5 seconds when
+  // the chat tab first mounts, fades out, and never reappears. Helps
+  // first-time users discover the indicator is interactive.
+  const labelOpacity = useSharedValue(0);
+  const labelAnimatedStyle = useAnimatedStyle(() => ({ opacity: labelOpacity.value }));
+  const [labelMounted, setLabelMounted] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const seen = await hasSeenFirstSessionLabel();
+      if (seen || cancelled) return;
+      setLabelMounted(true);
+      labelOpacity.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.ease) });
+      // Hold visible for 5s, then fade out over 600ms; flip the
+      // AsyncStorage flag so it never appears again on this device.
+      const t = setTimeout(() => {
+        labelOpacity.value = withTiming(
+          0,
+          { duration: 600, easing: Easing.in(Easing.ease) },
+          () => { runOnJS(markFirstSessionLabelSeen)(); runOnJS(setLabelMounted)(false); },
+        );
+      }, 5000);
+      return () => { clearTimeout(t); };
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <>
-      <Pressable
-        onPress={() => setPanelOpen(true)}
-        style={styles.tapTarget}
-        accessibilityLabel="The map is listening — tap to learn what this indicator means"
-        hitSlop={6}
-      >
-        <Canvas style={{ width: SIZE, height: SIZE }}>
-          <Group opacity={groupOpacity}>
-            <Path path={triPath} color="#E6B47A" style="stroke" strokeWidth={1.4} />
-            <Path path={triPath} color="#E6B47A33" style="fill" />
-          </Group>
-        </Canvas>
-      </Pressable>
+      <View style={styles.row}>
+        {labelMounted ? (
+          <ReanimatedView style={[styles.label, labelAnimatedStyle]} pointerEvents="none">
+            <Text style={styles.labelText}>The map is listening — tap to learn more</Text>
+          </ReanimatedView>
+        ) : null}
+        <Pressable
+          onPress={() => setPanelOpen(true)}
+          style={styles.tapTarget}
+          accessibilityLabel="The map is listening — tap to learn what this indicator means"
+          hitSlop={6}
+        >
+          <Canvas style={{ width: SIZE, height: SIZE }}>
+            <Group opacity={groupOpacity}>
+              {/* Stroke 1.8 reads cleanly at 22px without overpowering the
+                  fill underneath. Fill stays subtle at ~20% alpha so the
+                  triangle reads as "lit from within" not solid. */}
+              <Path path={triPath} color="#E6B47A" style="stroke" strokeWidth={1.8} />
+              <Path path={triPath} color="#E6B47A33" style="fill" />
+            </Group>
+          </Canvas>
+        </Pressable>
+      </View>
       <ExplanationPanel visible={panelOpen} onClose={() => setPanelOpen(false)} />
     </>
   );
@@ -179,6 +219,27 @@ const styles = StyleSheet.create({
   tapTarget: {
     width: TAP, height: TAP,
     alignItems: 'center', justifyContent: 'center',
+  },
+  // Inline row holds the optional first-session text label to the LEFT
+  // of the tap target so it reads as a hint that points at the triangle.
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  label: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(20,20,30,0.85)',
+    borderRadius: 12,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.3)',
+  },
+  labelText: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    letterSpacing: 0.2,
   },
 
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.overlay },

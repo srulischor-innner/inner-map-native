@@ -17,6 +17,9 @@ let current: AttentionState = 'quiet';
 const listeners = new Set<(s: AttentionState) => void>();
 
 const STORAGE_KEY = 'attentionIndicator.firstTransitionSeen.v1';
+// Separate flag for the "tap to learn more" text label that fades on
+// the first chat session.
+const LABEL_KEY = 'attentionIndicator.firstSessionLabelSeen.v1';
 
 /** React hook — re-renders when the AI moves the state. */
 export function useAttentionState(): AttentionState {
@@ -54,4 +57,17 @@ export async function hasSeenFirstTransition(): Promise<boolean> {
 }
 export async function markFirstTransitionSeen(): Promise<void> {
   try { await AsyncStorage.setItem(STORAGE_KEY, '1'); } catch {}
+}
+
+/** First-session label discoverability flag — separate from the pulse
+ *  flag because the label has a different lifecycle (shown while reading
+ *  the screen, not tied to a state change). */
+export async function hasSeenFirstSessionLabel(): Promise<boolean> {
+  try {
+    const v = await AsyncStorage.getItem(LABEL_KEY);
+    return v === '1';
+  } catch { return true; }
+}
+export async function markFirstSessionLabelSeen(): Promise<void> {
+  try { await AsyncStorage.setItem(LABEL_KEY, '1'); } catch {}
 }
