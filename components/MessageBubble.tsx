@@ -15,11 +15,12 @@ import {
   createAudioPlayer, setAudioModeAsync,
 } from 'expo-audio';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { PartBadge } from './PartBadge';
 import {
-  acquireSlot, releaseSlot, usePlayingId,
-  useAudioMode, setAudioMode, playTTS,
+  acquireSlot, releaseSlot, usePlayingId, useIsPlaying,
+  useAudioMode, setAudioMode, playTTS, togglePauseResume,
 } from '../utils/ttsPlayer';
 
 export type ChatMsg = {
@@ -36,48 +37,79 @@ export type ChatMsg = {
   voice?: { uri: string; durationSec: number; transcript: string | null };
 };
 
+const SPEAKER_HINT_KEY = 'speakerLongPressHintSeen.v1';
+
 export function MessageBubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === 'user';
-  // Slot ownership + session-wide audio mode come from the shared service.
-  // Speaker icon variants:
-  //   audioMode OFF, slot ≠ ours  → dim default (volume-medium-outline)
-  //   audioMode ON,  slot ≠ ours  → active amber (volume-medium-outline)
-  //   slot == ours                → amber pause icon
+  // Slot ownership + session-wide audio mode + play/pause state come from
+  // the shared ttsPlayer service. Speaker icon variants:
+  //   audioMode OFF, slot ≠ ours          → dim speaker (40% cream)
+  //   audioMode ON,  slot ≠ ours          → bright amber speaker
+  //   slot == ours, currently playing     → amber pause icon ⏸
+  //   slot == ours, currently paused      → amber play icon ▶
   const playingId = usePlayingId();
   const audioModeOn = useAudioMode();
-  const isPlaying = playingId === msg.id;
+  const isOwner = playingId === msg.id;
+  const playingNow = useIsPlaying(); // true when ttsPlayer's clip is playing
+  const isPlaying = isOwner && playingNow;
+  const isPaused  = isOwner && !playingNow;
   // Spinner gate — show only if a fetch takes longer than 500ms.
   const [loading, setLoading] = useState(false);
   const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // First-tap tooltip ("Long-press to turn audio mode off") shown ONCE
+  // per device after the user first taps any speaker icon.
+  const [hintVisible, setHintVisible] = useState(false);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => {
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
   }, []);
 
-  /** Tap the speaker icon on an AI bubble. Behavior per spec:
-   *    - audio mode OFF + tap any speaker  → mode ON, this message plays
-   *    - audio mode ON  + tap a non-owner  → that message starts (prior stops)
-   *    - audio mode ON  + tap the OWNER    → mode OFF, audio stops
-   */
-  async function togglePlayback() {
+  async function maybeShowFirstTapHint() {
+    try {
+      const seen = await AsyncStorage.getItem(SPEAKER_HINT_KEY);
+      if (seen === '1') return;
+      setHintVisible(true);
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+      hintTimerRef.current = setTimeout(() => setHintVisible(false), 3000);
+      AsyncStorage.setItem(SPEAKER_HINT_KEY, '1').catch(() => {});
+    } catch {}
+  }
+
+  /** TAP the speaker icon. State machine per spec:
+   *    - We OWN the slot AND playing  → pause (audio mode stays ON)
+   *    - We OWN the slot AND paused   → resume (audio mode stays ON)
+   *    - We're not the owner          → switch to us (or turn audio mode
+   *                                      ON if it was OFF) and play this
+   *  Long-press = turn audio mode OFF entirely (handled separately). */
+  async function handleTap() {
     Haptics.selectionAsync().catch(() => {});
-    // Case A — tapping the message that's currently playing → turn mode off.
-    if (isPlaying) {
-      await setAudioMode(false);
+    // Surface the long-press tip the first time the user uses the speaker.
+    maybeShowFirstTapHint();
+    if (isOwner) {
+      togglePauseResume(msg.id);
       return;
     }
-    // Case B — switching to a different message OR turning mode on.
     if (!audioModeOn) await setAudioMode(true);
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
     loadingTimerRef.current = setTimeout(() => setLoading(true), 500);
     try {
       await playTTS(msg.id, msg.text);
     } catch (e) {
-      console.warn('[tts] togglePlayback failed:', (e as Error)?.message);
+      console.warn('[tts] handleTap failed:', (e as Error)?.message);
     } finally {
       if (loadingTimerRef.current) { clearTimeout(loadingTimerRef.current); loadingTimerRef.current = null; }
       setLoading(false);
     }
+  }
+
+  /** LONG-PRESS the speaker icon → turn audio mode OFF entirely.
+   *  Stops any playing clip + flips the session flag. All speaker icons
+   *  app-wide will revert to dim default on the next render tick. */
+  async function handleLongPress() {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    await setAudioMode(false);
   }
 
   return (
@@ -106,30 +138,44 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
             Tapping the icon also flips session-wide audio mode — see
             togglePlayback() above for the full state machine. */}
         {!isUser && !msg.streaming && msg.text.trim() ? (
-          <Pressable
-            onPress={togglePlayback}
-            hitSlop={12}
-            style={styles.speakerBtn}
-            accessibilityLabel={
-              isPlaying ? 'Pause and turn off auto audio'
-              : audioModeOn ? 'Switch audio to this message'
-              : 'Turn on auto audio and read this message aloud'
-            }
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color={colors.amber} />
-            ) : (
-              <Ionicons
-                name={isPlaying ? 'pause' : 'volume-medium-outline'}
-                size={16}
-                color={
-                  isPlaying ? '#E6B47A'
-                  : audioModeOn ? '#E6B47A'
-                  : 'rgba(240,237,232,0.4)'
-                }
-              />
-            )}
-          </Pressable>
+          <View style={styles.speakerWrap}>
+            {hintVisible ? (
+              <View style={styles.speakerHint} pointerEvents="none">
+                <Text style={styles.speakerHintText}>Long-press to turn audio mode off</Text>
+              </View>
+            ) : null}
+            <Pressable
+              onPress={handleTap}
+              onLongPress={handleLongPress}
+              delayLongPress={400}
+              hitSlop={12}
+              style={styles.speakerBtn}
+              accessibilityLabel={
+                isPlaying ? 'Pause this voice note (long-press to turn off audio mode)'
+                : isPaused ? 'Resume this voice note'
+                : audioModeOn ? 'Switch audio to this message'
+                : 'Turn on audio and read this message aloud'
+              }
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color={colors.amber} />
+              ) : (
+                <Ionicons
+                  name={
+                    isPlaying ? 'pause'
+                    : isPaused ? 'play'
+                    : 'volume-medium-outline'
+                  }
+                  size={16}
+                  color={
+                    isOwner ? '#E6B47A'
+                    : audioModeOn ? '#E6B47A'
+                    : 'rgba(240,237,232,0.4)'
+                  }
+                />
+              )}
+            </Pressable>
+          </View>
         ) : null}
       </View>
     </View>
@@ -509,10 +555,33 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   caret: { color: colors.amber, fontSize: 14 },
-  speakerBtn: {
+  speakerWrap: {
     position: 'absolute',
     right: 6, bottom: 4,
+  },
+  speakerBtn: {
     padding: 4,
     opacity: 0.9,
+  },
+  // First-tap tip — sits ABOVE the speaker icon, points at it. Auto-fades
+  // after 3s and only ever shows once per device (AsyncStorage flag).
+  speakerHint: {
+    position: 'absolute',
+    bottom: 36,
+    right: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(20,20,30,0.95)',
+    borderRadius: 10,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.3)',
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+    elevation: 6,
+  },
+  speakerHintText: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    letterSpacing: 0.2,
   },
 });

@@ -50,6 +50,31 @@ export function usePlayingId(): string | null {
   return id;
 }
 
+/** React hook — re-renders ~5×/sec while a clip is loaded so callers can
+ *  reflect pause vs. playing state on the icon. Cheap: only polls when
+ *  there IS a player, returns true (playing) when no player. */
+export function useIsPlaying(): boolean {
+  const [playing, setPlaying] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = setInterval(() => {
+      if (cancelled) return;
+      const p = ttsPlayer;
+      if (!p) {
+        if (playing) setPlaying(true);
+        return;
+      }
+      try {
+        const s = p.currentStatus;
+        const next = !!s?.playing;
+        setPlaying((prev) => (prev === next ? prev : next));
+      } catch {}
+    }, 200);
+    return () => { cancelled = true; clearInterval(tick); };
+  }, [playing]);
+  return playing;
+}
+
 /** React hook — re-renders when session-wide audio mode flips. */
 export function useAudioMode(): boolean {
   const [on, setOn] = useState<boolean>(audioMode);
