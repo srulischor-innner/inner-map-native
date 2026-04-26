@@ -854,9 +854,13 @@ function MapDrawing({ W, H }: { W: number; H: number }) {
       <Group opacity={oLine3}>
         <Line p1={vec(left.x, left.y)} p2={vec(apex.x, apex.y)} color="#6a6a9a" strokeWidth={1.5} style="stroke" />
       </Group>
+      {/* No whitespace between <Group> and its child — JSX preserves any
+          inline space as a text node, which Skia's reconciler rejects with
+          "Text nodes are not supported yet at skGroup" and the slide goes
+          blank. Padded the variable names instead of the JSX. */}
       <Group opacity={oWound}><MiniNode cx={apex.x}  cy={apex.y}  r={nodeR} color={colors.wound} /></Group>
       <Group opacity={oFixer}><MiniNode cx={right.x} cy={right.y} r={nodeR} color={colors.fixer} /></Group>
-      <Group opacity={oSkep}> <MiniNode cx={left.x}  cy={left.y}  r={nodeR} color={colors.skeptic} /></Group>
+      <Group opacity={oSkep}><MiniNode cx={left.x}   cy={left.y}  r={nodeR} color={colors.skeptic} /></Group>
     </Group>
   );
 }
@@ -1085,7 +1089,7 @@ function ReadyToBegin({ W, H }: { W: number; H: number }) {
       {/* Triangle nodes — staggered fade-in, gently breathing afterward */}
       <Group opacity={oWound}><BreathingNode cx={apex.x}  cy={apex.y}  r={nodeR} color={colors.wound}   phase={haloBreath} /></Group>
       <Group opacity={oFixer}><BreathingNode cx={right.x} cy={right.y} r={nodeR} color={colors.fixer}   phase={haloBreath} /></Group>
-      <Group opacity={oSkep}> <BreathingNode cx={left.x}  cy={left.y}  r={nodeR} color={colors.skeptic} phase={haloBreath} /></Group>
+      <Group opacity={oSkep}><BreathingNode cx={left.x}   cy={left.y}  r={nodeR} color={colors.skeptic} phase={haloBreath} /></Group>
       <Group opacity={oDiam}><MiniDiamond cx={diamond.x} cy={diamond.y} size={diamond.s} /></Group>
       {/* SELF — brightens last and HOLDS steady. The stillness is the ending. */}
       <Circle cx={center.x} cy={center.y} r={nodeR * 2.4} opacity={selfHalo}>
