@@ -23,8 +23,9 @@ import {
   markIntroSeen, markTermsAccepted, markIntakeComplete,
 } from '../services/onboarding';
 import { api } from '../services/api';
-import { GuideNodeVisual } from '../components/guide/GuideNodeVisual';
+import { GuideSlide } from '../components/guide/GuideSlide';
 import { GuideDots } from '../components/guide/GuideDots';
+import { WELCOME_SLIDES } from '../utils/guideContent';
 
 type Phase = 'welcome' | 'terms' | 'intake';
 
@@ -52,24 +53,15 @@ export default function OnboardingScreen() {
 }
 
 // ============================================================================
-// 1. WELCOME SLIDES
+// 1. WELCOME SLIDES — same data + visuals as the Guide tab's WELCOME pill,
+// pulled from utils/guideContent.ts so the two never drift. The onboarding
+// flow adds a "B E G I N" button + disclaimer below the last slide.
 // ============================================================================
-type WelcomeSlide = { visual: Parameters<typeof GuideNodeVisual>[0]['kind']; title?: string; body?: string; showBegin?: boolean };
-const WELCOME_SLIDES: WelcomeSlide[] = [
-  { visual: 'intro',    title: 'Inner Map',                   body: 'Understand what’s happening inside you.' },
-  { visual: 'tension',  title: 'We all have patterns',        body: 'Ways we react. Things that trigger us. Feelings we can’t explain. Most of us don’t fully understand why.' },
-  { visual: 'fullmap',  title: 'Inner Map helps you see them',body: 'As you talk, patterns emerge. The same feelings, the same voices, the same pushes and pulls — the AI listens and gradually reflects them back. We call it your map.' },
-  { visual: 'self',     title: 'Your map starts as a sketch', body: 'The more we talk, the more detailed and accurate it becomes. Every conversation adds a layer.' },
-  { visual: 'seed',     title: 'A companion for the long journey',
-    body: 'Come when something is activated. Come when a pattern repeated and you want to understand why. Come when you need to be heard without advice or fixing. The longer you come, the more it knows you.' },
-  { visual: 'selfLike', title: 'This is not therapy',         body: 'It’s a mirror. A space to see yourself more clearly. Nothing you share is judged.' },
-  { visual: 'newCreation', showBegin: true },
-];
-
 function WelcomeSlides({ onDone }: { onDone: () => void }) {
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const listRef = useRef<FlatList>(null);
+  const atLast = index === WELCOME_SLIDES.length - 1;
 
   return (
     <View style={styles.flex}>
@@ -86,26 +78,7 @@ function WelcomeSlides({ onDone }: { onDone: () => void }) {
           if (i !== index) setIndex(i);
         }}
         scrollEventThrottle={16}
-        renderItem={({ item }) => (
-          <ScrollView style={{ width }} contentContainerStyle={styles.welcomeSlide}>
-            <View style={{ alignItems: 'center', marginBottom: spacing.lg }}>
-              <GuideNodeVisual kind={item.visual} size={Math.min(width * 0.5, 160)} />
-            </View>
-            {item.title ? <Text style={styles.welcomeTitle}>{item.title}</Text> : null}
-            {item.body ? <Text style={styles.welcomeBody}>{item.body}</Text> : null}
-            {item.showBegin ? (
-              <Pressable onPress={onDone} style={styles.beginBtn}>
-                <Text style={styles.beginText}>B E G I N</Text>
-              </Pressable>
-            ) : null}
-            {item.showBegin ? (
-              <Text style={styles.disclaimer}>
-                Inner Map is a self-reflection tool, not a substitute for professional
-                mental health support.
-              </Text>
-            ) : null}
-          </ScrollView>
-        )}
+        renderItem={({ item }) => <GuideSlide data={item} width={width} />}
       />
       <View style={styles.welcomeFoot}>
         <GuideDots
@@ -113,6 +86,17 @@ function WelcomeSlides({ onDone }: { onDone: () => void }) {
           active={index}
           onTap={(i) => { listRef.current?.scrollToIndex({ index: i, animated: true }); }}
         />
+        {atLast ? (
+          <>
+            <Pressable onPress={onDone} style={[styles.beginBtn, { marginTop: spacing.md }]}>
+              <Text style={styles.beginText}>B E G I N</Text>
+            </Pressable>
+            <Text style={styles.disclaimer}>
+              Inner Map is a self-reflection tool, not a substitute for professional
+              mental health support.
+            </Text>
+          </>
+        ) : null}
       </View>
     </View>
   );

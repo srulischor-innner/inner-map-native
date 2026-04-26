@@ -24,6 +24,7 @@ import * as Haptics from 'expo-haptics';
 
 import { colors, radii, spacing } from '../../constants/theme';
 import {
+  WELCOME_SLIDES,
   MAP_SLIDES,
   HEALING_SLIDES,
   USING_FEATURES,
@@ -33,18 +34,27 @@ import {
 import { GuideSlide } from '../../components/guide/GuideSlide';
 import { GuideDots } from '../../components/guide/GuideDots';
 
-type SectionId = 'map' | 'healing' | 'using';
+type SectionId = 'welcome' | 'map' | 'healing' | 'using';
 
 export default function GuideScreen() {
-  const [section, setSection] = useState<SectionId>('map');
+  // Welcome lands first — it's the orientation framework. Users often only
+  // start to grok the framing on the second or third pass after they've
+  // had real conversations, so it lives here permanently.
+  const [section, setSection] = useState<SectionId>('welcome');
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Guide</Text>
       </View>
-      <View style={styles.pillsRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.pillsScroll}
+        contentContainerStyle={styles.pillsRow}
+      >
         {([
+          ['welcome', 'Welcome'],
           ['map', 'The Map'],
           ['healing', 'Healing'],
           ['using', 'Using It'],
@@ -62,9 +72,11 @@ export default function GuideScreen() {
             </Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
 
-      {section === 'map' ? (
+      {section === 'welcome' ? (
+        <SlideSection slides={WELCOME_SLIDES} />
+      ) : section === 'map' ? (
         <SlideSection slides={MAP_SLIDES} />
       ) : section === 'healing' ? (
         <SlideSection slides={HEALING_SLIDES} />
@@ -200,13 +212,18 @@ const styles = StyleSheet.create({
   headerTitle: { color: colors.amber, fontSize: 22, fontWeight: '500', letterSpacing: 0.3 },
 
   // pills
-  pillsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: spacing.sm,
+  // 4 pills now (Welcome / The Map / Healing / Using It) — wrapped in a
+  // horizontal ScrollView so they fit on narrow phones without truncation.
+  pillsScroll: {
+    flexGrow: 0,
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
+  },
+  pillsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   pill: {
     paddingHorizontal: 16,

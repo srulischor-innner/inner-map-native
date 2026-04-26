@@ -21,7 +21,13 @@ export type NodeVisualKind =
   | 'responsibility'       // right-arrow fades / left-arrow brightens
   | 'unblending'           // two overlapping circles drift apart and back
   | 'release'              // wound with outer ring expanding + fading
-  | 'newCreation';         // full map with golden glow from Self center
+  | 'newCreation'          // full map with golden glow from Self center
+  // ----- onboarding / welcome -----
+  | 'mapDrawing'           // triangle draws itself, then nodes bloom in
+  | 'chatBubble'           // chat bubble silhouette with breathing triangle inside
+  | 'nodeDetect'           // node fades in, ripple expands outward, fades
+  | 'privacy'              // breathing amber rings around a small lock glyph
+  | 'readyToBegin';        // full map fades in; Self brightens last and holds
 
 export type GuideSlide = {
   visual: NodeVisualKind;
@@ -29,6 +35,69 @@ export type GuideSlide = {
   titleColor?: string;      // override amber for part-specific slides
   body: string[];           // each string is a paragraph
 };
+
+// ===== SECTION 0: WELCOME =====
+// Same slides shown during onboarding AND in the Guide tab's WELCOME pill.
+// Single source of truth so concepts can be revisited later without
+// drifting out of sync with the first-time experience.
+export const WELCOME_SLIDES: GuideSlide[] = [
+  {
+    visual: 'intro',
+    title: 'Inner Map',
+    body: [
+      'Understand what’s happening inside you.',
+      'A space for the patterns underneath your patterns — the parts that push and pull, and the wound they’re organized around.',
+    ],
+  },
+  {
+    visual: 'everyone',
+    title: 'You’re not broken',
+    body: [
+      'Everyone has a wound. Not from trauma necessarily — just from being human.',
+      'The patterns that grew up around it aren’t signs of damage. They’re signs of intelligence — a child being resourceful with what they were given.',
+    ],
+  },
+  {
+    visual: 'mapDrawing',
+    title: 'The map is yours',
+    body: [
+      'Through conversation we build a picture of your inner world — the wound at the center, and the parts organized around it.',
+      'It draws itself slowly, in the language you use. You don’t need to know the framework. You just need to talk.',
+    ],
+  },
+  {
+    visual: 'chatBubble',
+    title: 'How conversations work',
+    body: [
+      'Just talk. Share what’s on your mind, what’s been activated, what pattern keeps showing up.',
+      'The map listens for what’s underneath — the recurring feelings, the quieter voices — and reflects it back so you can see it clearly.',
+    ],
+  },
+  {
+    visual: 'nodeDetect',
+    title: 'What gets tracked',
+    body: [
+      'When a part shows up, the map notices and lights it up gently. Over time, the picture sharpens.',
+      'Twenty conversations give you a picture of yourself most people never get to see.',
+    ],
+  },
+  {
+    visual: 'privacy',
+    title: 'Private to you',
+    body: [
+      'Inner Map is not therapy. It’s a mirror. Nothing you share is judged.',
+      'Your conversations and your map belong to you. They never go anywhere they shouldn’t.',
+    ],
+  },
+  {
+    visual: 'readyToBegin',
+    title: 'Ready to begin',
+    body: [
+      'The work is to see — not to fix. Insight is the start of everything that follows.',
+      'Come when something is alive. Come when you need to be heard. The longer you come, the more it knows you.',
+    ],
+  },
+];
 
 // ===== SECTION 1: THE MAP =====
 export const MAP_SLIDES: GuideSlide[] = [

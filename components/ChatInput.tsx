@@ -31,6 +31,12 @@ import {
   Easing,
   GestureResponderEvent,
 } from 'react-native';
+import ReAnimated, {
+  useSharedValue,
+  withTiming,
+  useAnimatedStyle,
+  Easing as ReEasing,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
@@ -55,15 +61,25 @@ export function ChatInput({
   const [recording, setRecording] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  // Short-tap tooltip — appears above the mic when the user taps without
-  // holding long enough to trigger a recording. Fades after 1.5s.
-  const [showTapHint, setShowTapHint] = useState(false);
-  const tapHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Short-tap tooltip — anchored above the mic at the bar level so its
+  // natural one-line width isn't clipped by the 52px mic wrapper. Driven by
+  // a Reanimated shared value: fades in over 150ms, holds 1.5s, fades out
+  // over 300ms.
+  const tapHintOpacity = useSharedValue(0);
+  const tapHintHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tapHintFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tapHintStyle = useAnimatedStyle(() => ({ opacity: tapHintOpacity.value }));
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const startXRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => () => {
+    if (tapHintHoldTimer.current) clearTimeout(tapHintHoldTimer.current);
+    if (tapHintFadeTimer.current) clearTimeout(tapHintFadeTimer.current);
+    if (tickRef.current) clearInterval(tickRef.current);
+  }, []);
 
   // Red pulse while recording.
   const pulse = useRef(new Animated.Value(1)).current;
@@ -146,12 +162,15 @@ export function ChatInput({
   }
 
   function handleShortTap() {
-    // Fires when the touch ends BEFORE the 150ms long-press timer. Shows
-    // a transient "Hold to record" hint so the gesture discovers itself
-    // without nagging the user.
-    if (tapHintTimer.current) clearTimeout(tapHintTimer.current);
-    setShowTapHint(true);
-    tapHintTimer.current = setTimeout(() => setShowTapHint(false), 1500);
+    // Fires when the touch ends BEFORE the 150ms long-press timer. Fade
+    // the tooltip in, hold 1.5s, then fade it out. Clears prior timers so
+    // rapid taps cleanly restart the cycle.
+    if (tapHintHoldTimer.current) clearTimeout(tapHintHoldTimer.current);
+    if (tapHintFadeTimer.current) clearTimeout(tapHintFadeTimer.current);
+    tapHintOpacity.value = withTiming(1, { duration: 150, easing: ReEasing.out(ReEasing.ease) });
+    tapHintHoldTimer.current = setTimeout(() => {
+      tapHintOpacity.value = withTiming(0, { duration: 300, easing: ReEasing.in(ReEasing.ease) });
+    }, 1500);
   }
 
   async function endHold() {
@@ -220,44 +239,57 @@ export function ChatInput({
             <Ionicons name="arrow-up" size={20} color={colors.background} />
           </Pressable>
         ) : (
-          <View>
-            {showTapHint ? (
-              <View style={styles.tapHint} pointerEvents="none">
-                <Text style={styles.tapHintText}>Hold to record</Text>
-              </View>
-            ) : null}
-            <Pressable
-              onLongPress={startRecording}
-              delayLongPress={150}
-              onPress={handleShortTap}
-              onPressIn={beginTouch}
-              onPressOut={endHold}
-              onTouchMove={handleMove}
-              // Hit area expanded well beyond the visible 44px so the button
-              // reliably catches press-and-hold with imprecise finger
-              // placement — previously reports of "mic not tappable" were
-              // tracing to the tap area being exactly the visible 40px circle.
-              hitSlop={14}
-              style={styles.micPressable}
-              accessibilityLabel={recording ? 'Release to send voice note' : 'Hold to record voice note'}
+          <Pressable
+            onLongPress={startRecording}
+            delayLongPress={150}
+            onPress={handleShortTap}
+            onPressIn={beginTouch}
+            onPressOut={endHold}
+            onTouchMove={handleMove}
+            // Hit area expanded well beyond the visible 44px so the button
+            // reliably catches press-and-hold with imprecise finger
+            // placement — previously reports of "mic not tappable" were
+            // tracing to the tap area being exactly the visible 40px circle.
+            hitSlop={14}
+            style={styles.micPressable}
+            accessibilityLabel={recording ? 'Release to send voice note' : 'Hold to record voice note'}
+          >
+            <View
+              style={[
+                styles.btn,
+                styles.micBtn,
+                recording && styles.micRecording,
+                cancelArmed && styles.micCancel,
+              ]}
             >
-              <View
-                style={[
-                  styles.btn,
-                  styles.micBtn,
-                  recording && styles.micRecording,
-                  cancelArmed && styles.micCancel,
-                ]}
-              >
-                <Ionicons
-                  name={recording && cancelArmed ? 'close' : 'mic'}
-                  size={20}
-                  color={recording ? '#fff' : colors.amber}
-                />
-              </View>
-            </Pressable>
-          </View>
+              <Ionicons
+                name={recording && cancelArmed ? 'close' : 'mic'}
+                size={20}
+                color={recording ? '#fff' : colors.amber}
+              />
+            </View>
+          </Pressable>
         )}
+
+        {/* "Hold to record" tooltip — lives at the bar level so it can
+            extend beyond the 52px mic wrapper's bounds. Anchored above the
+            mic button with a small pointer arrow. pointerEvents="none" so
+            it never steals a subsequent hold. Rendered unconditionally and
+            driven by the Reanimated opacity — this avoids a mount/unmount
+            flash when the user double-taps. */}
+        <ReAnimated.View
+          pointerEvents="none"
+          style={[styles.tapHint, tapHintStyle]}
+        >
+          <Text
+            numberOfLines={1}
+            allowFontScaling={false}
+            style={styles.tapHintText}
+          >
+            Hold to record
+          </Text>
+          <View style={styles.tapHintArrow} />
+        </ReAnimated.View>
       </View>
     </View>
   );
@@ -370,26 +402,49 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
-  // Short-tap tooltip. Sits above the mic; pointerEvents:none so it never
-  // steals a subsequent hold attempt.
+  // Short-tap tooltip — rendered at the bar level so its natural content
+  // width isn't constrained by the 52px mic wrapper. Anchored above the
+  // mic with a small gap; a downward arrow points at the mic.
   tapHint: {
     position: 'absolute',
-    bottom: 56,            // clears the 52px mic pressable + a little gap
-    right: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: 'rgba(20,19,26,0.95)',
-    borderRadius: 12,
+    // Sits above the 44px mic button + the bar's 14px vertical padding.
+    // bottom:60 clears the mic visibly with ~16px breathing room.
+    bottom: 60,
+    // The mic Pressable (52×52) is at the right edge of the bar with
+    // spacing.md (16px) of right padding. Aligning the tooltip's right
+    // edge with the mic wrapper's right edge (right:16) + an arrow at
+    // right:26 on the tooltip puts the arrow tip directly below the mic
+    // circle's center (16 + 26 = 42 ≈ circle center).
+    right: 16,
+    zIndex: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(20,20,30,0.95)',
     borderWidth: 0.5,
-    borderColor: colors.amberDim,
-    // Small shadow helps it float above dark surfaces.
+    borderColor: 'rgba(230,180,122,0.3)',
+    borderRadius: 10,
     shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
+    elevation: 6,
   },
   tapHintText: {
-    color: colors.cream,
-    fontFamily: fonts.sansMedium,
-    fontSize: 12,
-    letterSpacing: 0.3,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    color: '#F0EDE8',
+    letterSpacing: 0.2,
+  },
+  // Small 10px diamond rotated 45° hugs the bottom edge of the tooltip and
+  // points down at the mic. Only the bottom-right two borders are painted
+  // so the top two edges merge cleanly into the tooltip body.
+  tapHintArrow: {
+    position: 'absolute',
+    bottom: -5,
+    right: 26,             // see tapHint.right math — lands over mic center
+    width: 10,
+    height: 10,
+    backgroundColor: 'rgba(20,20,30,0.95)',
+    borderRightWidth: 0.5,
+    borderBottomWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.3)',
+    transform: [{ rotate: '45deg' }],
   },
 });

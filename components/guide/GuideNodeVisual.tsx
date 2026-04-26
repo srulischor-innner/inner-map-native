@@ -12,7 +12,8 @@ import {
   Canvas, Circle, Group, Path, RadialGradient, Skia, Line, DashPathEffect, vec,
 } from '@shopify/react-native-skia';
 import {
-  useSharedValue, withRepeat, withTiming, withSequence, Easing, useDerivedValue,
+  useSharedValue, withRepeat, withTiming, withSequence, withDelay,
+  Easing, useDerivedValue,
 } from 'react-native-reanimated';
 import { colors } from '../../constants/theme';
 import type { NodeVisualKind } from '../../utils/guideContent';
@@ -43,6 +44,11 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'unblending'           ? <Unblending cx={cx} cy={cy} W={W} /> : null}
       {kind === 'release'              ? <Release cx={cx} cy={cy} W={W} /> : null}
       {kind === 'newCreation'          ? <NewCreation W={W} H={H} /> : null}
+      {kind === 'mapDrawing'           ? <MapDrawing W={W} H={H} /> : null}
+      {kind === 'chatBubble'           ? <ChatBubbleListening W={W} H={H} /> : null}
+      {kind === 'nodeDetect'           ? <NodeDetect cx={cx} cy={cy} W={W} /> : null}
+      {kind === 'privacy'              ? <PrivacyLock cx={cx} cy={cy} W={W} H={H} /> : null}
+      {kind === 'readyToBegin'         ? <ReadyToBegin W={W} H={H} /> : null}
     </Canvas>
   );
 }
@@ -795,6 +801,299 @@ function DashedRingWithDots({
       {dots?.map((d, i) => (
         <Circle key={i} cx={d.x} cy={d.y} r={2.5} color={color} style="fill" />
       ))}
+    </Group>
+  );
+}
+
+// ============================================================================
+// === ONBOARDING-ORIENTED VISUALS ============================================
+// New kinds added to power the onboarding flow + the Guide tab's WELCOME
+// section. Each one tells a small story about a single concept.
+// ============================================================================
+
+// 1. MAP DRAWING — triangle legs draw themselves left→right one at a time,
+//    then the three core nodes bloom in sequence. Restarts every ~5s.
+function MapDrawing({ W, H }: { W: number; H: number }) {
+  const apex  = { x: W / 2,    y: H * 0.18 };
+  const right = { x: W * 0.86, y: H * 0.82 };
+  const left  = { x: W * 0.14, y: H * 0.82 };
+  const nodeR = W * 0.1;
+  // Single 0..1 progress drives every stage so the loop stays in lockstep.
+  const p = useSharedValue(0);
+  useEffect(() => {
+    p.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 4200, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 700 }), // hold full state
+        withTiming(0, { duration: 600 }),  // fade back to start
+      ),
+      -1, false,
+    );
+  }, [p]);
+  // Helper — fade-in opacity that ramps from 0 to 1 across [start..end] of p.
+  const fade = (start: number, end: number) => useDerivedValue(() => {
+    const v = p.value;
+    if (v <= start) return 0;
+    if (v >= end) return 1;
+    return (v - start) / (end - start);
+  }, [p]);
+  const oLine1 = fade(0.00, 0.18); // wound → fixer
+  const oLine2 = fade(0.18, 0.36); // fixer → skeptic
+  const oLine3 = fade(0.36, 0.54); // skeptic → wound
+  const oWound = fade(0.55, 0.70);
+  const oFixer = fade(0.70, 0.85);
+  const oSkep  = fade(0.85, 1.00);
+  return (
+    <Group>
+      <Group opacity={oLine1}>
+        <Line p1={vec(apex.x, apex.y)} p2={vec(right.x, right.y)} color="#6a6a9a" strokeWidth={1.5} style="stroke" />
+      </Group>
+      <Group opacity={oLine2}>
+        <Line p1={vec(right.x, right.y)} p2={vec(left.x, left.y)} color="#6a6a9a" strokeWidth={1.5} style="stroke" />
+      </Group>
+      <Group opacity={oLine3}>
+        <Line p1={vec(left.x, left.y)} p2={vec(apex.x, apex.y)} color="#6a6a9a" strokeWidth={1.5} style="stroke" />
+      </Group>
+      <Group opacity={oWound}><MiniNode cx={apex.x}  cy={apex.y}  r={nodeR} color={colors.wound} /></Group>
+      <Group opacity={oFixer}><MiniNode cx={right.x} cy={right.y} r={nodeR} color={colors.fixer} /></Group>
+      <Group opacity={oSkep}> <MiniNode cx={left.x}  cy={left.y}  r={nodeR} color={colors.skeptic} /></Group>
+    </Group>
+  );
+}
+
+// 2. CHAT BUBBLE LISTENING — a rounded chat-bubble silhouette with the
+//    Inner Map triangle breathing softly inside it. The map listening.
+function ChatBubbleListening({ W, H }: { W: number; H: number }) {
+  // Bubble geometry — a rounded rect with a small left-bottom tail.
+  const bubble = useDerivedValue(() => {
+    const path = Skia.Path.Make();
+    const left = W * 0.12;
+    const right = W * 0.88;
+    const top = H * 0.18;
+    const bottom = H * 0.78;
+    const r = 14;
+    path.moveTo(left + r, top);
+    path.lineTo(right - r, top);
+    path.quadTo(right, top, right, top + r);
+    path.lineTo(right, bottom - r);
+    path.quadTo(right, bottom, right - r, bottom);
+    path.lineTo(left + r + 18, bottom);
+    // Tail
+    path.lineTo(left + 8, bottom + 12);
+    path.lineTo(left + r + 4, bottom);
+    path.lineTo(left + r, bottom);
+    path.quadTo(left, bottom, left, bottom - r);
+    path.lineTo(left, top + r);
+    path.quadTo(left, top, left + r, top);
+    path.close();
+    return path;
+  }, [W, H]);
+
+  // Triangle inside the bubble breathes opacity 0.4 → 1.0.
+  const breath = useSharedValue(0.4);
+  useEffect(() => {
+    breath.value = withRepeat(withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [breath]);
+  const triOpacity = useDerivedValue(() => breath.value, [breath]);
+
+  // Tiny equilateral triangle centered in the bubble.
+  const triPath = Skia.Path.Make();
+  const tx = W / 2;
+  const ty = H * 0.46;
+  const ts = W * 0.11;
+  triPath.moveTo(tx, ty - ts);
+  triPath.lineTo(tx + ts, ty + ts);
+  triPath.lineTo(tx - ts, ty + ts);
+  triPath.close();
+
+  return (
+    <Group>
+      <Path path={bubble} color={'rgba(230,180,122,0.06)'} style="fill" />
+      <Path path={bubble} color={colors.amberDim} strokeWidth={1.5} style="stroke" />
+      <Group opacity={triOpacity}>
+        <Path path={triPath} color={colors.amber} strokeWidth={2} style="stroke" />
+        <Path path={triPath} color={colors.amber + '33'} style="fill" />
+      </Group>
+    </Group>
+  );
+}
+
+// 3. NODE DETECT — a single node fades in, a ripple expands outward and
+//    fades to nothing, the node fades out. Loop. The "we noticed something"
+//    cycle of part detection.
+function NodeDetect({ cx, cy, W }: { cx: number; cy: number; W: number }) {
+  const baseR = W * 0.16;
+  const p = useSharedValue(0);
+  useEffect(() => {
+    p.value = withRepeat(
+      withTiming(1, { duration: 2400, easing: Easing.inOut(Easing.ease) }),
+      -1, false,
+    );
+  }, [p]);
+  // Node opacity: 0 → 1 over first 25%, hold, fade 75%→100% to 0.
+  const nodeOpacity = useDerivedValue(() => {
+    const v = p.value;
+    if (v < 0.25) return v / 0.25;
+    if (v > 0.75) return Math.max(0, 1 - (v - 0.75) / 0.25);
+    return 1;
+  }, [p]);
+  // Ripple kicks off at 30% and rides to 90%, growing + fading.
+  const rippleProgress = useDerivedValue(() => {
+    const v = p.value;
+    if (v < 0.3) return 0;
+    if (v > 0.9) return 1;
+    return (v - 0.3) / 0.6;
+  }, [p]);
+  const rippleR = useDerivedValue(() => baseR * (1 + 1.5 * rippleProgress.value), [rippleProgress, baseR]);
+  const rippleOpacity = useDerivedValue(() => 0.7 * (1 - rippleProgress.value), [rippleProgress]);
+  return (
+    <Group>
+      <Circle cx={cx} cy={cy} r={rippleR} color={colors.fixer} style="stroke" strokeWidth={2} opacity={rippleOpacity} />
+      <Group opacity={nodeOpacity}>
+        <Circle cx={cx} cy={cy} r={baseR * 1.9} opacity={0.6}>
+          <RadialGradient c={vec(cx, cy)} r={baseR * 2} colors={[colors.fixer + 'AA', colors.fixer + '00']} />
+        </Circle>
+        <Circle cx={cx} cy={cy} r={baseR} color={colors.fixer} style="stroke" strokeWidth={3} />
+        <Circle cx={cx} cy={cy} r={baseR * 0.5} color={colors.fixer + '33'} style="fill" />
+      </Group>
+    </Group>
+  );
+}
+
+// 4. PRIVACY LOCK — concentric amber rings around a small lock glyph.
+//    The whole thing breathes gently. Calm and reassuring.
+function PrivacyLock({ cx, cy, W, H }: { cx: number; cy: number; W: number; H: number }) {
+  const breath = useSharedValue(0.55);
+  useEffect(() => {
+    breath.value = withRepeat(withTiming(1, { duration: 3600, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [breath]);
+  const haloOpacity = useDerivedValue(() => 0.3 + 0.4 * breath.value, [breath]);
+  const ringOpacity = useDerivedValue(() => 0.45 + 0.4 * breath.value, [breath]);
+
+  // Lock glyph — body rectangle + shackle arc. Built as a Skia Path.
+  const bodyW = W * 0.18;
+  const bodyH = H * 0.16;
+  const bodyTop = cy - bodyH * 0.1;
+  const lockBody = Skia.Path.Make();
+  const bx = cx - bodyW / 2;
+  const by = bodyTop;
+  const r = 4;
+  lockBody.moveTo(bx + r, by);
+  lockBody.lineTo(bx + bodyW - r, by);
+  lockBody.quadTo(bx + bodyW, by, bx + bodyW, by + r);
+  lockBody.lineTo(bx + bodyW, by + bodyH - r);
+  lockBody.quadTo(bx + bodyW, by + bodyH, bx + bodyW - r, by + bodyH);
+  lockBody.lineTo(bx + r, by + bodyH);
+  lockBody.quadTo(bx, by + bodyH, bx, by + bodyH - r);
+  lockBody.lineTo(bx, by + r);
+  lockBody.quadTo(bx, by, bx + r, by);
+  lockBody.close();
+
+  // Shackle — half-circle arc above the body.
+  const shackleR = bodyW * 0.32;
+  const shackle = Skia.Path.Make();
+  shackle.addArc(
+    {
+      x: cx - shackleR,
+      y: bodyTop - shackleR * 1.3,
+      width: shackleR * 2,
+      height: shackleR * 2,
+    },
+    180, 180,
+  );
+  return (
+    <Group>
+      {/* Outer breathing halo */}
+      <Group opacity={haloOpacity}>
+        <Circle cx={cx} cy={cy} r={W * 0.42}>
+          <RadialGradient c={vec(cx, cy)} r={W * 0.46} colors={[colors.amber + 'AA', colors.amber + '00']} />
+        </Circle>
+      </Group>
+      {/* Two concentric amber rings */}
+      <Circle cx={cx} cy={cy} r={W * 0.34} color={colors.amber} style="stroke" strokeWidth={0.8} opacity={0.25} />
+      <Group opacity={ringOpacity}>
+        <Circle cx={cx} cy={cy} r={W * 0.22} color={colors.amber} style="stroke" strokeWidth={1.5} />
+      </Group>
+      {/* Lock glyph — body filled dim, stroked bright */}
+      <Path path={lockBody} color={colors.amber + '22'} style="fill" />
+      <Path path={lockBody} color={colors.amber} strokeWidth={2} style="stroke" />
+      <Path path={shackle} color={colors.amber} strokeWidth={2} style="stroke" />
+      {/* Tiny keyhole dot in the body */}
+      <Circle cx={cx} cy={bodyTop + bodyH * 0.5} r={1.5} color={colors.amber} style="fill" />
+    </Group>
+  );
+}
+
+// 5. READY TO BEGIN — full mini map; nodes fade in over the first 2.5s,
+//    then Self at center brightens last and brightest, holding steady. The
+//    rest keeps gently breathing — Self lands on stillness.
+function ReadyToBegin({ W, H }: { W: number; H: number }) {
+  const apex   = { x: W / 2,    y: H * 0.14 };
+  const right  = { x: W * 0.82, y: H * 0.68 };
+  const left   = { x: W * 0.18, y: H * 0.68 };
+  const center = { x: W / 2,    y: H * 0.52 };
+  const mgr    = { x: W * 0.08, y: H * 0.4 };
+  const ff     = { x: W * 0.92, y: H * 0.4 };
+  const diamond = { x: W / 2, y: H * 0.86, s: W * 0.06 };
+  const atmY = (left.y + right.y) / 2 - H * 0.05;
+  const nodeR = W * 0.07;
+
+  // One-shot intro that doesn't repeat — the map "lands" and stays.
+  const intro = useSharedValue(0);
+  // Self brightening — starts a beat after intro completes, climbs and HOLDS.
+  const selfBright = useSharedValue(0);
+  useEffect(() => {
+    intro.value = withTiming(1, { duration: 2500, easing: Easing.out(Easing.ease) });
+    selfBright.value = withDelay(2300, withTiming(1, { duration: 1700, easing: Easing.out(Easing.ease) }));
+  }, [intro, selfBright]);
+
+  // Gentle ongoing breath for the non-Self nodes so the scene doesn't
+  // freeze. Self stays still — that's the contrast that lands.
+  const breath = useSharedValue(0.4);
+  useEffect(() => {
+    breath.value = withRepeat(withTiming(0.7, { duration: 4000, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [breath]);
+  const haloBreath = useDerivedValue(() => breath.value, [breath]);
+
+  // Per-node fade-in opacities derived from intro.
+  const oWound  = useDerivedValue(() => Math.min(1, Math.max(0, (intro.value - 0.0) / 0.25)), [intro]);
+  const oFixer  = useDerivedValue(() => Math.min(1, Math.max(0, (intro.value - 0.2) / 0.25)), [intro]);
+  const oSkep   = useDerivedValue(() => Math.min(1, Math.max(0, (intro.value - 0.4) / 0.25)), [intro]);
+  const oRings  = useDerivedValue(() => Math.min(1, Math.max(0, (intro.value - 0.55) / 0.25)), [intro]);
+  const oDiam   = useDerivedValue(() => Math.min(1, Math.max(0, (intro.value - 0.7) / 0.25)), [intro]);
+  // Self always renders but its halo intensity ramps via selfBright.
+  const selfHalo = useDerivedValue(() => 0.35 + 0.55 * selfBright.value, [selfBright]);
+
+  return (
+    <Group>
+      {/* Atmospheric purple, subtle and steady — the vessel */}
+      <Circle cx={W / 2} cy={atmY} r={W * 0.4} opacity={0.4}>
+        <RadialGradient c={vec(W / 2, atmY)} r={W * 0.44}
+          colors={['rgba(177,156,217,0.45)', 'rgba(177,156,217,0)']} />
+      </Circle>
+      {/* Triangle legs — stay subtle, dim grey */}
+      <Group opacity={oRings}>
+        <Line p1={vec(apex.x, apex.y)} p2={vec(left.x, left.y)}   color="#6a6a9a" strokeWidth={1} style="stroke" />
+        <Line p1={vec(apex.x, apex.y)} p2={vec(right.x, right.y)} color="#6a6a9a" strokeWidth={1} style="stroke" />
+        <Line p1={vec(left.x, left.y)} p2={vec(right.x, right.y)} color="#6a6a9a" strokeWidth={1} style="stroke" />
+      </Group>
+      {/* Side rings */}
+      <Group opacity={oRings}>
+        <DashedRingWithDots cx={mgr.x} cy={mgr.y} r={nodeR * 1.2} color={colors.managers} />
+        <DashedRingWithDots cx={ff.x}  cy={ff.y}  r={nodeR * 1.2} color={colors.firefighters} />
+      </Group>
+      {/* Triangle nodes — staggered fade-in, gently breathing afterward */}
+      <Group opacity={oWound}><BreathingNode cx={apex.x}  cy={apex.y}  r={nodeR} color={colors.wound}   phase={haloBreath} /></Group>
+      <Group opacity={oFixer}><BreathingNode cx={right.x} cy={right.y} r={nodeR} color={colors.fixer}   phase={haloBreath} /></Group>
+      <Group opacity={oSkep}> <BreathingNode cx={left.x}  cy={left.y}  r={nodeR} color={colors.skeptic} phase={haloBreath} /></Group>
+      <Group opacity={oDiam}><MiniDiamond cx={diamond.x} cy={diamond.y} size={diamond.s} /></Group>
+      {/* SELF — brightens last and HOLDS steady. The stillness is the ending. */}
+      <Circle cx={center.x} cy={center.y} r={nodeR * 2.4} opacity={selfHalo}>
+        <RadialGradient c={vec(center.x, center.y)} r={nodeR * 2.6}
+          colors={[colors.self + 'CC', colors.self + '33', colors.self + '00']} />
+      </Circle>
+      <Circle cx={center.x} cy={center.y} r={nodeR * 1.3} color={colors.self} style="stroke" strokeWidth={2.5} />
+      <Circle cx={center.x} cy={center.y} r={nodeR * 0.7} color={colors.self + '55'} style="fill" />
     </Group>
   );
 }
