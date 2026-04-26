@@ -35,12 +35,15 @@ export default function MapScreen() {
   }, [activePart]);
 
   // Fetch the latest map + parts on mount. Swallow errors — empty still renders.
+  // The DB columns + API fields keep their legacy "...Score" suffix to avoid a
+  // destructive rename, but every user-facing string says "reading" instead.
   const [outsideInScore, setOutsideInScore] = useState<number | null>(null);
   const [fragmentedScore, setFragmentedScore] = useState<number | null>(null);
+  const [blendedSelfLedScore, setBlendedSelfLedScore] = useState<number | null>(null);
   const [parts, setParts] = useState<any[]>([]);
-  // clinicalPatterns (outsideInKeywords / insideOutKeywords / ...) powers the
-  // "keywords driving this score" lists in the spectrum detail panel. Pulled
-  // from /api/journey lazily on mount.
+  // clinicalPatterns (outsideInKeywords / insideOutKeywords / blendedKeywords /
+  // selfLedKeywords / ...) powers the "what the spectrum is picking up" lists
+  // in the detail panel. Pulled from /api/journey lazily on mount.
   const [clinicalPatterns, setClinicalPatterns] = useState<any>(null);
   const router = useRouter();
   useEffect(() => {
@@ -56,6 +59,7 @@ export default function MapScreen() {
       if (res?.detectedFirefighters) md.detectedFirefighters = res.detectedFirefighters;
       if (typeof res?.outsideInScore === 'number') setOutsideInScore(res.outsideInScore);
       if (typeof res?.fragmentedScore === 'number') setFragmentedScore(res.fragmentedScore);
+      if (typeof res?.blendedSelfLedScore === 'number') setBlendedSelfLedScore(res.blendedSelfLedScore);
       setParts(ps);
       if (journey?.clinicalPatterns) setClinicalPatterns(journey.clinicalPatterns);
     })();
@@ -124,6 +128,7 @@ export default function MapScreen() {
       <ProgressStrip
         outsideInScore={outsideInScore}
         fragmentedScore={fragmentedScore}
+        blendedSelfLedScore={blendedSelfLedScore}
         clinicalPatterns={clinicalPatterns}
       />
 

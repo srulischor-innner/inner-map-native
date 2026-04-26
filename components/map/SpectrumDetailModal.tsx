@@ -1,14 +1,11 @@
-// Bottom-sheet explainer panel for one of the two spectrum bars (Outside-In
-// ↔ Inside-Out, Fragmented ↔ Flowing). Same visual grammar as the node
-// folder modal so the experience feels consistent.
+// Bottom-sheet explainer panel for one of the THREE spectrum bars:
+//   1. Outside-In  → Inside-Out   (perspective)
+//   2. Blended     → Self-Led      (position when parts activate)
+//   3. Fragmented  → Flowing       (system integration)
 //
-// Content is spectrum-specific:
-//   - a richer score bar with a position marker
-//   - a warm explanation of what the spectrum tracks
-//   - "Keywords driving this score" — two tinted lists (indicators against vs
-//     with the direction of movement), pulled from /api/journey.clinicalPatterns
-//     when available, otherwise a gentle "more data needed" line
-//   - "How it moves" — closing note on what actually shifts the score
+// All "score" language has been removed app-wide. The bar shows a position
+// only — never a number, never a percentage. Sections speak about "the
+// current reading" / "what the spectrum is picking up" / "how it moves".
 
 import React from 'react';
 import {
@@ -18,14 +15,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 
-export type SpectrumKey = 'outsideIn' | 'fragmented';
+export type SpectrumKey = 'outsideIn' | 'blendedSelfLed' | 'fragmented';
 
 type Props = {
   visible: boolean;
   spectrum: SpectrumKey | null;
-  /** 0..1 — same scale as the existing SpectrumBar rendering. Null hides the marker. */
+  /** 0..1 — same scale as SpectrumBar. Null hides the marker. Never shown
+   *  as a number anywhere; only used to position the marker. */
   value?: number | null;
-  /** Optional clinicalPatterns from /api/journey (outsideInKeywords / insideOutKeywords / etc). */
+  /** clinicalPatterns from /api/journey — one of:
+   *    outsideInKeywords / insideOutKeywords
+   *    blendedKeywords   / selfLedKeywords
+   *    fragmentedKeywords / flowingKeywords
+   *  Each is an array of phrases the spectrum is currently picking up. */
   clinicalPatterns?: any;
   onClose: () => void;
 };
@@ -33,22 +35,19 @@ type Props = {
 export function SpectrumDetailModal({
   visible, spectrum, value, clinicalPatterns, onClose,
 }: Props) {
-  if (!spectrum) return null;
-  const copy = spectrum === 'outsideIn' ? OUTSIDE_IN : FRAGMENTED;
   const insets = useSafeAreaInsets();
+  if (!spectrum) return null;
+  const copy =
+    spectrum === 'outsideIn'      ? OUTSIDE_IN :
+    spectrum === 'blendedSelfLed' ? BLENDED_SELF_LED :
+    FRAGMENTED;
 
-  // Pull indicator keywords out of the journey payload when the server has
-  // them. Naming matches the web app's /api/journey shape:
-  //   clinicalPatterns.outsideInKeywords    → "outside-in" language
-  //   clinicalPatterns.insideOutKeywords    → "inside-out" language
-  //   clinicalPatterns.fragmentedKeywords   → "fragmented" language
-  //   clinicalPatterns.flowingKeywords      → "flowing" language
-  const leftKeys: string[] = Array.isArray(
-    clinicalPatterns?.[spectrum === 'outsideIn' ? 'outsideInKeywords' : 'fragmentedKeywords'],
-  ) ? clinicalPatterns[spectrum === 'outsideIn' ? 'outsideInKeywords' : 'fragmentedKeywords'] : [];
-  const rightKeys: string[] = Array.isArray(
-    clinicalPatterns?.[spectrum === 'outsideIn' ? 'insideOutKeywords' : 'flowingKeywords'],
-  ) ? clinicalPatterns[spectrum === 'outsideIn' ? 'insideOutKeywords' : 'flowingKeywords'] : [];
+  // Indicator keyword arrays — left is the side the reading moves AWAY from,
+  // right is the side it moves TOWARD. Names match the journey payload shape.
+  const leftKeyName  = copy.leftKeysField;
+  const rightKeyName = copy.rightKeysField;
+  const leftKeys: string[]  = Array.isArray(clinicalPatterns?.[leftKeyName])  ? clinicalPatterns[leftKeyName]  : [];
+  const rightKeys: string[] = Array.isArray(clinicalPatterns?.[rightKeyName]) ? clinicalPatterns[rightKeyName] : [];
 
   return (
     <Modal
@@ -69,36 +68,45 @@ export function SpectrumDetailModal({
         </View>
 
         <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-          {/* Score bar with position marker */}
-          <View style={styles.scoreRow}>
-            <Text style={styles.scoreLabelLeft}>{copy.leftLabel}</Text>
-            <Text style={styles.scoreLabelRight}>{copy.rightLabel}</Text>
+          {/* Position bar — pole labels above, the bar with a marker below.
+              No number is ever shown to the user. The marker's horizontal
+              position IS the entire readout. */}
+          <View style={styles.barRow}>
+            <Text style={styles.barLabelLeft}>{copy.leftLabel}</Text>
+            <Text style={styles.barLabelRight}>{copy.rightLabel}</Text>
           </View>
-          <View style={styles.scoreBarWrap}>
-            <View style={styles.scoreBar} />
+          <View style={styles.barWrap}>
+            <View style={styles.barTrack} />
             {typeof value === 'number' ? (
               <View
                 style={[
-                  styles.scoreMarker,
+                  styles.barMarker,
                   { left: `${Math.max(0, Math.min(1, value)) * 100}%` },
                 ]}
               />
             ) : (
-              <Text style={styles.scoreNoData}>no data yet</Text>
+              <Text style={styles.barNoData}>not enough signal yet</Text>
             )}
           </View>
 
-          {/* Explanation */}
-          <Text style={styles.sectionLabel}>WHAT THIS TRACKS</Text>
-          {copy.explanation.map((p, i) => (
-            <Text key={i} style={styles.paragraph}>{p}</Text>
+          {/* Per-spectrum sections — ORDER and HEADINGS come from the copy
+              object so each spectrum can have a different structure (the
+              Blended → Self-Led panel adds a "Three levels of unblending"
+              section the others don't have). */}
+          {copy.sections.map((s, i) => (
+            <View key={i}>
+              <Text style={styles.sectionLabel}>{s.label.toUpperCase()}</Text>
+              {s.paragraphs.map((p, j) => (
+                <Text key={j} style={styles.paragraph}>{p}</Text>
+              ))}
+            </View>
           ))}
 
-          {/* Keywords */}
-          <Text style={styles.sectionLabel}>KEYWORDS DRIVING THIS SCORE</Text>
+          {/* "What the spectrum is picking up" — keyword indicators */}
+          <Text style={styles.sectionLabel}>WHAT THE SPECTRUM IS PICKING UP</Text>
           {leftKeys.length === 0 && rightKeys.length === 0 ? (
             <Text style={styles.empty}>
-              More conversations will reveal the specific language patterns driving your score.
+              More conversations will reveal the specific language patterns the spectrum is reading.
             </Text>
           ) : (
             <>
@@ -118,7 +126,7 @@ export function SpectrumDetailModal({
             </>
           )}
 
-          {/* How it moves */}
+          {/* How it moves — closing note */}
           <Text style={styles.sectionLabel}>HOW IT MOVES</Text>
           <Text style={styles.paragraph}>{copy.howItMoves}</Text>
         </ScrollView>
@@ -149,57 +157,142 @@ function KeywordList({
 }
 
 // ============================================================================
-// COPY — identical to the spec the user approved.
+// COPY — three spectrum panels. Sections are an ordered list so the Blended
+// → Self-Led panel can add its "Three levels of unblending" section without
+// the others needing to carry it.
 // ============================================================================
-const OUTSIDE_IN = {
+type SpectrumCopy = {
+  title: string;
+  leftLabel: string;
+  rightLabel: string;
+  leftKeysField: string;
+  rightKeysField: string;
+  leftIndicatorsHeading: string;
+  rightIndicatorsHeading: string;
+  leftPlaceholders: string[];
+  rightPlaceholders: string[];
+  sections: { label: string; paragraphs: string[] }[];
+  howItMoves: string;
+};
+
+const OUTSIDE_IN: SpectrumCopy = {
   title: 'Outside-In → Inside-Out',
   leftLabel: 'Outside-In',
   rightLabel: 'Inside-Out',
-  explanation: [
-    "This tracks how your protective parts are orienting to the world. Are they still looking outside for what can only be found within?",
-    "A lower score suggests your parts are still largely focused outward — believing that external things (other people changing, circumstances improving, achievements) will resolve what's happening inside.",
-    "A higher score suggests a conceptual shift is happening — your parts are beginning to recognize that the resources exist internally. This is understanding, not healing — but understanding is where healing begins.",
-  ],
+  leftKeysField: 'outsideInKeywords',
+  rightKeysField: 'insideOutKeywords',
   leftIndicatorsHeading: 'Outside-In indicators',
+  rightIndicatorsHeading: 'Inside-Out indicators',
   leftPlaceholders: [
     "if they would just…",
     "when things settle down…",
     "once I achieve…",
   ],
-  rightIndicatorsHeading: 'Inside-Out indicators',
   rightPlaceholders: [
     "I notice in myself…",
     "something in me…",
     "I'm starting to see that…",
   ],
+  sections: [
+    {
+      label: 'What this tracks',
+      paragraphs: [
+        "This tracks how your protective parts are orienting to the world. Are they still looking outside for what can only be found within?",
+        "Toward Outside-In suggests your parts are still largely focused outward — believing that external things (other people changing, circumstances improving, achievements) will resolve what's happening inside.",
+        "Toward Inside-Out suggests a conceptual shift is happening — your parts are beginning to recognize that the resources exist internally. This is understanding, not healing — but understanding is where healing begins.",
+      ],
+    },
+  ],
   howItMoves:
-    "This score shifts as your understanding deepens — as you begin to genuinely recognize that what you're looking for outside cannot be found there. It often moves through conversation and insight before the system catches up experientially.",
+    "This shifts as your understanding deepens — as you begin to genuinely recognize that what you're looking for outside cannot be found there. It often moves through conversation and insight before the system catches up experientially.",
 };
 
-const FRAGMENTED = {
+const BLENDED_SELF_LED: SpectrumCopy = {
+  title: 'Blended → Self-Led',
+  leftLabel: 'Blended',
+  rightLabel: 'Self-Led',
+  leftKeysField: 'blendedKeywords',
+  rightKeysField: 'selfLedKeywords',
+  leftIndicatorsHeading: 'Blended indicators',
+  rightIndicatorsHeading: 'Self-Led indicators',
+  leftPlaceholders: [
+    "I am furious",
+    "I'm just so anxious",
+    "this is who I am",
+    "I always do this",
+  ],
+  rightPlaceholders: [
+    "a part of me feels…",
+    "something in me is…",
+    "I notice…",
+    "I can stay with this",
+    "my chest softened",
+  ],
+  sections: [
+    {
+      label: 'What this measures',
+      paragraphs: [
+        "This tracks something different from the other two spectrums. Outside-In measures how your protectors see the world. Fragmented → Flowing measures how integrated your whole system is. This one measures something more specific: when a part activates, are you IT — or are you WITH it?",
+      ],
+    },
+    {
+      label: 'Toward the Blended side',
+      paragraphs: [
+        "When parts activate, they take you over. You become the fixer, become the skeptic, become the wound. There's no space between you and the part — you ARE the part for as long as it's running. This isn't a failure. It's how the system runs by default before any inner work has happened.",
+      ],
+    },
+    {
+      label: 'Toward the Self-Led side',
+      paragraphs: [
+        "When parts activate, there's a 'you' that can notice them. You can say 'a part of me is feeling this' rather than 'I am this.' Not detachment — closer to companionship. The part is still there. You're just not lost in it anymore.",
+      ],
+    },
+    {
+      label: 'Three levels of unblending',
+      paragraphs: [
+        "Unblending isn't one thing. It happens on three levels, and they don't always arrive together.",
+        "Thought — you can name the part. \"A part of me is anxious.\" The words are right, the framework applies. This is real but it's the most surface layer.",
+        "Feeling — you sense yourself with the part rather than in it. There's a felt difference. You can stay with what's there without being taken over by it.",
+        "Sensation — your body reflects the shift. Chest softens. Breath deepens. The grip lets go. The part itself feels less heavy, less urgent. Something has actually moved.",
+        "All three are unblending. One level alone is partial. Two levels is a real shift. All three together is the genuine arrival. Don't try to make this happen — chasing it creates another performance. Real unblending arrives when a part is genuinely received.",
+      ],
+    },
+  ],
+  howItMoves:
+    "This shifts through repeated experience of unblending — usually first with smaller parts before bigger ones. Reading about the difference helps. Actually living it is the real teacher. Self energy is what allows unblending, so this spectrum and Fragmented → Flowing tend to influence each other over time.",
+};
+
+const FRAGMENTED: SpectrumCopy = {
   title: 'Fragmented → Flowing',
   leftLabel: 'Fragmented',
   rightLabel: 'Flowing',
-  explanation: [
-    "This tracks your actual system health — how much Self energy is present, how well your parts are working together, whether genuine healing movement is happening.",
-    "Unlike the Outside-In spectrum, this one doesn't shift through understanding alone. It shifts through actual healing — moments of genuine unblending, parts feeling truly heard, Self energy emerging, burdens being released.",
-    "A lower score doesn't mean you're doing something wrong. It means the system is still working hard to manage the wound. That's where most people are when they begin.",
-  ],
+  leftKeysField: 'fragmentedKeywords',
+  rightKeysField: 'flowingKeywords',
   leftIndicatorsHeading: 'Fragmented indicators',
+  rightIndicatorsHeading: 'Flowing indicators',
   leftPlaceholders: [
     "intense blending language",
     "parts in conflict",
     "no Self access detected",
   ],
-  rightIndicatorsHeading: 'Flowing indicators',
   rightPlaceholders: [
     "moments of Self energy",
     "genuine curiosity without agenda",
     "I feel okay with this",
     "unblending language",
   ],
+  sections: [
+    {
+      label: 'What this tracks',
+      paragraphs: [
+        "This tracks your actual system health — how much Self energy is present, how well your parts are working together, whether genuine healing movement is happening.",
+        "Unlike the Outside-In spectrum, this one doesn't shift through understanding alone. It shifts through actual healing — moments of genuine unblending, parts feeling truly heard, Self energy emerging, burdens being released.",
+        "Toward Fragmented doesn't mean you're doing something wrong. It means the system is still working hard to manage the wound. That's where most people are when they begin.",
+      ],
+    },
+  ],
   howItMoves:
-    "This score shifts slowly and genuinely — it cannot be manufactured. What moves it: staying with difficult feelings rather than managing them, parts feeling truly received, moments when the system relaxes on its own. Trust the process.",
+    "This shifts slowly and genuinely — it cannot be manufactured. What moves it: staying with difficult feelings rather than managing them, parts feeling truly received, moments when the system relaxes on its own. Trust the process.",
 };
 
 // ============================================================================
@@ -230,22 +323,23 @@ const styles = StyleSheet.create({
   close: { padding: 6 },
   body: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl },
 
-  scoreRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm },
-  scoreLabelLeft:  { color: colors.creamDim, fontSize: 11, letterSpacing: 1.5 },
-  scoreLabelRight: { color: colors.creamDim, fontSize: 11, letterSpacing: 1.5, textAlign: 'right' },
-  scoreBarWrap: {
+  // Position bar — visual only, no number is ever rendered.
+  barRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm },
+  barLabelLeft:  { color: colors.creamDim, fontSize: 11, letterSpacing: 1.5 },
+  barLabelRight: { color: colors.creamDim, fontSize: 11, letterSpacing: 1.5, textAlign: 'right' },
+  barWrap: {
     marginTop: 8, marginBottom: spacing.md,
     height: 18,
     justifyContent: 'center',
   },
-  scoreBar: {
+  barTrack: {
     height: 4,
     backgroundColor: 'rgba(230,180,122,0.25)',
     borderRadius: 2,
   },
-  scoreMarker: {
+  barMarker: {
     position: 'absolute',
-    top: 2, // center of 18 minus half of marker height
+    top: 2,
     width: 14, height: 14, borderRadius: 7,
     marginLeft: -7,
     backgroundColor: colors.amber,
@@ -253,7 +347,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.8, shadowRadius: 8, shadowOffset: { width: 0, height: 0 },
     elevation: 4,
   },
-  scoreNoData: {
+  barNoData: {
     position: 'absolute', right: 0, top: 1,
     color: colors.creamFaint, fontSize: 11, fontStyle: 'italic',
   },

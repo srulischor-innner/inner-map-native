@@ -1,26 +1,30 @@
 // Collapsible "YOUR PROGRESS" strip at the bottom of the Map tab.
 // Collapsed: a single-line header the user can tap to expand.
-// Expanded: both spectrum bars (each with a "?" info button) + the caption.
-//
-// Tapping the info button opens SpectrumDetailModal — a bottom sheet that
-// explains what the spectrum tracks, shows contributing keywords when
-// available, and describes how the score moves.
+// Expanded: three spectrum bars (each with a "?" info button), in this
+// fixed order from top to bottom:
+//   1. Outside-In → Inside-Out  (perspective — conceptual)
+//   2. Blended → Self-Led        (position — relational, real-time)
+//   3. Fragmented → Flowing      (integration — experiential)
+// They measure DIFFERENT things and move at different rates. Read each
+// independently. The detail panel (? button) explains each one.
 
 import React, { useState } from 'react';
 import { Pressable, View, Text, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radii, spacing } from '../../constants/theme';
+import { colors, spacing } from '../../constants/theme';
 import { SpectrumBar } from '../journey/SpectrumBar';
 import { SpectrumDetailModal, SpectrumKey } from './SpectrumDetailModal';
 
 export function ProgressStrip({
   outsideInScore,
   fragmentedScore,
+  blendedSelfLedScore,
   clinicalPatterns,
 }: {
   outsideInScore?: number | null;
   fragmentedScore?: number | null;
+  blendedSelfLedScore?: number | null;
   clinicalPatterns?: any;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -29,6 +33,15 @@ export function ProgressStrip({
   const openDetail = (k: SpectrumKey) => {
     Haptics.selectionAsync().catch(() => {});
     setDetailFor(k);
+  };
+
+  // Position lookup for whichever spectrum's panel is open. Kept as a
+  // small map so the order in this file matches the order on screen.
+  const valueFor = (k: SpectrumKey | null): number | null => {
+    if (k === 'outsideIn')    return outsideInScore ?? null;
+    if (k === 'blendedSelfLed') return blendedSelfLedScore ?? null;
+    if (k === 'fragmented')   return fragmentedScore ?? null;
+    return null;
   };
 
   return (
@@ -56,6 +69,16 @@ export function ProgressStrip({
               caption="How your protective parts orient to the world."
             />
           </SpectrumRow>
+          <SpectrumRow onInfo={() => openDetail('blendedSelfLed')}>
+            <SpectrumBar
+              leftLabel="Blended"
+              rightLabel="Self-Led"
+              leftColor={colors.firefighters}
+              rightColor={colors.self}
+              value={blendedSelfLedScore ?? null}
+              caption="When parts activate, are you it — or with it?"
+            />
+          </SpectrumRow>
           <SpectrumRow onInfo={() => openDetail('fragmented')}>
             <SpectrumBar
               leftLabel="Fragmented"
@@ -72,7 +95,7 @@ export function ProgressStrip({
       <SpectrumDetailModal
         visible={!!detailFor}
         spectrum={detailFor}
-        value={detailFor === 'outsideIn' ? outsideInScore ?? null : fragmentedScore ?? null}
+        value={valueFor(detailFor)}
         clinicalPatterns={clinicalPatterns}
         onClose={() => setDetailFor(null)}
       />

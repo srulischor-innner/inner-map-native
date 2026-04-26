@@ -25,8 +25,11 @@ type JourneyData = {
   mostActiveParts: Energy[];
   clinicalPatterns: any;
   sessions: PathItem[];
+  // Reading positions on each spectrum (0..1). DB columns keep their legacy
+  // "...Score" suffix; the UI never says "score" anywhere.
   outsideInScore?: number | null;
   fragmentedScore?: number | null;
+  blendedSelfLedScore?: number | null;
 };
 
 export default function JourneyScreen() {
@@ -78,6 +81,8 @@ export default function JourneyScreen() {
         </Section>
 
         <Section title="The spectrums">
+          {/* Three spectrums — read independently. Order matches the Map
+              tab's YOUR PROGRESS strip (perspective → position → integration). */}
           <SpectrumBar
             leftLabel="Outside-In"
             rightLabel="Inside-Out"
@@ -85,6 +90,15 @@ export default function JourneyScreen() {
             rightColor={colors.self}
             value={data?.outsideInScore ?? null}
             caption="How your protective parts orient to the world — a conceptual shift."
+          />
+          <View style={{ height: spacing.md }} />
+          <SpectrumBar
+            leftLabel="Blended"
+            rightLabel="Self-Led"
+            leftColor={colors.firefighters}
+            rightColor={colors.self}
+            value={data?.blendedSelfLedScore ?? null}
+            caption="When parts activate, are you it — or with it? A relational shift."
           />
           <View style={{ height: spacing.md }} />
           <SpectrumBar
