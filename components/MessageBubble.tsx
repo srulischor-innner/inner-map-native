@@ -16,9 +16,11 @@ import {
 } from 'expo-audio';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
-import { api } from '../services/api';
 import { PartBadge } from './PartBadge';
-import { ensureTTS, getCachedTTS } from '../utils/ttsCache';
+import {
+  acquireSlot, releaseSlot, usePlayingId,
+  useAudioMode, setAudioMode, playTTS,
+} from '../utils/ttsPlayer';
 
 export type ChatMsg = {
   id: string;
@@ -34,139 +36,48 @@ export type ChatMsg = {
   voice?: { uri: string; durationSec: number; transcript: string | null };
 };
 
-// One shared player slot — tapping the speaker on a new bubble stops playback
-// on the previous bubble. Keeps the UI unambiguous about which reply is
-// currently being read aloud.
-let currentPlayer: ReturnType<typeof createAudioPlayer> | null = null;
-let currentPlayerOwnerId: string | null = null;
-const listeners = new Set<(playingId: string | null) => void>();
-function setPlayingId(id: string | null) {
-  currentPlayerOwnerId = id;
-  listeners.forEach((l) => l(id));
-}
-function usePlayingId() {
-  const [id, setId] = useState<string | null>(currentPlayerOwnerId);
-  useEffect(() => {
-    listeners.add(setId);
-    return () => { listeners.delete(setId); };
-  }, []);
-  return id;
-}
-
 export function MessageBubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === 'user';
+  // Slot ownership + session-wide audio mode come from the shared service.
+  // Speaker icon variants:
+  //   audioMode OFF, slot ≠ ours  → dim default (volume-medium-outline)
+  //   audioMode ON,  slot ≠ ours  → active amber (volume-medium-outline)
+  //   slot == ours                → amber pause icon
   const playingId = usePlayingId();
+  const audioModeOn = useAudioMode();
   const isPlaying = playingId === msg.id;
-  // Local player kept alive across pauses so Tap-pause → Tap-resume picks up
-  // exactly where it left off. Survives isPlaying toggles; only released on
-  // a different message claiming the slot (via the useEffect below) or on
-  // component unmount.
-  const localPlayerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+  // Spinner gate — show only if a fetch takes longer than 500ms.
   const [loading, setLoading] = useState(false);
-  // Show the spinner only if the fetch takes more than 500ms — a cache hit
-  // feels instant and shouldn't flash a spinner for a single frame.
   const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // When a different message claims the playing slot, tear down our local
-  // player — it's ours no longer and keeping it loaded wastes memory.
-  useEffect(() => {
-    if (playingId && playingId !== msg.id && localPlayerRef.current) {
-      try { localPlayerRef.current.pause(); localPlayerRef.current.remove(); } catch {}
-      localPlayerRef.current = null;
-    }
-  }, [playingId, msg.id]);
-
-  // Unmount cleanup — always release the native player and clear the
-  // singleton slot if we still own it.
   useEffect(() => () => {
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
-    try { localPlayerRef.current?.pause(); localPlayerRef.current?.remove(); } catch {}
-    localPlayerRef.current = null;
-    if (currentPlayerOwnerId === msg.id) setPlayingId(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Tap the speaker icon on an AI bubble. Behavior per spec:
+   *    - audio mode OFF + tap any speaker  → mode ON, this message plays
+   *    - audio mode ON  + tap a non-owner  → that message starts (prior stops)
+   *    - audio mode ON  + tap the OWNER    → mode OFF, audio stops
+   */
   async function togglePlayback() {
     Haptics.selectionAsync().catch(() => {});
-    // --- Case 1: this message is already the one playing → pause ---
-    if (isPlaying && localPlayerRef.current) {
-      try { localPlayerRef.current.pause(); } catch {}
-      setPlayingId(null);
+    // Case A — tapping the message that's currently playing → turn mode off.
+    if (isPlaying) {
+      await setAudioMode(false);
       return;
     }
-    // --- Case 2: we already have a loaded player (paused earlier) → resume ---
-    if (localPlayerRef.current && !isPlaying) {
-      try {
-        await setAudioModeAsync({
-          allowsRecording: false, playsInSilentMode: true,
-          interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
-        });
-      } catch {}
-      // Kick out whoever else holds the slot (other bubble / voice note).
-      setPlayingId(msg.id);
-      try { localPlayerRef.current.play(); } catch (e) {
-        console.warn('[tts] resume failed:', (e as Error)?.message);
-      }
-      watchForFinish(localPlayerRef.current, msg.id);
-      return;
-    }
-    // --- Case 3: first play — create a player, ideally from cache ---
-    // Delay the spinner by 500ms so cache hits don't flash.
+    // Case B — switching to a different message OR turning mode on.
+    if (!audioModeOn) await setAudioMode(true);
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
     loadingTimerRef.current = setTimeout(() => setLoading(true), 500);
     try {
-      try {
-        await setAudioModeAsync({
-          allowsRecording: false, playsInSilentMode: true,
-          interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
-        });
-      } catch {}
-      // Try cache first — instant path.
-      let uri = getCachedTTS(msg.id);
-      if (!uri) {
-        // Miss → await the in-flight prefetch (or kick one off). This is
-        // the slow path but the spinner already covers it.
-        const fallback = await ensureTTS(msg.id, msg.text);
-        uri = fallback || null;
-      }
-      if (loadingTimerRef.current) { clearTimeout(loadingTimerRef.current); loadingTimerRef.current = null; }
-      setLoading(false);
-      if (!uri) return;
-      const player = createAudioPlayer({ uri });
-      localPlayerRef.current = player;
-      setPlayingId(msg.id);
-      try { player.play(); } catch (e) {
-        console.warn('[tts] play failed:', (e as Error)?.message);
-      }
-      watchForFinish(player, msg.id);
+      await playTTS(msg.id, msg.text);
     } catch (e) {
       console.warn('[tts] togglePlayback failed:', (e as Error)?.message);
+    } finally {
       if (loadingTimerRef.current) { clearTimeout(loadingTimerRef.current); loadingTimerRef.current = null; }
       setLoading(false);
-      setPlayingId(null);
     }
-  }
-
-  /** Lightweight poll — when the clip finishes, reset UI + release the
-   *  native player so the next tap starts fresh from zero. */
-  function watchForFinish(player: ReturnType<typeof createAudioPlayer>, ownerId: string) {
-    const watch = async () => {
-      while (localPlayerRef.current === player) {
-        try {
-          const s = player.currentStatus;
-          if (s?.didJustFinish) break;
-          if (s?.isLoaded === false) break;
-        } catch { break; }
-        await new Promise((r) => setTimeout(r, 250));
-      }
-      // Finished cleanly — release + reset so a fresh tap starts at 0.
-      if (localPlayerRef.current === player) {
-        try { player.remove(); } catch {}
-        localPlayerRef.current = null;
-        if (currentPlayerOwnerId === ownerId) setPlayingId(null);
-      }
-    };
-    watch();
   }
 
   return (
@@ -188,17 +99,22 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
         {!isUser && msg.detectedPart ? (
           <PartBadge part={msg.detectedPart} label={msg.partLabel} />
         ) : null}
-        {/* Speaker button only on AI messages once streaming is complete.
-            Three visual states per spec:
-              default: dim speaker (volume-medium-outline) in 40% cream
-              playing: amber pause icon (#E6B47A)
-              loading: ActivityIndicator — only shown after 500ms delay */}
+        {/* Speaker icon. THREE visual states per spec:
+              default (audio mode OFF, not us)  → dim speaker, 40% cream
+              active  (audio mode ON,  not us)  → bright amber speaker
+              playing (slot owner is us)        → amber pause icon
+            Tapping the icon also flips session-wide audio mode — see
+            togglePlayback() above for the full state machine. */}
         {!isUser && !msg.streaming && msg.text.trim() ? (
           <Pressable
             onPress={togglePlayback}
             hitSlop={12}
             style={styles.speakerBtn}
-            accessibilityLabel={isPlaying ? 'Pause reading aloud' : 'Read aloud'}
+            accessibilityLabel={
+              isPlaying ? 'Pause and turn off auto audio'
+              : audioModeOn ? 'Switch audio to this message'
+              : 'Turn on auto audio and read this message aloud'
+            }
           >
             {loading ? (
               <ActivityIndicator size="small" color={colors.amber} />
@@ -206,7 +122,11 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
               <Ionicons
                 name={isPlaying ? 'pause' : 'volume-medium-outline'}
                 size={16}
-                color={isPlaying ? '#E6B47A' : 'rgba(240,237,232,0.4)'}
+                color={
+                  isPlaying ? '#E6B47A'
+                  : audioModeOn ? '#E6B47A'
+                  : 'rgba(240,237,232,0.4)'
+                }
               />
             )}
           </Pressable>
@@ -261,7 +181,9 @@ function VoiceNoteBubble({
     return out;
   }, [uri]);
 
-  // If another voice note / TTS claimed the slot → pause ours.
+  // If another voice note / TTS claimed the slot → pause ours. Reads the
+  // shared playing-id from ttsPlayer so any owner change anywhere mutes
+  // this bubble's local player.
   useEffect(() => {
     if (playing && activePlayingId !== id) {
       try { playerRef.current?.pause(); } catch {}
@@ -277,7 +199,7 @@ function VoiceNoteBubble({
     stopPolling();
     try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
     playerRef.current = null;
-    if (currentPlayerOwnerId === id) setPlayingId(null);
+    releaseSlot(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -300,7 +222,7 @@ function VoiceNoteBubble({
           try { p.seekTo(0); } catch {}
           setCurrentTime(0);
           setPlaying(false);
-          if (currentPlayerOwnerId === id) setPlayingId(null);
+          releaseSlot(id);
         }
       } catch {}
     }, 100);
@@ -328,16 +250,18 @@ function VoiceNoteBubble({
       stopPolling();
       return;
     }
-    // PLAY (or resume). Claim the singleton slot FIRST so other bubbles pause.
+    // PLAY (or resume). Claim the slot via ttsPlayer.acquireSlot — that
+    // tears down any TTS player + fires eviction callbacks for any other
+    // voice note that holds the slot. We pass our own pause as the
+    // eviction callback.
     setLoading(true);
     try {
       const p = await ensurePlayer();
-      // Stop any other bubble via the pub/sub slot.
-      if (currentPlayerOwnerId && currentPlayerOwnerId !== id) {
-        setPlayingId(id); // other owners will pause via their useEffect
-      } else {
-        setPlayingId(id);
-      }
+      await acquireSlot(id, () => {
+        try { playerRef.current?.pause(); } catch {}
+        setPlaying(false);
+        stopPolling();
+      });
       p.play();
       setPlaying(true);
       setLoading(false);

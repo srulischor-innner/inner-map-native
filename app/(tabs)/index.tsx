@@ -35,6 +35,7 @@ import { colors, spacing } from '../../constants/theme';
 import { pulseMapTab } from '../../utils/mapPulse';
 import { consumeSelfMode } from '../../utils/selfMode';
 import { prefetchTTS, clearTTSCache } from '../../utils/ttsCache';
+import { getAudioMode, playTTS, setAudioMode, stopAll as stopAllAudio } from '../../utils/ttsPlayer';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { TypingIndicator } from '../../components/TypingIndicator';
@@ -84,6 +85,14 @@ export default function ChatScreen() {
   // Instead of inserting a placeholder bubble that then gets swapped (which
   // read as a glitch), we show the typing indicator immediately and insert
   // the greeting bubble only once — when the real text is ready.
+  // Tab-level audio cleanup — stop any playing clip + flip audio mode
+  // off when the chat screen unmounts (user navigates away). The user
+  // shouldn't keep hearing TTS while looking at the Map tab.
+  useEffect(() => () => {
+    stopAllAudio().catch(() => {});
+    setAudioMode(false).catch(() => {});
+  }, []);
+
   useEffect(() => {
     // Consume the one-shot Self-mode flag if the user just tapped "Enter
     // Self mode" on the map. Runs once on mount — subsequent tab visits
@@ -308,6 +317,13 @@ export default function ChatScreen() {
               // plays instantly instead of waiting on /api/speak. Keyed by
               // the streaming bubble's id (same one MessageBubble uses).
               prefetchTTS(streamId, target);
+              // Session-wide audio mode: if the user has it on, auto-play
+              // this new reply the moment it finishes streaming. The
+              // shared player guarantees only one clip plays at a time —
+              // if a previous message is still playing, it stops cleanly.
+              if (getAudioMode() && target) {
+                playTTS(streamId, target).catch(() => {});
+              }
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
               setSending(false);
               setTyping(false);
@@ -456,6 +472,10 @@ export default function ChatScreen() {
             // TTS cache is also session-scoped; drop it so the new session's
             // first bubble doesn't accidentally play audio from the old one
             // if the new bubble happens to get the same (uuid-unlikely) id.
+            // Audio mode + any playing clip also reset to OFF so the new
+            // session starts quiet (user opts back in by tapping a speaker).
+            await stopAllAudio();
+            await setAudioMode(false);
             clearTTSCache();
             setSelfMode(false);
             historyRef.current = [];
