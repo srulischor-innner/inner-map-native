@@ -30,7 +30,7 @@ import {
   ExperienceLevel, LEVEL_OPTIONS, setExperienceLevel,
 } from '../services/experienceLevel';
 
-type Phase = 'welcome' | 'terms' | 'intake' | 'experience' | 'resources';
+type Phase = 'welcome' | 'terms' | 'intake' | 'experience' | 'resources' | 'notTherapy';
 
 export default function OnboardingScreen() {
   const [phase, setPhase] = useState<Phase>('welcome');
@@ -55,14 +55,16 @@ export default function OnboardingScreen() {
           onPick={async (lvl, isHard) => {
             // The 4th option ("I'm in a hard place right now") sets level
             // to 'curious' so the AI uses the most-scaffolded voice, AND
-            // routes to the resources screen before entering chat.
+            // routes to the resources screen before the not-therapy moment.
             await setExperienceLevel(isHard ? 'curious' : lvl);
             if (isHard) setPhase('resources');
-            else finishAndEnterApp();
+            else setPhase('notTherapy');
           }}
         />
+      ) : phase === 'resources' ? (
+        <ResourcesScreen onContinue={() => setPhase('notTherapy')} />
       ) : (
-        <ResourcesScreen onContinue={finishAndEnterApp} />
+        <NotTherapyScreen onContinue={finishAndEnterApp} />
       )}
     </SafeAreaView>
   );
@@ -526,6 +528,39 @@ function ResourcesScreen({ onContinue }: { onContinue: () => void }) {
 }
 
 // ============================================================================
+// 6. NOT-THERAPY — final moment before entering the app. A single quiet
+// screen that names what Inner Map is and is not, in warm prose rather
+// than legal disclaimer language. Shown for every experience level so
+// the message lands once cleanly instead of being buried in fine print.
+// ============================================================================
+function NotTherapyScreen({ onContinue }: { onContinue: () => void }) {
+  return (
+    <ScrollView contentContainerStyle={styles.notTherapyRoot} showsVerticalScrollIndicator={false}>
+      <View style={{ flex: 1 }} />
+      <Text style={styles.notTherapyTitle}>One important thing</Text>
+      <Text style={styles.notTherapyBody}>
+        Inner Map is a companion for your inner journey — not a replacement
+        for therapy or professional support. If you're going through
+        something difficult, please have a real person in your life who can
+        hold it with you. This works best alongside that support, not
+        instead of it.
+      </Text>
+      <Pressable
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          onContinue();
+        }}
+        style={[styles.beginBtn, { marginTop: spacing.xl, alignSelf: 'center' }]}
+        accessibilityLabel="I understand"
+      >
+        <Text style={styles.beginText}>I  UNDERSTAND</Text>
+      </Pressable>
+      <View style={{ flex: 1 }} />
+    </ScrollView>
+  );
+}
+
+// ============================================================================
 // STYLES
 // ============================================================================
 const styles = StyleSheet.create({
@@ -697,5 +732,33 @@ const styles = StyleSheet.create({
   resCardText: {
     color: colors.cream, fontFamily: fonts.sans,
     fontSize: 14, lineHeight: 22, marginBottom: 8,
+  },
+
+  // Not-therapy moment — vertically centered, generous breathing room,
+  // single warm paragraph. Uses the shared beginBtn for the CTA so the
+  // button language matches the rest of the onboarding flow.
+  notTherapyRoot: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xxl,
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  notTherapyTitle: {
+    color: colors.cream,
+    fontFamily: fonts.serifBold,
+    fontSize: 30,
+    letterSpacing: 0.4,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  notTherapyBody: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 16,
+    lineHeight: 26,
+    textAlign: 'center',
+    letterSpacing: 0.2,
   },
 });
