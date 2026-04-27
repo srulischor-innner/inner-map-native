@@ -24,8 +24,10 @@ const ReanimatedView = ReanimatedDefault.View;
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import type { AttentionState } from '../utils/markers';
+import { PART_DISPLAY, PART_COLOR } from '../utils/markers';
 import {
-  useAttentionState, hasSeenFirstTransition, markFirstTransitionSeen,
+  useAttentionState, useNoticedPart,
+  hasSeenFirstTransition, markFirstTransitionSeen,
   hasSeenFirstSessionLabel, markFirstSessionLabelSeen,
 } from '../utils/attentionState';
 
@@ -45,6 +47,10 @@ const VISUALS: Record<AttentionState, StateVisual> = {
 
 export function AttentionIndicator() {
   const state = useAttentionState();
+  // The part currently being noticed — only meaningful when state is 'noticing'.
+  // Drives the small dim label that appears below the triangle so the user
+  // can see WHICH pattern the map is recognizing.
+  const noticedPart = useNoticedPart();
   const [panelOpen, setPanelOpen] = useState(false);
 
   // Drives the smooth cross-fade between state visuals AND the per-state
@@ -178,6 +184,18 @@ export function AttentionIndicator() {
               <Path path={triPath} color="#E6B47A33" style="fill" />
             </Group>
           </Canvas>
+          {/* Small dim part label — ONLY in the noticing state, ONLY when
+              the marker carried a part name. Color-coded to the part so
+              the user reads "what is being noticed" at a glance. */}
+          {state === 'noticing' && noticedPart ? (
+            <Text
+              style={[styles.partLabel, { color: PART_COLOR[noticedPart] || '#E6B47A' }]}
+              numberOfLines={1}
+              allowFontScaling={false}
+            >
+              {(PART_DISPLAY[noticedPart] || noticedPart).toUpperCase()}
+            </Text>
+          ) : null}
         </Pressable>
       </View>
       <ExplanationPanel visible={panelOpen} onClose={() => setPanelOpen(false)} />
@@ -233,6 +251,17 @@ const styles = StyleSheet.create({
   tapTarget: {
     width: TAP, height: TAP,
     alignItems: 'center', justifyContent: 'center',
+  },
+  // Part-being-noticed label — sits directly below the triangle. 10px,
+  // 70% opacity, uppercase with letter-spacing per spec. Color is set
+  // inline from PART_COLOR so it changes per noticed part.
+  partLabel: {
+    fontFamily: fonts.sans,
+    fontSize: 10,
+    opacity: 0.7,
+    letterSpacing: 1,
+    marginTop: 3,
+    textAlign: 'center',
   },
   // Inline row holds the optional first-session text label to the LEFT
   // of the tap target so it reads as a hint that points at the triangle.

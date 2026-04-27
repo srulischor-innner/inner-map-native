@@ -30,8 +30,8 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
 import { api, ChatMessage } from '../../services/api';
-import { parseChatMeta, parseAttentionState, stripMarkers } from '../../utils/markers';
-import { setAttentionState, resetAttentionState } from '../../utils/attentionState';
+import { parseChatMeta, parseAttentionStatePayload, stripMarkers } from '../../utils/markers';
+import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
 import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
@@ -327,8 +327,15 @@ export default function ChatScreen() {
               // value in the accumulated text so a later state overrides
               // an earlier one within the same turn (e.g. AI moved from
               // "noticing" → "listening" once it asked permission).
-              const attn = parseAttentionState(rawAccum);
-              if (attn) setAttentionState(attn);
+              const attn = parseAttentionStatePayload(rawAccum);
+              if (attn) {
+                setAttentionState(attn.state);
+                // Only the 'noticing' state carries a part name. setAttentionState
+                // already clears the part when transitioning out of noticing,
+                // so this only writes a non-null value when state is 'noticing'.
+                if (attn.state === 'noticing') setNoticedPart(attn.part);
+                console.log('[attention]', attn.state, attn.part || '');
+              }
               // Stream new cleaned text into the TTS controller. It will
               // chunk on sentence boundaries (≥80 chars per chunk) and
               // queue audio so playback begins shortly after the first

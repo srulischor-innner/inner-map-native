@@ -134,25 +134,99 @@ export function PartFolderModal({
           ) : null}
           <Text style={styles.description}>{meta.description}</Text>
 
-          {/* Per-part section rendering */}
-          {partKey === 'wound'      ? <WoundSections      mapData={mapData} part={part} /> : null}
-          {partKey === 'fixer'      ? <FixerSections      part={part} />                    : null}
-          {partKey === 'skeptic'    ? <SkepticSections    part={part} />                    : null}
-          {partKey === 'self'       ? <SelfSections       part={part} onEnterSelfMode={onEnterSelfMode} onClose={onClose} color={meta.color} /> : null}
-          {partKey === 'self-like'  ? <SelfLikeSections   part={part} mapData={mapData} />  : null}
-          {partKey === 'manager'    ? <ContainerList
-              items={mapData?.detectedManagers || []}
-              color={meta.color}
-              emptyLine="Your managers will appear here as we identify them in conversation."
-            /> : null}
-          {partKey === 'firefighter' ? <ContainerList
-              items={mapData?.detectedFirefighters || []}
-              color={meta.color}
-              emptyLine="Your firefighters will appear here as they surface."
-            /> : null}
+          {/* Per-part section rendering. If the node has been sensed but no
+              fields are populated yet, the placeholder communicates "still
+              taking shape" rather than rendering a row of empty sections. */}
+          {isFolderEmpty(partKey, mapData, part) ? (
+            <FormingPlaceholder />
+          ) : (
+            <>
+              {partKey === 'wound'      ? <WoundSections      mapData={mapData} part={part} /> : null}
+              {partKey === 'fixer'      ? <FixerSections      part={part} />                    : null}
+              {partKey === 'skeptic'    ? <SkepticSections    part={part} />                    : null}
+              {partKey === 'self'       ? <SelfSections       part={part} onEnterSelfMode={onEnterSelfMode} onClose={onClose} color={meta.color} /> : null}
+              {partKey === 'self-like'  ? <SelfLikeSections   part={part} mapData={mapData} />  : null}
+              {partKey === 'manager'    ? <ContainerList
+                  items={mapData?.detectedManagers || []}
+                  color={meta.color}
+                  emptyLine="Your managers will appear here as we identify them in conversation."
+                /> : null}
+              {partKey === 'firefighter' ? <ContainerList
+                  items={mapData?.detectedFirefighters || []}
+                  color={meta.color}
+                  emptyLine="Your firefighters will appear here as they surface."
+                /> : null}
+            </>
+          )}
         </ScrollView>
       </View>
     </Modal>
+  );
+}
+
+// ============================================================================
+// Empty-folder detection + placeholder
+// ============================================================================
+//
+// A folder is "empty" when neither the part record nor the relevant mapData
+// fields carry anything substantive. The map is a living document: when the
+// AI has named a node but not yet filed content, we show a quiet placeholder
+// instead of a row of "Not yet explored…" empties — the node is forming, not
+// missing.
+function nonEmpty(v: any): boolean {
+  if (v == null) return false;
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+function isFolderEmpty(partKey: NodeKey, mapData: any, part: any): boolean {
+  switch (partKey) {
+    case 'wound':
+      return !nonEmpty(mapData?.wound)
+          && !nonEmpty(part?.corePhrase)
+          && !nonEmpty(mapData?.objectiveStory)
+          && !nonEmpty(mapData?.alternativeStory)
+          && !nonEmpty(part?.sensation)
+          && !nonEmpty(part?.fullDescription)
+          && !nonEmpty(part?.bodyLocation)
+          && !nonEmpty(part?.howItShowsUp)
+          && !nonEmpty(part?.originStory);
+    case 'fixer':
+    case 'skeptic':
+      return !nonEmpty(part?.whatItWants)
+          && !nonEmpty(part?.howItShowsUp)
+          && !nonEmpty(part?.bodyLocation)
+          && !nonEmpty(part?.recurringPhrases)
+          && !nonEmpty(part?.voice)
+          && !nonEmpty(part?.historicalEntries)
+          && !nonEmpty(part?.triggers)
+          && !nonEmpty(part?.whatItsProtecting)
+          && !nonEmpty(partKey === 'fixer' ? mapData?.fixer : mapData?.skeptic);
+    case 'self-like':
+      return !nonEmpty(part?.howItShowsUp)
+          && !nonEmpty(mapData?.compromise)
+          && !nonEmpty(part?.whatItWants)
+          && !nonEmpty(part?.howItSeesTheWorld)
+          && !nonEmpty(part?.bodyLocation);
+    case 'manager':
+      return !nonEmpty(mapData?.detectedManagers);
+    case 'firefighter':
+      return !nonEmpty(mapData?.detectedFirefighters);
+    case 'self':
+      // Self folder always has the "Enter Self mode" CTA — never blank.
+      return false;
+  }
+  return false;
+}
+
+function FormingPlaceholder() {
+  return (
+    <View style={styles.formingWrap}>
+      <Text style={styles.formingText}>
+        The map has sensed something here — still taking shape. Keep talking
+        and it will become clearer.
+      </Text>
+    </View>
   );
 }
 
@@ -331,6 +405,22 @@ const styles = StyleSheet.create({
   },
   sectionValue: { color: colors.cream, fontFamily: fonts.sans, fontSize: 14, lineHeight: 22 },
   sectionEmpty: { color: colors.creamFaint, fontFamily: fonts.serifItalic, fontSize: 13, opacity: 0.7 },
+
+  // Folder-wide "still taking shape" placeholder. Quieter than missing
+  // content — italic dim copy that signals presence without specificity.
+  formingWrap: {
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+  },
+  formingText: {
+    color: colors.creamFaint,
+    fontFamily: fonts.serifItalic,
+    fontSize: 14,
+    lineHeight: 22,
+    textAlign: 'center',
+    opacity: 0.75,
+  },
 
   selfModeExplain: {
     color: colors.creamDim,

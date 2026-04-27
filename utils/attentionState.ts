@@ -11,10 +11,12 @@
 
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { AttentionState } from './markers';
+import type { AttentionState, NoticedPart } from './markers';
 
 let current: AttentionState = 'quiet';
+let currentPart: NoticedPart | null = null;
 const listeners = new Set<(s: AttentionState) => void>();
+const partListeners = new Set<(p: NoticedPart | null) => void>();
 
 const STORAGE_KEY = 'attentionIndicator.firstTransitionSeen.v1';
 // Separate flag for the "tap to learn what this is" text label that
@@ -40,11 +42,33 @@ export function setAttentionState(s: AttentionState): void {
   if (s === current) return;
   current = s;
   for (const l of listeners) l(s);
+  // Leaving the noticing state always clears the noticed part, so the
+  // small label below the triangle can't get stuck on a stale name.
+  if (s !== 'noticing') setNoticedPart(null);
+}
+
+/** Hook + setter for the part currently being noticed. Only meaningful
+ *  when state is 'noticing' — null otherwise. The chat header uses this
+ *  to render a small dim label below the triangle. */
+export function useNoticedPart(): NoticedPart | null {
+  const [p, setP] = useState<NoticedPart | null>(currentPart);
+  useEffect(() => {
+    partListeners.add(setP);
+    return () => { partListeners.delete(setP); };
+  }, []);
+  return p;
+}
+export function getNoticedPart(): NoticedPart | null { return currentPart; }
+export function setNoticedPart(p: NoticedPart | null): void {
+  if (p === currentPart) return;
+  currentPart = p;
+  for (const l of partListeners) l(p);
 }
 
 /** Reset to 'quiet' on session end / tab unmount. */
 export function resetAttentionState(): void {
   setAttentionState('quiet');
+  setNoticedPart(null);
 }
 
 /** First-time-discovery flag. The chat screen pulses the indicator once

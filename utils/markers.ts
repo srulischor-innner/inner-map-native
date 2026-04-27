@@ -14,18 +14,44 @@ export type ChatMeta = {
  *  qualitative ambient states only. */
 export type AttentionState = 'quiet' | 'listening' | 'noticing';
 
+/** A noticing-state marker can carry the part being noticed so the chat
+ *  header can render a small label below the triangle. quiet/listening
+ *  never carry a part. The set must mirror PART_DISPLAY below. */
+export type NoticedPart =
+  | 'wound' | 'fixer' | 'skeptic' | 'self-like' | 'manager' | 'firefighter' | 'self';
+
+export type AttentionPayload = {
+  state: AttentionState;
+  part: NoticedPart | null;
+};
+
 /** Parse the latest ATTENTION_STATE marker from streaming text. The AI
- *  emits these as `[ATTENTION_STATE:listening]` (line- or inline-safe).
+ *  emits these as `[ATTENTION_STATE:listening]` or
+ *  `[ATTENTION_STATE:noticing | part: fixer]` (line- or inline-safe).
  *  Returns the LAST occurrence so a later state in the same turn wins. */
-export function parseAttentionState(text: string): AttentionState | null {
+export function parseAttentionStatePayload(text: string): AttentionPayload | null {
   if (!text) return null;
-  const re = /\[?ATTENTION_STATE:\s*(quiet|listening|noticing)\s*\]?/gi;
+  const re = /\[?ATTENTION_STATE:\s*(quiet|listening|noticing)(?:\s*\|\s*part:\s*([a-z-]+))?\s*\]?/gi;
   let m: RegExpExecArray | null;
-  let last: AttentionState | null = null;
+  let last: AttentionPayload | null = null;
   while ((m = re.exec(text)) !== null) {
-    last = m[1].toLowerCase() as AttentionState;
+    const state = m[1].toLowerCase() as AttentionState;
+    const rawPart = (m[2] || '').toLowerCase();
+    const allowed: NoticedPart[] =
+      ['wound', 'fixer', 'skeptic', 'self-like', 'manager', 'firefighter', 'self'];
+    const part: NoticedPart | null =
+      state === 'noticing' && (allowed as string[]).includes(rawPart)
+        ? (rawPart as NoticedPart)
+        : null;
+    last = { state, part };
   }
   return last;
+}
+
+/** Backwards-compatible state-only parser — kept so existing callers that
+ *  only need the AttentionState string don't need to change. */
+export function parseAttentionState(text: string): AttentionState | null {
+  return parseAttentionStatePayload(text)?.state ?? null;
 }
 
 /**
@@ -53,7 +79,7 @@ export function stripMarkers(text: string): string {
     .replace(/\[CHAT_META:[\s\S]*?\]/g, '')
     .replace(/\[(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|SUMMARY_META):[\s\S]*?\]/g, '')
     // ATTENTION_STATE — bracketed and bare forms both stripped from visible text.
-    .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)\s*\]?/gi, '')
+    .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)(?:\s*\|\s*part:\s*[a-z-]+)?\s*\]?/gi, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
