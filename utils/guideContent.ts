@@ -31,7 +31,8 @@ export type NodeVisualKind =
   // ----- "what holds you" — opens the HEALING section -----
   | 'windowOfTolerance'    // a horizontal band that gently widens — the window
   | 'buildingCapacity'     // the band is raised by a base of life-elements lighting up
-  | 'noVisual';            // no canvas — slide 3 is text only by design
+  | 'twoTracks'            // two vertical lines growing upward, finding their own paths
+  | 'noVisual';            // no canvas — text-only slides
 
 export type GuideSlide = {
   visual: NodeVisualKind;
@@ -241,7 +242,7 @@ export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'noVisual',
+    visual: 'twoTracks',
     title: 'Two tracks, not one',
     body: [
       "Inner work and your outer life run in parallel. They build each other.",

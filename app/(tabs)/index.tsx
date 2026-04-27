@@ -36,12 +36,11 @@ import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
 import { consumeSelfMode } from '../../utils/selfMode';
-import { prefetchTTS, clearTTSCache } from '../../utils/ttsCache';
-import { getAudioMode, playTTS, setAudioMode, stopAll as stopAllAudio } from '../../utils/ttsPlayer';
 import {
   startStream as startTTSStream, appendStreamText as appendTTSStream,
   finishStream as finishTTSStream, cancelStream as cancelTTSStream,
 } from '../../utils/ttsStream';
+import { AudioToggle } from '../../components/AudioToggle';
 import { useExperienceLevel } from '../../services/experienceLevel';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
@@ -76,6 +75,17 @@ export default function ChatScreen() {
   // this is true carries selfMode:true so the server prepends the Self-mode
   // system prompt addendum. Cleared when the session ends.
   const [selfMode, setSelfMode] = useState(false);
+  // Session-level audio mute/unmute. Default OFF — user opts in each session
+  // by tapping the speaker icon in the chat header. When ON, every new AI
+  // reply auto-plays via the streaming TTS pipeline. When the user mutes,
+  // the in-flight stream cancels immediately. No per-message control.
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const audioEnabledRef = useRef(audioEnabled);
+  useEffect(() => { audioEnabledRef.current = audioEnabled; }, [audioEnabled]);
+  function toggleAudio() {
+    if (audioEnabled) cancelTTSStream();
+    setAudioEnabled((prev) => !prev);
+  }
   // Experience level — drives which voice mode the AI uses on the server.
   // Synced from AsyncStorage; updates immediately when changed in settings.
   const experienceLevel = useExperienceLevel();
@@ -101,8 +111,6 @@ export default function ChatScreen() {
   // of those should leak across tab switches.
   useEffect(() => () => {
     cancelTTSStream();
-    stopAllAudio().catch(() => {});
-    setAudioMode(false).catch(() => {});
     resetAttentionState();
   }, []);
 
@@ -137,11 +145,9 @@ export default function ChatScreen() {
       if (greetingRes.suggestions.length > 0) setStarters(greetingRes.suggestions);
 
       const finalGreeting = (greetingRes.greeting && greetingRes.greeting.trim()) || FALLBACK_GREETING;
-      const openerId = addAssistantMessage(finalGreeting);
+      addAssistantMessage(finalGreeting);
       historyRef.current.push({ role: 'assistant', content: finalGreeting });
       setTyping(false);
-      // Warm TTS cache for the greeting so the speaker icon is instant.
-      prefetchTTS(openerId, finalGreeting);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -280,11 +286,10 @@ export default function ChatScreen() {
 
       // If session-wide audio mode is on, start the streaming TTS path
       // BEFORE the first delta arrives. Each onDelta will feed the
-      // controller; onDone will flush. The streaming controller stops
-      // the single-clip ttsPlayer internally so the two layers can't
-      // both produce sound. Capture the mode at start so a mid-stream
-      // flip doesn't half-start things.
-      const streamingTTSStarted = getAudioMode();
+      // controller; onDone will flush. Capture the mute toggle at start
+      // so a mid-stream flip doesn't half-start things — the toggle's
+      // own cancelTTSStream call still kills any in-flight playback.
+      const streamingTTSStarted = audioEnabledRef.current;
       if (streamingTTSStarted) {
         startTTSStream(streamId).catch(() => {});
       }
@@ -351,17 +356,11 @@ export default function ChatScreen() {
                 id: sessionIdRef.current,
                 messages: historyRef.current,
               });
-              // Warm the TTS cache so tapping the speaker on this bubble
-              // later plays the FULL message instantly (not from the
-              // streaming-sentences queue). Keyed by the streaming bubble's
-              // id (same one MessageBubble uses).
-              prefetchTTS(streamId, target);
               // If we started a streaming TTS for this reply, flush the
-              // tail of the buffer so the final partial sentence (if any)
-              // is also queued for playback. The queue then drains on its
-              // own — onDone returns immediately.
-              // If audio mode was OFF when streaming started, we DO NOT
-              // auto-play here either — the user opted to read silently.
+              // tail of the buffer so the final partial sentence is also
+              // queued. Queue drains on its own. If audio was muted at
+              // start (or got muted mid-stream), we never started — and
+              // the user's mute tap already called cancelTTSStream().
               if (streamingTTSStarted) {
                 finishTTSStream();
               }
@@ -423,6 +422,11 @@ export default function ChatScreen() {
           parent _layout). Low-visibility on purpose; reflects the AI's
           processing state without competing with the conversation. */}
       <View style={styles.headerStrip}>
+        {/* Session audio mute/unmute. Default OFF. Tap to flip. When ON,
+            every new AI reply auto-plays via the streaming TTS pipeline.
+            When OFF, audio is silent and any in-flight playback stops
+            immediately. No per-message control. */}
+        <AudioToggle enabled={audioEnabled} onToggle={toggleAudio} />
         <AttentionIndicator />
       </View>
       {/* Keyboard avoidance. `keyboardVerticalOffset` must equal the height of
@@ -518,13 +522,10 @@ export default function ChatScreen() {
             // is session-scoped — the next session starts in normal mode.
             // TTS cache is also session-scoped; drop it so the new session's
             // first bubble doesn't accidentally play audio from the old one
-            // if the new bubble happens to get the same (uuid-unlikely) id.
-            // Audio mode + any playing clip also reset to OFF so the new
-            // session starts quiet (user opts back in by tapping a speaker).
+            // Audio mute toggle resets to OFF so the new session starts
+            // silent — user opts in again by tapping the speaker icon.
             cancelTTSStream();
-            await stopAllAudio();
-            await setAudioMode(false);
-            clearTTSCache();
+            setAudioEnabled(false);
             resetAttentionState();
             setSelfMode(false);
             historyRef.current = [];
@@ -533,9 +534,8 @@ export default function ChatScreen() {
             const next = await api.getReturningGreeting();
             const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;
             if (next.suggestions.length) setStarters(next.suggestions);
-            const newOpenerId = addAssistantMessage(greeting);
+            addAssistantMessage(greeting);
             historyRef.current.push({ role: 'assistant', content: greeting });
-            prefetchTTS(newOpenerId, greeting);
 
             // Crossfade back to messages.
             Animated.parallel([
@@ -554,13 +554,13 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.md, paddingBottom: spacing.md },
-  // Holds the right-aligned attention indicator. 48px tall to host the
-  // 48x48 tap target with breathing room.
+  // Holds the audio mute toggle on the left and the attention indicator
+  // on the right. 48px tall to host both 48x48 tap targets.
   headerStrip: {
     height: 48,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
   },
   transition: {

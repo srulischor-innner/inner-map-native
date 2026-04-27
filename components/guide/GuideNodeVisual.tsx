@@ -51,6 +51,7 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'readyToBegin'         ? <ReadyToBegin W={W} H={H} /> : null}
       {kind === 'windowOfTolerance'    ? <WindowOfTolerance W={W} H={H} /> : null}
       {kind === 'buildingCapacity'     ? <BuildingCapacity W={W} H={H} /> : null}
+      {kind === 'twoTracks'            ? <TwoTracks W={W} H={H} /> : null}
       {/* 'noVisual' renders nothing inside the canvas. GuideSlide skips
           the Canvas wrapper entirely for this kind so a tiny placeholder
           spacer is shown instead — see GuideSlide.tsx. */}
@@ -1259,6 +1260,99 @@ function BuildingCapacityDot({
         <RadialGradient c={vec(cx, cy)} r={12} colors={[colors.amber + 'AA', colors.amber + '00']} />
       </Circle>
       <Circle cx={cx} cy={cy} r={6} color={colors.amber} style="fill" />
+    </Group>
+  );
+}
+
+// 3. TWO TRACKS — two vertical lines (inner work + outer life) start as
+//    near-nothing at the bottom center and grow upward over 2.5s. They
+//    start 4px apart and fan to ~20px apart at the top — finding their
+//    own paths while moving in the same direction. Stroke width grows
+//    1.5 → 3 with the height. A soft glow blooms at each line's tip as
+//    it reaches full height. After full height the lines breathe gently
+//    (opacity 0.7 ↔ 1.0 / 2s). Full cycle: 5s, then reset and repeat.
+function TwoTracks({ W, H }: { W: number; H: number }) {
+  // Single 0..1 progress drives growth, then holds, then resets. Cycle
+  // is 5s total — 2.5s grow + 2.5s hold-and-breathe — looped forever.
+  const grow = useSharedValue(0);
+  useEffect(() => {
+    grow.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 2500, easing: Easing.out(Easing.ease) }),
+        withTiming(1, { duration: 2500 }), // hold full height while breath plays
+        withTiming(0, { duration: 0 }),    // snap reset
+      ),
+      -1, false,
+    );
+  }, [grow]);
+
+  // Subtle breath while held — multiplies the line opacity.
+  const breath = useSharedValue(0.85);
+  useEffect(() => {
+    breath.value = withRepeat(
+      withTiming(1.0, { duration: 2000, easing: Easing.inOut(Easing.ease) }),
+      -1, true,
+    );
+  }, [breath]);
+
+  // Geometry — both lines start at the bottom center and walk upward.
+  // Line 1 (inner work, amber) sits slightly LEFT of center, line 2
+  // (outer life, cream) slightly RIGHT. The X positions interpolate
+  // outward as the lines grow taller — they fan apart as they rise.
+  const cx = W / 2;
+  const baseY = H * 0.92;          // both lines emerge from here
+  const fullTop = H * 0.10;        // both lines reach this Y at full growth
+  const baseGap = 2;               // half-gap at the bottom (4px apart total)
+  const topGap = 10;               // half-gap at the top (20px apart total)
+
+  // Helper — derived current top Y for a given grow progress.
+  const innerTopY = useDerivedValue(() => baseY - (baseY - fullTop) * grow.value, [grow, baseY, fullTop]);
+
+  // Each line is a Skia path that starts at the base and ends at the
+  // current animated top. Width animates with progress.
+  const strokeWidthAnimated = useDerivedValue(() => 1.5 + 1.5 * grow.value, [grow]);
+  const lineOpacity = useDerivedValue(() => 0.7 + 0.3 * (breath.value * grow.value), [breath, grow]);
+  // Glow at the tip blooms in the last 30% of the growth.
+  const tipGlowOpacity = useDerivedValue(() => Math.max(0, (grow.value - 0.7) / 0.3), [grow]);
+
+  // Inner-work line — amber. X drifts from cx-baseGap at base to cx-topGap at top.
+  const innerP1 = useDerivedValue(() => vec(cx - baseGap, baseY), [cx, baseY]);
+  const innerP2 = useDerivedValue(() => {
+    const xAtTop = cx - (baseGap + (topGap - baseGap) * grow.value);
+    return vec(xAtTop, innerTopY.value);
+  }, [grow, cx, baseGap, topGap, innerTopY]);
+  const innerTipCx = useDerivedValue(() => cx - (baseGap + (topGap - baseGap) * grow.value), [grow, cx, baseGap, topGap]);
+  const innerTipCenter = useDerivedValue(() => vec(innerTipCx.value, innerTopY.value), [innerTipCx, innerTopY]);
+
+  // Outer-life line — cream/soft white. Mirror geometry on the right.
+  const outerP1 = useDerivedValue(() => vec(cx + baseGap, baseY), [cx, baseY]);
+  const outerP2 = useDerivedValue(() => {
+    const xAtTop = cx + (baseGap + (topGap - baseGap) * grow.value);
+    return vec(xAtTop, innerTopY.value);
+  }, [grow, cx, baseGap, topGap, innerTopY]);
+  const outerTipCx = useDerivedValue(() => cx + (baseGap + (topGap - baseGap) * grow.value), [grow, cx, baseGap, topGap]);
+  const outerTipCenter = useDerivedValue(() => vec(outerTipCx.value, innerTopY.value), [outerTipCx, innerTopY]);
+
+  return (
+    <Group>
+      {/* Inner work — amber, slightly left of center */}
+      <Group opacity={lineOpacity}>
+        <Line p1={innerP1} p2={innerP2} color="#E6B47A" strokeWidth={strokeWidthAnimated} style="stroke" />
+      </Group>
+      {/* Tip glow — amber */}
+      <Circle cx={innerTipCx} cy={innerTopY} r={W * 0.08} opacity={tipGlowOpacity}>
+        <RadialGradient c={innerTipCenter} r={W * 0.1} colors={['#E6B47AAA', '#E6B47A00']} />
+      </Circle>
+
+      {/* Outer life — cream, slightly right of center */}
+      <Group opacity={lineOpacity}>
+        <Line p1={outerP1} p2={outerP2} color="rgba(240,237,232,0.85)" strokeWidth={strokeWidthAnimated} style="stroke" />
+      </Group>
+      {/* Tip glow — soft cream */}
+      <Circle cx={outerTipCx} cy={innerTopY} r={W * 0.08} opacity={tipGlowOpacity}>
+        <RadialGradient c={outerTipCenter} r={W * 0.1}
+          colors={['rgba(240,237,232,0.7)', 'rgba(240,237,232,0)']} />
+      </Circle>
     </Group>
   );
 }

@@ -2,10 +2,11 @@
 //
 // AI bubbles carry:
 //   - optional PartBadge (the detected part)
-//   - a small 🔊 speaker button that plays THIS message aloud on demand via
-//     /api/speak + expo-audio. Tapping again while playing stops playback.
-//     No auto-play: TTS only happens when the user explicitly asks for it.
 //   - a blinking caret while the message is still streaming.
+//
+// Per-message speaker icons WERE here. They've been removed in favor of
+// a single session-level mute/unmute toggle in the chat tab header.
+// See components/AudioToggle.tsx.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, Animated, Easing, StyleSheet, PanResponder, LayoutChangeEvent, ActivityIndicator } from 'react-native';
@@ -15,14 +16,8 @@ import {
   createAudioPlayer, setAudioModeAsync,
 } from 'expo-audio';
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { PartBadge } from './PartBadge';
-import {
-  acquireSlot, releaseSlot, usePlayingId, useIsPlaying,
-  useAudioMode, setAudioMode, playTTS, togglePauseResume,
-  getCurrentMessageId, getAudioMode,
-} from '../utils/ttsPlayer';
 
 export type ChatMsg = {
   id: string;
@@ -38,90 +33,8 @@ export type ChatMsg = {
   voice?: { uri: string; durationSec: number; transcript: string | null };
 };
 
-const SPEAKER_HINT_KEY = 'speakerLongPressHintSeen.v1';
-
 export function MessageBubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === 'user';
-  // Slot ownership + session-wide audio mode + play/pause state come from
-  // the shared ttsPlayer service. Speaker icon variants:
-  //   audioMode OFF, slot ≠ ours          → dim speaker (40% cream)
-  //   audioMode ON,  slot ≠ ours          → bright amber speaker
-  //   slot == ours, currently playing     → amber pause icon ⏸
-  //   slot == ours, currently paused      → amber play icon ▶
-  const playingId = usePlayingId();
-  const audioModeOn = useAudioMode();
-  const isOwner = playingId === msg.id;
-  const playingNow = useIsPlaying(); // true when ttsPlayer's clip is playing
-  const isPlaying = isOwner && playingNow;
-  const isPaused  = isOwner && !playingNow;
-  // Spinner gate — show only if a fetch takes longer than 500ms.
-  const [loading, setLoading] = useState(false);
-  const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // First-tap tooltip ("Long-press to turn audio mode off") shown ONCE
-  // per device after the user first taps any speaker icon.
-  const [hintVisible, setHintVisible] = useState(false);
-  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => () => {
-    if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
-    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
-  }, []);
-
-  async function maybeShowFirstTapHint() {
-    try {
-      const seen = await AsyncStorage.getItem(SPEAKER_HINT_KEY);
-      if (seen === '1') return;
-      setHintVisible(true);
-      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
-      hintTimerRef.current = setTimeout(() => setHintVisible(false), 3000);
-      AsyncStorage.setItem(SPEAKER_HINT_KEY, '1').catch(() => {});
-    } catch {}
-  }
-
-  /** TAP the speaker icon. State machine per spec:
-   *    - We OWN the slot AND playing  → pause (audio mode stays ON)
-   *    - We OWN the slot AND paused   → resume (audio mode stays ON)
-   *    - We're not the owner          → switch to us (or turn audio mode
-   *                                      ON if it was OFF) and play this
-   *  Long-press = turn audio mode OFF entirely (handled separately).
-   *
-   *  CRITICAL: read ownership from the LIVE module state, not the React
-   *  state captured in this closure. If a user taps the same speaker
-   *  twice in quick succession, the second tap's render hasn't happened
-   *  yet — the captured `isOwner`/`audioModeOn` would still be false.
-   *  Without this, the second tap calls playTTS() instead of the
-   *  pause path, and we get TWO players overlapping. (This was the
-   *  reported regression.) */
-  async function handleTap() {
-    Haptics.selectionAsync().catch(() => {});
-    // Surface the long-press tip the first time the user uses the speaker.
-    maybeShowFirstTapHint();
-    const ownerNow = getCurrentMessageId() === msg.id;
-    if (ownerNow) {
-      togglePauseResume(msg.id);
-      return;          // do NOT fall through — would create a second player
-    }
-    if (!getAudioMode()) await setAudioMode(true);
-    if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
-    loadingTimerRef.current = setTimeout(() => setLoading(true), 500);
-    try {
-      await playTTS(msg.id, msg.text);
-    } catch (e) {
-      console.warn('[tts] handleTap failed:', (e as Error)?.message);
-    } finally {
-      if (loadingTimerRef.current) { clearTimeout(loadingTimerRef.current); loadingTimerRef.current = null; }
-      setLoading(false);
-    }
-  }
-
-  /** LONG-PRESS the speaker icon → turn audio mode OFF entirely.
-   *  Stops any playing clip + flips the session flag. All speaker icons
-   *  app-wide will revert to dim default on the next render tick. */
-  async function handleLongPress() {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-    await setAudioMode(false);
-  }
-
   return (
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
       <View style={[styles.bubble, isUser ? styles.user : styles.assistant]}>
@@ -140,52 +53,6 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
         )}
         {!isUser && msg.detectedPart ? (
           <PartBadge part={msg.detectedPart} label={msg.partLabel} />
-        ) : null}
-        {/* Speaker icon. THREE visual states per spec:
-              default (audio mode OFF, not us)  → dim speaker, 40% cream
-              active  (audio mode ON,  not us)  → bright amber speaker
-              playing (slot owner is us)        → amber pause icon
-            Tapping the icon also flips session-wide audio mode — see
-            togglePlayback() above for the full state machine. */}
-        {!isUser && !msg.streaming && msg.text.trim() ? (
-          <View style={styles.speakerWrap}>
-            {hintVisible ? (
-              <View style={styles.speakerHint} pointerEvents="none">
-                <Text style={styles.speakerHintText}>Long-press to turn audio mode off</Text>
-              </View>
-            ) : null}
-            <Pressable
-              onPress={handleTap}
-              onLongPress={handleLongPress}
-              delayLongPress={400}
-              hitSlop={12}
-              style={styles.speakerBtn}
-              accessibilityLabel={
-                isPlaying ? 'Pause this voice note (long-press to turn off audio mode)'
-                : isPaused ? 'Resume this voice note'
-                : audioModeOn ? 'Switch audio to this message'
-                : 'Turn on audio and read this message aloud'
-              }
-            >
-              {loading ? (
-                <ActivityIndicator size="small" color={colors.amber} />
-              ) : (
-                <Ionicons
-                  name={
-                    isPlaying ? 'pause'
-                    : isPaused ? 'play'
-                    : 'volume-medium-outline'
-                  }
-                  size={16}
-                  color={
-                    isOwner ? '#E6B47A'
-                    : audioModeOn ? '#E6B47A'
-                    : 'rgba(240,237,232,0.4)'
-                  }
-                />
-              )}
-            </Pressable>
-          </View>
         ) : null}
       </View>
     </View>
@@ -217,10 +84,10 @@ function VoiceNoteBubble({
   // Measured width of the waveform view — used to map finger x → seek seconds
   // for both tap-to-seek and drag-to-scrub.
   const waveformWidthRef = useRef<number>(0);
-  // Subscribe to the shared playing-id slot so a second voice note (or the
-  // TTS speaker on an AI bubble) can kick us out of the play state without
-  // needing a prop drill.
-  const activePlayingId = usePlayingId();
+  // (Voice notes used to coordinate with the AI-message TTS player via a
+  // shared slot. That coordination layer was removed when audio became a
+  // simple session-level toggle. Each voice note now manages its own
+  // playback in isolation — if you want it paused, tap pause yourself.)
 
   // 20 fixed-height bars derived from the URI hash so the waveform is stable
   // across renders but different per message.
@@ -237,25 +104,12 @@ function VoiceNoteBubble({
     return out;
   }, [uri]);
 
-  // If another voice note / TTS claimed the slot → pause ours. Reads the
-  // shared playing-id from ttsPlayer so any owner change anywhere mutes
-  // this bubble's local player.
-  useEffect(() => {
-    if (playing && activePlayingId !== id) {
-      try { playerRef.current?.pause(); } catch {}
-      setPlaying(false);
-      stopPolling();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePlayingId]);
-
   // Release the native player on unmount — prevents leaks if the session is
   // reset while a bubble is cached in the Messages list.
   useEffect(() => () => {
     stopPolling();
     try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
     playerRef.current = null;
-    releaseSlot(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -278,7 +132,6 @@ function VoiceNoteBubble({
           try { p.seekTo(0); } catch {}
           setCurrentTime(0);
           setPlaying(false);
-          releaseSlot(id);
         }
       } catch {}
     }, 100);
@@ -306,18 +159,12 @@ function VoiceNoteBubble({
       stopPolling();
       return;
     }
-    // PLAY (or resume). Claim the slot via ttsPlayer.acquireSlot — that
-    // tears down any TTS player + fires eviction callbacks for any other
-    // voice note that holds the slot. We pass our own pause as the
-    // eviction callback.
+    // PLAY (or resume) this voice note's own player. No cross-bubble
+    // coordination — the audio mode toggle controls AI-message TTS;
+    // user voice notes are tap-to-play in isolation.
     setLoading(true);
     try {
       const p = await ensurePlayer();
-      await acquireSlot(id, () => {
-        try { playerRef.current?.pause(); } catch {}
-        setPlaying(false);
-        stopPolling();
-      });
       p.play();
       setPlaying(true);
       setLoading(false);
