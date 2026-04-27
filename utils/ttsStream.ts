@@ -20,12 +20,22 @@
 
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { api } from '../services/api';
-import { stopAll as stopSingleClipPlayer, onAudioModeOff } from './ttsPlayer';
+import {
+  stopAll as stopSingleClipPlayer, onAudioModeOff,
+  acquireSlot, releaseSlot,
+} from './ttsPlayer';
 
 // Whenever the user flips audio mode OFF (long-press on a speaker, end
 // of session, tab unmount), cancel any in-flight streaming queue too.
 // Registered once at module-load — no React lifecycle involved.
 onAudioModeOff(() => { cancelStream(); });
+
+// Streaming-TTS pause state. When the user taps the speaker on the
+// auto-playing message, togglePauseResume in ttsPlayer routes here via
+// the external pause/resume hooks we register in startStream(). pauseAll
+// pauses the current player AND prevents the queue advance from playing
+// the next chunk until resumeAll is called.
+let externalPaused = false;
 
 type Player = ReturnType<typeof createAudioPlayer>;
 
@@ -62,14 +72,56 @@ export function getStreamingMessageId(): string | null { return currentMessageId
 export async function startStream(messageId: string): Promise<void> {
   cancelStream();
   active = true;
+  externalPaused = false;
   currentMessageId = messageId;
   buffer = '';
   consumedSoFar = 0;
   queue = [];
   watchToken++;
-  // Tap-to-replay player must be silent while streaming TTS is producing.
-  await stopSingleClipPlayer();
+  // Claim the shared playback slot so a tap on this message's speaker
+  // routes to OUR pause/resume — without this, ttsPlayer.currentMessageId
+  // is null while we're streaming, handleTap thinks no one owns the slot,
+  // and tapping creates a SECOND player on top. (That was the reported bug.)
+  await acquireSlot(
+    messageId,
+    () => { cancelStream(); },          // someone else claimed → drop everything
+    {
+      onPause:  () => pauseStreamPlayback(),
+      onResume: () => resumeStreamPlayback(),
+      isPlaying: () => isStreamPlaying(),
+    },
+  );
   console.log('[tts-stream] start id=' + messageId.slice(0, 8));
+}
+
+// Pause-aware playback control. Pausing leaves the queue intact so the
+// stream can resume mid-message. cancelStream() is the destructive path.
+function pauseStreamPlayback() {
+  externalPaused = true;
+  if (player) {
+    try { player.pause(); } catch {}
+  }
+  console.log('[tts-stream] external pause');
+}
+
+function resumeStreamPlayback() {
+  externalPaused = false;
+  if (player) {
+    try { player.play(); } catch {}
+  } else if (queue.length > 0) {
+    // Player was released between chunks — start the next one.
+    playNext();
+  }
+  console.log('[tts-stream] external resume');
+}
+
+function isStreamPlaying(): boolean {
+  if (externalPaused) return false;
+  if (!player) return queue.length > 0; // about to play next chunk
+  try {
+    const s = player.currentStatus;
+    return !!s?.playing;
+  } catch { return false; }
 }
 
 /** Feed cumulative cleaned text (markers stripped). Internally tracks how
@@ -99,7 +151,9 @@ export function finishStream(): void {
 export function cancelStream(): void {
   if (!active && !player && queue.length === 0) return;
   watchToken++;
+  const wasOwner = currentMessageId;
   active = false;
+  externalPaused = false;
   currentMessageId = null;
   buffer = '';
   consumedSoFar = 0;
@@ -108,6 +162,8 @@ export function cancelStream(): void {
     try { player.pause(); player.remove(); } catch {}
     player = null;
   }
+  // Release our slot claim if we still hold it.
+  if (wasOwner) releaseSlot(wasOwner);
   console.log('[tts-stream] cancel');
 }
 
@@ -191,6 +247,12 @@ async function enqueueFetch(text: string): Promise<void> {
 
 async function playNext(): Promise<void> {
   if (queue.length === 0) {
+    player = null;
+    return;
+  }
+  // If the user paused via the speaker icon, hold the queue. resumeStreamPlayback
+  // will call playNext again when they tap to resume.
+  if (externalPaused) {
     player = null;
     return;
   }

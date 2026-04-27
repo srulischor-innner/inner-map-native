@@ -50,15 +50,25 @@ export function usePlayingId(): string | null {
   return id;
 }
 
-/** React hook — re-renders ~5×/sec while a clip is loaded so callers can
- *  reflect pause vs. playing state on the icon. Cheap: only polls when
- *  there IS a player, returns true (playing) when no player. */
+/** React hook — re-renders ~5×/sec while ANY clip is loaded so callers
+ *  can reflect pause vs. playing state on the icon. Polls ttsPlayer's
+ *  own player AND any external isPlaying hook (streaming TTS / voice
+ *  note) so the speaker icon flips correctly regardless of which
+ *  system actually owns the slot. */
 export function useIsPlaying(): boolean {
   const [playing, setPlaying] = useState(true);
   useEffect(() => {
     let cancelled = false;
     const tick = setInterval(() => {
       if (cancelled) return;
+      // External owner — ask its own isPlaying fn.
+      if (externalIsPlayingFn) {
+        try {
+          const next = !!externalIsPlayingFn();
+          setPlaying((prev) => (prev === next ? prev : next));
+        } catch {}
+        return;
+      }
       const p = ttsPlayer;
       if (!p) {
         if (playing) setPlaying(true);
@@ -101,6 +111,9 @@ async function clearSlot(): Promise<void> {
     evictCb = null;
     try { cb(); } catch {}
   }
+  externalPauseFn = null;
+  externalResumeFn = null;
+  externalIsPlayingFn = null;
   // Our own TTS player — pause + remove.
   const p = ttsPlayer;
   ttsPlayer = null;
@@ -111,12 +124,32 @@ async function clearSlot(): Promise<void> {
   if (currentMessageId !== null) emitPlayingId(null);
 }
 
-/** External player (e.g. voice note) claims the slot. Provides a callback
- *  the slot will fire if/when something else (TTS or another voice note)
- *  takes it over. */
-export async function acquireSlot(id: string, onEvict: () => void): Promise<void> {
+// External pause/resume hooks. When a non-ttsPlayer system (streaming
+// TTS, voice note) owns the slot, it can register these so
+// togglePauseResume(messageId) routes the user's tap to the right
+// system. Without this, tapping a streaming-message speaker would see
+// "no ttsPlayer" and do nothing — leaving the audio playing.
+let externalPauseFn: (() => void) | null = null;
+let externalResumeFn: (() => void) | null = null;
+let externalIsPlayingFn: (() => boolean) | null = null;
+
+/** External player (voice note OR streaming TTS) claims the slot.
+ *    `onEvict`     — called when the slot is taken by something else;
+ *                    the external owner should pause+release its player.
+ *    `onPause`     — togglePauseResume on the slot owner routes here.
+ *    `onResume`    — togglePauseResume routes here when paused.
+ *    `isPlaying`   — sync fn returning true if the external player is
+ *                    currently producing sound (used by useIsPlaying). */
+export async function acquireSlot(
+  id: string,
+  onEvict: () => void,
+  hooks?: { onPause?: () => void; onResume?: () => void; isPlaying?: () => boolean },
+): Promise<void> {
   await clearSlot();
   evictCb = onEvict;
+  externalPauseFn  = hooks?.onPause  ?? null;
+  externalResumeFn = hooks?.onResume ?? null;
+  externalIsPlayingFn = hooks?.isPlaying ?? null;
   emitPlayingId(id);
 }
 
@@ -126,6 +159,9 @@ export async function acquireSlot(id: string, onEvict: () => void): Promise<void
 export function releaseSlot(id: string): void {
   if (currentMessageId !== id) return;
   evictCb = null;
+  externalPauseFn = null;
+  externalResumeFn = null;
+  externalIsPlayingFn = null;
   emitPlayingId(null);
 }
 
@@ -158,11 +194,24 @@ export async function stopAll(): Promise<void> {
   await clearSlot();
 }
 
-/** Tap-on-currently-playing-bubble for TTS: pause if playing, resume if
- *  paused. Returns the new logical state. Voice notes don't use this —
- *  they manage their own play/pause locally via the player they own. */
+/** Tap-on-currently-playing-bubble. Routes to whichever system owns
+ *  the slot:
+ *   - ttsPlayer (single-clip cache replay) — pause/resume our own player.
+ *   - external system with hooks (streaming TTS, voice note) — call
+ *     onPause/onResume which the system registered via acquireSlot.
+ *   - nothing → 'idle'. */
 export function togglePauseResume(messageId: string): 'playing' | 'paused' | 'idle' {
-  if (currentMessageId !== messageId || !ttsPlayer) return 'idle';
+  if (currentMessageId !== messageId) return 'idle';
+  // External owner with pause/resume hooks (streaming TTS / voice note).
+  if (externalPauseFn || externalResumeFn) {
+    try {
+      const playing = externalIsPlayingFn ? externalIsPlayingFn() : true;
+      if (playing) { externalPauseFn?.(); return 'paused'; }
+      externalResumeFn?.(); return 'playing';
+    } catch { return 'idle'; }
+  }
+  // Our own ttsPlayer (cache-replay) path.
+  if (!ttsPlayer) return 'idle';
   try {
     const s = ttsPlayer.currentStatus;
     if (s?.isLoaded === false) return 'idle';
