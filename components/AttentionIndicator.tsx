@@ -15,7 +15,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, Modal, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Canvas, Path, Skia, Group } from '@shopify/react-native-skia';
+import { Canvas, Circle, Path, Skia, Group } from '@shopify/react-native-skia';
 import ReanimatedDefault, {
   useSharedValue, withRepeat, withTiming, withSequence, Easing,
   useDerivedValue, useAnimatedStyle, runOnJS,
@@ -29,16 +29,18 @@ import {
   hasSeenFirstSessionLabel, markFirstSessionLabelSeen,
 } from '../utils/attentionState';
 
-const SIZE = 22;        // visible triangle size — bumped from 14 for discoverability
-const TAP = 44;         // 44x44 iOS HIG tap target
+const SIZE = 28;        // visible triangle size — bumped to 28 so it reads
+                        //   as a clear interactive element, not an ambient pixel
+const TAP = 48;         // generous touch target — 48x48 wrapper around the visual
 
 // Per-state visual targets. Opacity oscillates between [low, high] over
-// the given duration. 'quiet' is a single value — no oscillation.
+// the given duration. Even 'quiet' breathes (subtly) so users can tell
+// the indicator is interactive — a perfectly still pixel reads as decor.
 type StateVisual = { low: number; high: number; duration: number };
 const VISUALS: Record<AttentionState, StateVisual> = {
-  quiet:     { low: 0.15, high: 0.15, duration: 0    },
-  listening: { low: 0.30, high: 0.50, duration: 3000 },
-  noticing:  { low: 0.60, high: 1.00, duration: 2000 },
+  quiet:     { low: 0.45, high: 0.55, duration: 4000 },  // softly lit + gentle breath
+  listening: { low: 0.55, high: 0.75, duration: 3000 },
+  noticing:  { low: 0.70, high: 1.00, duration: 2000 },
 };
 
 export function AttentionIndicator() {
@@ -53,24 +55,17 @@ export function AttentionIndicator() {
   // attention beacon — multiplies the base opacity briefly.
   const pulse = useSharedValue(1);
 
-  // Re-arm the breathing loop whenever state changes. The first-time
-  // pulse is layered on top: state goes quiet → listening, opacity
-  // ramps to listening's `high`, the pulse value briefly rises and
-  // falls so the dot reads as "look here" once.
+  // Re-arm the breathing loop whenever state changes. ALL three states
+  // breathe now — even "quiet" — so the indicator visibly reads as a
+  // living, interactive element. Smooth 350ms cross-fade between states.
   useEffect(() => {
     const v = VISUALS[state];
-    if (v.duration === 0) {
-      // Quiet — single value, no loop.
-      opacity.value = withTiming(v.low, { duration: 350, easing: Easing.inOut(Easing.ease) });
-    } else {
-      // Smooth cross-fade to the new low, then start the breath loop.
-      opacity.value = withTiming(v.low, { duration: 350, easing: Easing.inOut(Easing.ease) }, () => {
-        opacity.value = withRepeat(
-          withTiming(v.high, { duration: v.duration, easing: Easing.inOut(Easing.ease) }),
-          -1, true,
-        );
-      });
-    }
+    opacity.value = withTiming(v.low, { duration: 350, easing: Easing.inOut(Easing.ease) }, () => {
+      opacity.value = withRepeat(
+        withTiming(v.high, { duration: v.duration, easing: Easing.inOut(Easing.ease) }),
+        -1, true,
+      );
+    });
   }, [state, opacity]);
 
   // First-time-discovery pulse. Fires exactly once across the app's
@@ -100,9 +95,12 @@ export function AttentionIndicator() {
 
   // Triangle path — same equilateral shape as the typing indicator so the
   // map's visual identity is reinforced.
+  // Triangle inscribed inside the canvas with padding for the outer glow
+  // ring to live in. Pad = 6 on a 28px canvas leaves a 16px-tall triangle
+  // with breathing room for the surrounding ring.
   const triPath = (() => {
     const p = Skia.Path.Make();
-    const pad = 2;
+    const pad = 6;
     const top = { x: SIZE / 2, y: pad };
     const bl  = { x: pad, y: SIZE - pad };
     const br  = { x: SIZE - pad, y: SIZE - pad };
@@ -112,6 +110,11 @@ export function AttentionIndicator() {
     p.close();
     return p;
   })();
+  // Subtle outer glow ring — present in every state. Reads as "this is
+  // an interactive element", not an ambient pixel. Uses a separate softer
+  // opacity that ALWAYS shows, even when the triangle dims to its low.
+  const ringOpacity = useDerivedValue(() => Math.min(0.5, opacity.value * 0.6), [opacity]);
+  const ringR = SIZE / 2 - 1;
 
   // First-session text label — shown ONCE per device for 5 seconds when
   // the chat tab first mounts, fades out, and never reappears. Helps
@@ -146,7 +149,7 @@ export function AttentionIndicator() {
       <View style={styles.row}>
         {labelMounted ? (
           <ReanimatedView style={[styles.label, labelAnimatedStyle]} pointerEvents="none">
-            <Text style={styles.labelText}>The map is listening — tap to learn more</Text>
+            <Text style={styles.labelText}>Tap to learn what this is</Text>
           </ReanimatedView>
         ) : null}
         <Pressable
@@ -156,10 +159,21 @@ export function AttentionIndicator() {
           hitSlop={6}
         >
           <Canvas style={{ width: SIZE, height: SIZE }}>
+            {/* Outer glow ring — always present, slightly dimmer than the
+                triangle. Communicates "this is interactive". */}
+            <Circle
+              cx={SIZE / 2}
+              cy={SIZE / 2}
+              r={ringR}
+              color="#E6B47A"
+              style="stroke"
+              strokeWidth={0.7}
+              opacity={ringOpacity}
+            />
+            {/* Breathing triangle inside the ring. Stroke 1.8 reads
+                cleanly at 28px; the soft fill makes it look "lit from
+                within" rather than a flat outline. */}
             <Group opacity={groupOpacity}>
-              {/* Stroke 1.8 reads cleanly at 22px without overpowering the
-                  fill underneath. Fill stays subtle at ~20% alpha so the
-                  triangle reads as "lit from within" not solid. */}
               <Path path={triPath} color="#E6B47A" style="stroke" strokeWidth={1.8} />
               <Path path={triPath} color="#E6B47A33" style="fill" />
             </Group>

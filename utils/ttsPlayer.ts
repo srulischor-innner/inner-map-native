@@ -174,11 +174,31 @@ export function togglePauseResume(messageId: string): 'playing' | 'paused' | 'id
   }
 }
 
+// In-flight guard. Without this, two rapid taps on the same speaker
+// (before React has re-rendered with the post-tap-1 owner state) can BOTH
+// see "we're not the owner", and both call playTTS — racing through the
+// `await clearSlot()` and creating two players. The guard makes the
+// second call a no-op if a play is already starting.
+let playTTSInFlight = false;
+
 /** Start (or restart) TTS playback for an AI message. Always awaits a
  *  clean teardown of the prior player BEFORE creating the new one —
  *  guarantees no two clips ever play simultaneously. Falls back to a
- *  network fetch if the prefetch cache hasn't filled yet. */
+ *  network fetch if the prefetch cache hasn't filled yet.
+ *
+ *  IF THE GIVEN messageId IS ALREADY THE SLOT OWNER, this is a no-op —
+ *  we don't tear down a healthy player and re-create it just because
+ *  the caller didn't realize. Use togglePauseResume(messageId) for
+ *  pause/resume instead. */
 export async function playTTS(messageId: string, text: string): Promise<void> {
+  if (currentMessageId === messageId && ttsPlayer) {
+    // Same message tapped while it's already loaded — defer to the
+    // pause/resume path. Caller probably intended that.
+    return;
+  }
+  if (playTTSInFlight) return;
+  playTTSInFlight = true;
+  try {
   await clearSlot();
   // Audio session: playback (no recording, mix-with-others).
   try {
@@ -216,4 +236,7 @@ export async function playTTS(messageId: string, text: string): Promise<void> {
       emitPlayingId(null);
     }
   })();
+  } finally {
+    playTTSInFlight = false;
+  }
 }

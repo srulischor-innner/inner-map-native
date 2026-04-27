@@ -17,9 +17,11 @@ let current: AttentionState = 'quiet';
 const listeners = new Set<(s: AttentionState) => void>();
 
 const STORAGE_KEY = 'attentionIndicator.firstTransitionSeen.v1';
-// Separate flag for the "tap to learn more" text label that fades on
-// the first chat session.
-const LABEL_KEY = 'attentionIndicator.firstSessionLabelSeen.v1';
+// Separate flag for the "tap to learn what this is" text label that
+// fades on the first chat session. Renamed key per the latest spec —
+// also resets discoverability for users who saw the prior dimmer
+// indicator and may have missed it.
+const LABEL_KEY = 'attention_indicator_seen';
 
 /** React hook — re-renders when the AI moves the state. */
 export function useAttentionState(): AttentionState {

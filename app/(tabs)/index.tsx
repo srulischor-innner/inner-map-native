@@ -436,7 +436,7 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={
           Platform.OS === 'ios'
-            ? insets.top + 34 /* hamburger row */ + 40 /* tabs */ + 44 /* attention strip */
+            ? insets.top + 34 /* hamburger row */ + 40 /* tabs */ + 48 /* attention strip */
             : 0
         }
       >
@@ -554,14 +554,14 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.md, paddingBottom: spacing.md },
-  // Holds the right-aligned attention indicator. 44px tall to match the
-  // 44x44 tap target on the indicator itself.
+  // Holds the right-aligned attention indicator. 48px tall to host the
+  // 48x48 tap target with breathing room.
   headerStrip: {
-    height: 44,
+    height: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
   },
   transition: {
     ...StyleSheet.absoluteFillObject,

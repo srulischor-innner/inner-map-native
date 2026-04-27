@@ -21,6 +21,7 @@ import { PartBadge } from './PartBadge';
 import {
   acquireSlot, releaseSlot, usePlayingId, useIsPlaying,
   useAudioMode, setAudioMode, playTTS, togglePauseResume,
+  getCurrentMessageId, getAudioMode,
 } from '../utils/ttsPlayer';
 
 export type ChatMsg = {
@@ -82,16 +83,25 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
    *    - We OWN the slot AND paused   → resume (audio mode stays ON)
    *    - We're not the owner          → switch to us (or turn audio mode
    *                                      ON if it was OFF) and play this
-   *  Long-press = turn audio mode OFF entirely (handled separately). */
+   *  Long-press = turn audio mode OFF entirely (handled separately).
+   *
+   *  CRITICAL: read ownership from the LIVE module state, not the React
+   *  state captured in this closure. If a user taps the same speaker
+   *  twice in quick succession, the second tap's render hasn't happened
+   *  yet — the captured `isOwner`/`audioModeOn` would still be false.
+   *  Without this, the second tap calls playTTS() instead of the
+   *  pause path, and we get TWO players overlapping. (This was the
+   *  reported regression.) */
   async function handleTap() {
     Haptics.selectionAsync().catch(() => {});
     // Surface the long-press tip the first time the user uses the speaker.
     maybeShowFirstTapHint();
-    if (isOwner) {
+    const ownerNow = getCurrentMessageId() === msg.id;
+    if (ownerNow) {
       togglePauseResume(msg.id);
-      return;
+      return;          // do NOT fall through — would create a second player
     }
-    if (!audioModeOn) await setAudioMode(true);
+    if (!getAudioMode()) await setAudioMode(true);
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
     loadingTimerRef.current = setTimeout(() => setLoading(true), 500);
     try {
