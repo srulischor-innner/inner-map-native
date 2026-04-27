@@ -31,7 +31,6 @@ import { resetOnboarding } from '../services/onboarding';
 import { PART_COLOR } from '../utils/markers';
 import { SessionDetailModal } from './session/SessionDetailModal';
 
-const PRIVACY_URL  = 'https://inner-map-production.up.railway.app/privacy';
 const FEEDBACK_TO  = 'hello@innermap.app';
 
 export function HamburgerMenu({
@@ -194,11 +193,13 @@ export function HamburgerMenu({
           icon="mail-outline"
         />
         <LinkRow
+          label="Settings"
+          onPress={() => go('/settings')}
+          icon="settings-outline"
+        />
+        <LinkRow
           label="Privacy policy"
-          onPress={() => {
-            Haptics.selectionAsync().catch(() => {});
-            Linking.openURL(PRIVACY_URL).catch(() => {});
-          }}
+          onPress={() => go('/privacy')}
           icon="shield-checkmark-outline"
         />
         </ScrollView>
