@@ -16,9 +16,17 @@ export function GuideSlide({ data, width }: { data: SlideData; width: number }) 
       contentContainerStyle={styles.container}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.visualWrap}>
-        <GuideNodeVisual kind={data.visual} size={visualSize} />
-      </View>
+      {/* 'noVisual' slides render no canvas — just a slim spacer so the
+          title doesn't slam into the top of the page. Used by the
+          closing slide of "What Holds You" so the principle breathes
+          without illustration. */}
+      {data.visual === 'noVisual' ? (
+        <View style={{ height: 60 }} />
+      ) : (
+        <View style={styles.visualWrap}>
+          <GuideNodeVisual kind={data.visual} size={visualSize} />
+        </View>
+      )}
       <Text style={[styles.title, data.titleColor ? { color: data.titleColor } : null]}>
         {data.title}
       </Text>
