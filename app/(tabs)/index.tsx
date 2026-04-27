@@ -52,7 +52,7 @@ import { EndSessionButton } from '../../components/EndSessionButton';
 // ms/word reveal cadence — matches the web app's `perWordMs: 45`.
 const PER_WORD_MS = 45;
 // Default friendly greeting if the /api/returning-greeting endpoint doesn't respond.
-const FALLBACK_GREETING = "Hey — I'm glad you're here. What's alive for you right now?";
+const FALLBACK_GREETING = "Something went quiet on my end — but I'm here. What's on your mind?";
 
 export default function ChatScreen() {
   // Persistent session id for this app launch (a fresh one per "session" like the web app).
@@ -385,9 +385,25 @@ export default function ChatScreen() {
                         ...m,
                         text: 'Something went wrong on my end — take a breath, and try again when you’re ready.',
                         streaming: false,
+                        // Carries the original user input so the bubble's RETRY
+                        // pill can re-submit without the user retyping. We
+                        // pull the most recent user turn out of history.
+                        errorRetryText: (() => {
+                          for (let i = historyRef.current.length - 1; i >= 0; i--) {
+                            if (historyRef.current[i].role === 'user') {
+                              return historyRef.current[i].content;
+                            }
+                          }
+                          return null;
+                        })(),
                       }
                     : m,
                 ),
+              );
+              // Roll the failed assistant turn out of history so a retry
+              // doesn't include a stale empty assistant message in context.
+              historyRef.current = historyRef.current.filter(
+                (h) => !(h.role === 'assistant' && h.content === ''),
               );
               setSending(false);
               setTyping(false);
@@ -417,8 +433,15 @@ export default function ChatScreen() {
   );
 
   // ===== RENDER =====
-  const bubbleList = useMemo(
-    () => messages.map((m) => <MessageBubble key={m.id} msg={m} />),
+  // Retry handler — removes the failed assistant bubble, then re-submits
+  // the original user text. Wired into MessageBubble's onRetry prop.
+  const handleRetry = useCallback((text: string) => {
+    setMessages((prev) => prev.filter((m) => !(m.role === 'assistant' && m.errorRetryText)));
+    handleSend(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
+    () => messages.map((m) => <MessageBubble key={m.id} msg={m} onRetry={handleRetry} />),
     [messages],
   );
 

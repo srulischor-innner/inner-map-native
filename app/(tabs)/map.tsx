@@ -3,7 +3,7 @@
 // geometry + tap handler to InnerMapCanvas. Tapping a node opens a bottom-sheet
 // folder. Map conversation (mic, OpenAI Realtime) lands in a later step.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, Animated, StyleSheet, Easing, PanResponder, Modal, ScrollView } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -75,9 +75,12 @@ export default function MapScreen() {
   // selfLedKeywords / ...) powers the "what the spectrum is picking up" lists
   // in the detail panel. Pulled from /api/journey lazily on mount.
   const [clinicalPatterns, setClinicalPatterns] = useState<any>(null);
+  // 'idle' = first fetch in flight; 'loaded' = response received (success
+  // or null); 'error' = network/transport failure (catch block hit).
+  const [loadStatus, setLoadStatus] = useState<'idle' | 'loaded' | 'error'>('idle');
   const router = useRouter();
-  useEffect(() => {
-    (async () => {
+  const loadMap = useCallback(async () => {
+    try {
       const [res, ps, journey] = await Promise.all([
         api.getLatestMap(),
         api.getParts(),
@@ -98,8 +101,27 @@ export default function MapScreen() {
       if (Array.isArray(res?.layers) && res.layers.length > 0) {
         setLayers(res.layers.slice(0, 5));
       }
-    })();
+      setLoadStatus('loaded');
+    } catch (e) {
+      console.warn('[map] load failed:', (e as Error)?.message);
+      setLoadStatus('error');
+    }
   }, []);
+  useEffect(() => { loadMap(); }, [loadMap]);
+
+  // The map is "empty" when the user has no mapped wound, no protectors,
+  // and no detected managers/firefighters yet — i.e. they have not had a
+  // conversation that produced anything for the canvas to render. We show
+  // a gentle invitation message overlaid on the faint triangle in that case.
+  const mapIsEmpty = (
+    loadStatus === 'loaded'
+    && !mapData?.wound
+    && !mapData?.fixer
+    && !mapData?.skeptic
+    && !(mapData?.detectedManagers && mapData.detectedManagers.length)
+    && !(mapData?.detectedFirefighters && mapData.detectedFirefighters.length)
+    && (!parts || parts.length === 0)
+  );
 
   // The mapData passed to the canvas + folder reflects whichever layer is
   // currently active. We splice the layer's wound/fixer/skeptic/compromise
@@ -362,6 +384,34 @@ export default function MapScreen() {
           ) : null}
         </Animated.View>
 
+        {/* Empty / error overlays — sit above the (faint) triangle when no
+            wound has been mapped yet or the network call failed. They
+            invite the user to start a conversation rather than presenting
+            an unexplained blank canvas. */}
+        {mapIsEmpty ? (
+          <View style={styles.emptyOverlay} pointerEvents="none">
+            <Text style={styles.emptyText}>
+              Your map will take shape as we talk.{'\n'}
+              Start a conversation in the Chat tab.
+            </Text>
+          </View>
+        ) : null}
+        {loadStatus === 'error' ? (
+          <View style={styles.emptyOverlay}>
+            <Text style={styles.emptyText}>
+              Map data is taking a moment to load.
+            </Text>
+            <Pressable
+              onPress={() => { setLoadStatus('idle'); loadMap(); }}
+              hitSlop={10}
+              style={styles.retryBtn}
+              accessibilityLabel="Retry loading map"
+            >
+              <Text style={styles.retryText}>RETRY</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {/* Layer dot indicators — only shown when multiple layers exist.
             Sit centered just above the YOUR PROGRESS strip. */}
         {layers.length > 1 ? (
@@ -564,6 +614,37 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 8,
     marginTop: 4,
+  },
+
+  // Centered empty / error overlay — invites the user to start a
+  // conversation when no map data exists yet, OR offers a retry when
+  // the load failed. Sits above the (faint) triangle without blocking it.
+  emptyOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyText: {
+    color: colors.creamFaint,
+    fontFamily: fonts.serifItalic,
+    fontSize: 16,
+    lineHeight: 26,
+    textAlign: 'center',
+    letterSpacing: 0.3,
+    opacity: 0.85,
+  },
+  retryBtn: {
+    marginTop: 18,
+    paddingHorizontal: 22, paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1, borderColor: 'rgba(230,180,122,0.45)',
+  },
+  retryText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 2,
   },
 
   // ===== Circle-view first-time intro panel =====

@@ -26,6 +26,10 @@ export type ChatMsg = {
   detectedPart?: string | null;
   partLabel?: string | null;
   streaming?: boolean;
+  /** Set on assistant bubbles that landed via the error path. When set,
+   *  the bubble renders a small "Retry" pill below the text; tapping it
+   *  re-submits the user's last message. The string is the text to send. */
+  errorRetryText?: string | null;
   /** Present on user voice-note messages. The bubble renders a play button +
    *  waveform + duration + the transcript below a hairline divider. While
    *  the transcript is still being produced, `transcript` is null and the
@@ -33,7 +37,7 @@ export type ChatMsg = {
   voice?: { uri: string; durationSec: number; transcript: string | null };
 };
 
-export function MessageBubble({ msg }: { msg: ChatMsg }) {
+export function MessageBubble({ msg, onRetry }: { msg: ChatMsg; onRetry?: (text: string) => void }) {
   const isUser = msg.role === 'user';
   return (
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
@@ -53,6 +57,17 @@ export function MessageBubble({ msg }: { msg: ChatMsg }) {
         )}
         {!isUser && msg.detectedPart ? (
           <PartBadge part={msg.detectedPart} label={msg.partLabel} />
+        ) : null}
+        {!isUser && msg.errorRetryText && onRetry ? (
+          <Pressable
+            onPress={() => onRetry(msg.errorRetryText as string)}
+            hitSlop={8}
+            style={styles.retryPill}
+            accessibilityLabel="Retry sending this message"
+          >
+            <Ionicons name="refresh" size={12} color={colors.amber} />
+            <Text style={styles.retryPillText}>RETRY</Text>
+          </Pressable>
         ) : null}
       </View>
     </View>
@@ -412,6 +427,26 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   caret: { color: colors.amber, fontSize: 14 },
+  // Retry pill for failed assistant messages — small inline affordance
+  // beneath the bubble text. Tapping re-submits the original user input.
+  retryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(230,180,122,0.4)',
+  },
+  retryPillText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 10,
+    letterSpacing: 1.4,
+  },
   speakerWrap: {
     position: 'absolute',
     right: 6, bottom: 4,

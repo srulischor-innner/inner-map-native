@@ -6,7 +6,7 @@
 // still has a warm empty state so the page is useful from session one.
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, View, Text, RefreshControl, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Pressable, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, fonts, spacing } from '../../constants/theme';
@@ -36,19 +36,26 @@ export default function JourneyScreen() {
   const [data, setData] = useState<JourneyData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // 'idle' before first response, 'loaded' after response (even null), 'error'
+  // after a thrown / failed fetch. Drives the empty + error overlays below.
+  const [loadStatus, setLoadStatus] = useState<'idle' | 'loaded' | 'error'>('idle');
 
   const load = useCallback(async () => {
-    // Print the exact userId we're fetching sessions under so a mismatch
-    // between the native UUID and any web account is visible immediately.
-    const userId = await getUserId();
-    console.log('[journey] fetching /api/journey for userId=', userId.slice(0, 8));
-    const res = await api.getJourney();
-    console.log(
-      '[journey] response: sessions=', res?.sessions?.length ?? 0,
-      'totalMessages=', res?.totalMessages,
-      'firstMapDate=', res?.firstMapDate,
-    );
-    if (res) setData(res as JourneyData);
+    try {
+      const userId = await getUserId();
+      console.log('[journey] fetching /api/journey for userId=', userId.slice(0, 8));
+      const res = await api.getJourney();
+      console.log(
+        '[journey] response: sessions=', res?.sessions?.length ?? 0,
+        'totalMessages=', res?.totalMessages,
+        'firstMapDate=', res?.firstMapDate,
+      );
+      if (res) setData(res as JourneyData);
+      setLoadStatus('loaded');
+    } catch (e) {
+      console.warn('[journey] load failed:', (e as Error)?.message);
+      setLoadStatus('error');
+    }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -56,6 +63,49 @@ export default function JourneyScreen() {
     setRefreshing(true);
     try { await load(); } finally { setRefreshing(false); }
   };
+
+  // Empty when the response landed but contains no sessions yet — first
+  // run, fresh user. Distinct from the error state (no response at all).
+  const isEmpty = loadStatus === 'loaded' && (!data || (data.sessions || []).length === 0);
+
+  if (loadStatus === 'error') {
+    return (
+      <SafeAreaView style={styles.root} edges={[]}>
+        <View style={styles.centered}>
+          <Text style={styles.emptyText}>Journey data is loading — try refreshing in a moment.</Text>
+          <Pressable
+            onPress={() => { setLoadStatus('idle'); load(); }}
+            hitSlop={10}
+            style={styles.retryBtn}
+            accessibilityLabel="Retry loading journey"
+          >
+            <Text style={styles.retryText}>RETRY</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isEmpty) {
+    return (
+      <SafeAreaView style={styles.root} edges={[]}>
+        <ScrollView
+          contentContainerStyle={[styles.content, styles.centeredScroll]}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.amber} />
+          }
+        >
+          <View style={styles.intro}>
+            <Text style={styles.introTitle}>Your Journey</Text>
+          </View>
+          <Text style={styles.emptyText}>
+            Your journey begins with your first conversation.{'\n'}
+            Each session adds to the picture here.
+          </Text>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
@@ -171,5 +221,30 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: colors.border,
     marginBottom: spacing.md,
+  },
+
+  // Empty + error state styling
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
+  centeredScroll: { flexGrow: 1, justifyContent: 'center' },
+  emptyText: {
+    color: colors.creamFaint,
+    fontFamily: fonts.serifItalic,
+    fontSize: 16,
+    lineHeight: 26,
+    textAlign: 'center',
+    letterSpacing: 0.3,
+    opacity: 0.85,
+  },
+  retryBtn: {
+    marginTop: 18,
+    paddingHorizontal: 22, paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1, borderColor: 'rgba(230,180,122,0.45)',
+  },
+  retryText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 2,
   },
 });

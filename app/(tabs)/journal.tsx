@@ -110,7 +110,9 @@ export default function JournalScreen() {
         {filtered.length === 0 ? (
           <View style={styles.empty}>
             <Text style={styles.emptyText}>
-              {query ? 'No entries match that search.' : 'No entries yet. Your words will live here.'}
+              {query
+                ? 'No entries match that search.'
+                : 'Your conversations will be saved here after each session. Start talking and come back.'}
             </Text>
           </View>
         ) : (
