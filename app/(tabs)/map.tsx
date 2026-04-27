@@ -4,8 +4,9 @@
 // folder. Map conversation (mic, OpenAI Realtime) lands in a later step.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, Animated, StyleSheet, Easing, PanResponder } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, Pressable, Animated, StyleSheet, Easing, PanResponder, Modal, ScrollView } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -25,6 +26,7 @@ import { IntegrationPanel } from '../../components/map/IntegrationPanel';
 
 const INTEGRATION_VIEW_SEEN_KEY = 'integration_view_seen';
 const SECOND_LAYER_INTRODUCED_KEY = 'second_layer_introduced';
+const CIRCLE_VIEW_INTRO_SEEN_KEY = 'circle_view_intro_seen';
 
 // A "layer" is one wound + its surrounding fixer/skeptic/compromise/objective
 // /alternative-story content. The map tab renders one layer at a time. When
@@ -270,6 +272,12 @@ export default function MapScreen() {
     return () => { cancelled = true; };
   }, [layers.length, secondLayerOpacity]);
 
+  // First-time intro panel for the integration view. Auto-opens 600ms
+  // after the user toggles into circle view for the very first time, so
+  // the cross-fade can complete before the sheet slides up. AsyncStorage
+  // flag CIRCLE_VIEW_INTRO_SEEN_KEY ensures it never appears again.
+  const [circleIntroVisible, setCircleIntroVisible] = useState(false);
+
   function toggleView() {
     Haptics.selectionAsync().catch(() => {});
     const goingToCircle = view === 'triangle';
@@ -288,6 +296,22 @@ export default function MapScreen() {
         useNativeDriver: true,
       }),
     ]).start();
+    // Trigger the first-time intro panel only when entering circle view.
+    if (goingToCircle) {
+      (async () => {
+        try {
+          const seen = await AsyncStorage.getItem(CIRCLE_VIEW_INTRO_SEEN_KEY);
+          if (seen === '1') return;
+          // 600ms delay so the circle's ambient breath + cross-fade settle
+          // before the bottom sheet slides up.
+          setTimeout(() => setCircleIntroVisible(true), 600);
+        } catch {}
+      })();
+    }
+  }
+  function dismissCircleIntro() {
+    setCircleIntroVisible(false);
+    AsyncStorage.setItem(CIRCLE_VIEW_INTRO_SEEN_KEY, '1').catch(() => {});
   }
 
   return (
@@ -295,6 +319,13 @@ export default function MapScreen() {
       {/* Title/subtitle removed on mobile — they ate valuable real estate and
           the map's triangle itself is the title. The tab bar already tells
           the user where they are. */}
+      {/* Persistent header — only in circle (integration) view. A single
+          quiet line of italic copy that tells the user the parts are
+          tappable. Hidden when the triangle view is active. */}
+      {view === 'circle' ? (
+        <Text style={styles.circleHeader}>Tap any part to see its transformation</Text>
+      ) : null}
+
       <View
         style={styles.canvasWrap}
         onLayout={(e) => {
@@ -409,6 +440,11 @@ export default function MapScreen() {
         onClose={() => setIntegrationPartKey(null)}
       />
 
+      <CircleIntroPanel
+        visible={circleIntroVisible}
+        onClose={dismissCircleIntro}
+      />
+
       <PartFolderModal
         visible={!!folderPart}
         partKey={folderPart}
@@ -516,4 +552,116 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 0.2,
   },
+
+  // Persistent header for circle (integration) view — single quiet line
+  // of italic copy above the map canvas. Faint amber so it reads as a
+  // hint, not a label. Hidden when triangle view is active.
+  circleHeader: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 12,
+    color: 'rgba(230,180,122,0.5)',
+    textAlign: 'center',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+
+  // ===== Circle-view first-time intro panel =====
+  introBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
+  introSheet: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 0,
+    maxHeight: '60%',
+    backgroundColor: '#14131A',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(230,180,122,0.35)',
+    paddingTop: 10,
+  },
+  introHandle: {
+    alignSelf: 'center',
+    width: 42, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    marginBottom: 14,
+  },
+  introHeaderRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 22, paddingBottom: 8,
+  },
+  introTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 26,
+    color: colors.amber,
+    letterSpacing: 0.3,
+  },
+  introClose: { padding: 6 },
+  introBody: { paddingHorizontal: 22, paddingBottom: 22 },
+  introParagraph: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    lineHeight: 26,
+    marginBottom: 14,
+  },
+  introButton: {
+    alignSelf: 'center',
+    marginTop: 8,
+    paddingHorizontal: 32, paddingVertical: 12,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: colors.amber,
+    backgroundColor: 'rgba(230,180,122,0.12)',
+  },
+  introButtonText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 14,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
 });
+
+// ============================================================================
+// First-time intro panel for the circle (integration) view. Slides up the
+// very first time the user enters integration view, then never reappears
+// once dismissed (gated by AsyncStorage flag CIRCLE_VIEW_INTRO_SEEN_KEY).
+// Same bottom-sheet grammar as IntegrationPanel / PartFolderModal — drag
+// handle, dark background, safe-area padding, X close.
+// ============================================================================
+function CircleIntroPanel({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <Pressable style={styles.introBackdrop} onPress={onClose} />
+      <View style={[styles.introSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View style={styles.introHandle} />
+        <View style={styles.introHeaderRow}>
+          <Text style={styles.introTitle}>Integration</Text>
+          <Pressable onPress={onClose} style={styles.introClose} accessibilityLabel="Close" hitSlop={10}>
+            <Ionicons name="close" size={22} color={colors.creamFaint} />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.introBody} showsVerticalScrollIndicator={false}>
+          <Text style={styles.introParagraph}>
+            This is what the same system looks like when the wound has healed.
+            Nothing is gone — everything has transformed. The parts that were
+            in conflict become one movement.
+          </Text>
+          <Text style={styles.introParagraph}>
+            Tap any part to see what it becomes.
+          </Text>
+          <Pressable onPress={onClose} style={styles.introButton} accessibilityLabel="Explore">
+            <Text style={styles.introButtonText}>Explore</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
