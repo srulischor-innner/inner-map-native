@@ -32,6 +32,7 @@ export type NodeVisualKind =
   | 'windowOfTolerance'    // a horizontal band that gently widens — the window
   | 'buildingCapacity'     // the band is raised by a base of life-elements lighting up
   | 'twoTracks'            // two vertical lines growing upward, finding their own paths
+  | 'energyMoves'          // soft amber wave traveling left-to-right through a contained space
   | 'noVisual';            // no canvas — text-only slides
 
 export type GuideSlide = {
@@ -248,6 +249,16 @@ export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
       "Inner work and your outer life run in parallel. They build each other.",
       "When your life holds enough safety, more can surface and move through. When safety is thin, the system protects itself — and that protection is wisdom, not failure.",
       "The work you do here matters most when your life outside is also being tended to. They aren't in competition. They're the same journey.",
+    ],
+  },
+  {
+    visual: 'energyMoves',
+    title: "It's energy. It moves.",
+    body: [
+      "That heavy feeling. The weight in your chest. The ache that seems like it will never lift.",
+      "It's energy. And energy, by its nature, moves.",
+      "Not immediately. Not on demand. But when you stop fighting it — when you let it be there without trying to fix it or push it away — it begins to shift.",
+      "You don't have to hold it forever. You were never meant to. The feeling passing through you is not the same as the feeling staying.",
     ],
   },
 ];

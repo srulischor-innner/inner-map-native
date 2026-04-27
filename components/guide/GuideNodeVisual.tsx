@@ -9,7 +9,7 @@
 
 import React, { useEffect } from 'react';
 import {
-  Canvas, Circle, Group, Path, RadialGradient, Skia, Line, DashPathEffect, vec,
+  Canvas, Circle, Group, Path, RadialGradient, LinearGradient, Skia, Line, Rect, DashPathEffect, vec,
 } from '@shopify/react-native-skia';
 import {
   useSharedValue, withRepeat, withTiming, withSequence, withDelay,
@@ -52,6 +52,7 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'windowOfTolerance'    ? <WindowOfTolerance W={W} H={H} /> : null}
       {kind === 'buildingCapacity'     ? <BuildingCapacity W={W} H={H} /> : null}
       {kind === 'twoTracks'            ? <TwoTracks W={W} H={H} /> : null}
+      {kind === 'energyMoves'          ? <EnergyMoves W={W} H={H} /> : null}
       {/* 'noVisual' renders nothing inside the canvas. GuideSlide skips
           the Canvas wrapper entirely for this kind so a tiny placeholder
           spacer is shown instead — see GuideSlide.tsx. */}
@@ -1353,6 +1354,91 @@ function TwoTracks({ W, H }: { W: number; H: number }) {
         <RadialGradient c={outerTipCenter} r={W * 0.1}
           colors={['rgba(240,237,232,0.7)', 'rgba(240,237,232,0)']} />
       </Circle>
+    </Group>
+  );
+}
+
+// 4. ENERGY MOVES — a soft amber wave of light enters from the left,
+//    travels across the canvas, and fades out as it exits. Steady and
+//    inevitable — passing through, not stuck. The wave brightens
+//    slightly at the canvas midpoint then softens as it exits.
+//
+//    Implementation: a Skia Rect spanning the full canvas, painted
+//    with a horizontal LinearGradient whose stop positions slide
+//    across with the animated phase. The gradient is transparent →
+//    amber → transparent, so the lit "band" appears wherever the
+//    middle stop is anchored at any given frame. Behind it, a faint
+//    static amber glow at the center suggests the contained space
+//    the energy is moving through.
+function EnergyMoves({ W, H }: { W: number; H: number }) {
+  // 0..1 phase loops continuously over 3s — the position of the
+  // wave's center as a fraction of canvas width plus a half-band lead-in.
+  const phase = useSharedValue(0);
+  useEffect(() => {
+    phase.value = withRepeat(
+      withTiming(1, { duration: 3000, easing: Easing.linear }),
+      -1, false,
+    );
+  }, [phase]);
+
+  // The wave is a 40-px-tall band at vertical center.
+  const bandTop = H / 2 - 20;
+  const bandH = 40;
+
+  // Linear gradient endpoints anchored to the canvas. We paint the
+  // gradient transparent → amber → transparent and slide the AMBER
+  // STOP POSITION across via the `positions` array. The stops control
+  // where each color sits along the start→end vector.
+  // Phase mapping: at phase=0, the amber peak is just left of x=0
+  // (off-canvas); at phase=1, it's just right of x=W (off-canvas).
+  const start = vec(0, 0);
+  const end = vec(W, 0);
+  // Center of the bright peak in normalized coords (slightly outside
+  // [0,1] at boundaries so the wave smoothly enters and exits).
+  const peak = useDerivedValue(() => -0.2 + 1.4 * phase.value, [phase]);
+
+  // The amber peak gets a touch brighter as it crosses the midpoint.
+  // Distance from 0.5 → opacity multiplier 1.0 at center, 0.6 at edges.
+  const amberOpacity = useDerivedValue(() => {
+    const d = Math.abs(phase.value - 0.5);
+    return Math.max(0.6, 1.0 - d * 0.8);
+  }, [phase]);
+  const amberMidColor = useDerivedValue(() => {
+    const a = Math.round(Math.min(255, amberOpacity.value * 0.6 * 255));
+    const hex = a.toString(16).padStart(2, '0');
+    return `#E6B47A${hex}`;
+  }, [amberOpacity]);
+
+  // Three-stop gradient: transparent at the leading edge, amber at
+  // the peak, transparent at the trailing edge. The peak itself
+  // moves via the positions array.
+  const colors = useDerivedValue(
+    () => ['#E6B47A00', amberMidColor.value, '#E6B47A00'],
+    [amberMidColor],
+  );
+  const positions = useDerivedValue(() => {
+    const p = peak.value;
+    const halfBand = 0.18; // half-width of the lit zone, in normalized space
+    return [Math.max(0, p - halfBand), p, Math.min(1, p + halfBand)];
+  }, [peak]);
+
+  return (
+    <Group>
+      {/* Faint static glow at the center — the contained space the
+          energy is moving through. */}
+      <Circle cx={W / 2} cy={H / 2} r={W * 0.32} opacity={0.5}>
+        <RadialGradient
+          c={vec(W / 2, H / 2)}
+          r={W * 0.36}
+          colors={['rgba(230,180,122,0.18)', 'rgba(230,180,122,0)']}
+        />
+      </Circle>
+      {/* The traveling wave band. The Rect covers the whole band area;
+          the LinearGradient does the actual work, sliding the bright
+          peak across via animated stop positions. */}
+      <Rect x={0} y={bandTop} width={W} height={bandH}>
+        <LinearGradient start={start} end={end} colors={colors} positions={positions} />
+      </Rect>
     </Group>
   );
 }
