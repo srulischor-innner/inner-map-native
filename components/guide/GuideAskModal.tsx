@@ -36,6 +36,10 @@ import { TypingIndicator } from '../TypingIndicator';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api, ChatMessage } from '../../services/api';
 
+// Per-word reveal cadence — same value as the regular Chat tab so the
+// two surfaces feel identical to the eye. See app/(tabs)/index.tsx.
+const PER_WORD_MS = 45;
+
 // Three snap positions for the resizable sheet. translateY is the
 // vertical offset of the sheet's TOP edge; the sheet itself is
 // full-screen tall so the bottom always reaches the screen bottom.
@@ -177,6 +181,11 @@ export function GuideAskModal({ visible, onClose }: Props) {
   }));
 
   // ───── chat send ─────
+  // Word-by-word reveal pattern lifted verbatim from the regular chat
+  // tab (app/(tabs)/index.tsx — tickReveal). The server still streams
+  // chunked text; we accumulate the full text into `target` and let
+  // `revealed` walk forward one word at a time on a 45ms tick. Same
+  // PER_WORD_MS as Chat so both surfaces feel identical.
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
@@ -195,36 +204,59 @@ export function GuideAskModal({ visible, onClose }: Props) {
       role: t.role,
       content: t.text,
     }));
+
     let firstChunk = true;
+    let target = '';                  // full cumulative text from the server
+    let revealed = 0;                 // chars already shown on screen
+    let revealTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function tickReveal() {
+      if (revealed >= target.length) { revealTimer = null; return; }
+      // Advance through one word: skip whitespace, run to next whitespace.
+      let i = revealed;
+      while (i < target.length && /\s/.test(target[i])) i++;
+      while (i < target.length && !/\s/.test(target[i])) i++;
+      revealed = i;
+      const slice = target.slice(0, revealed);
+      setTurns((prev) => {
+        const idx = prev.findIndex((t) => t.id === assistantId);
+        if (idx === -1) return prev;
+        const updated = prev.slice();
+        updated[idx] = { ...updated[idx], text: slice };
+        return updated;
+      });
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 30);
+      revealTimer = setTimeout(tickReveal, PER_WORD_MS);
+    }
+
     api.streamGuide(apiMessages, {
       onChunk: (chunk) => {
         if (firstChunk) { firstChunk = false; setLoading(false); }
-        setTurns((prev) => {
-          const idx = prev.findIndex((t) => t.id === assistantId);
-          if (idx === -1) return prev;
-          const updated = prev.slice();
-          updated[idx] = { ...updated[idx], text: updated[idx].text + chunk };
-          return updated;
-        });
-        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 30);
+        target += chunk;
+        if (!revealTimer) revealTimer = setTimeout(tickReveal, PER_WORD_MS);
       },
       onDone: () => {
-        setLoading(false);
-        setTurns((prev) => {
-          const idx = prev.findIndex((t) => t.id === assistantId);
-          if (idx === -1) return prev;
-          const trimmedReply = prev[idx].text.trim();
-          const updated = prev.slice();
-          updated[idx] = {
-            ...updated[idx],
-            text: trimmedReply ||
-              "I couldn't reach the framework guide just now — try again in a moment?",
-          };
-          return updated;
-        });
+        // Belt-and-braces: if no chunks landed, fall back to a polite
+        // error and stop the reveal loop. Otherwise let tickReveal
+        // catch up to the final target on its own cadence.
+        if (target.trim().length === 0) {
+          if (revealTimer) clearTimeout(revealTimer);
+          setLoading(false);
+          setTurns((prev) => {
+            const idx = prev.findIndex((t) => t.id === assistantId);
+            if (idx === -1) return prev;
+            const updated = prev.slice();
+            updated[idx] = {
+              ...updated[idx],
+              text: "I couldn't reach the framework guide just now — try again in a moment?",
+            };
+            return updated;
+          });
+        }
       },
       onError: (err) => {
         console.warn('[guide-chat] stream error:', err);
+        if (revealTimer) clearTimeout(revealTimer);
         setLoading(false);
         setTurns((prev) => {
           const idx = prev.findIndex((t) => t.id === assistantId);
@@ -566,10 +598,14 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   aiText: {
+    // Identical to the regular Chat tab's AI bubble text style
+    // (components/MessageBubble.tsx) so the two surfaces feel like the
+    // same chat in two contexts. The only intentional visual
+    // difference is the amber left-border on the bubble.
     color: colors.cream,
     fontFamily: fonts.sans,
     fontSize: 15,
-    lineHeight: 24,
+    lineHeight: 22,
   },
   aiTextOpening: {
     fontFamily: fonts.serif,
