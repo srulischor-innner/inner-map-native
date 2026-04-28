@@ -294,8 +294,10 @@ export function GuideAskModal({ visible, onClose }: Props) {
       statusBarTranslucent
     >
       <View style={styles.overlay}>
-        {/* Backdrop — tap to dismiss. */}
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        {/* Dim backdrop — purely visual, NOT tappable. The user dismisses
+            via the X button in the header or a downward swipe on the
+            drag handle so a stray tap can't blow away the conversation. */}
+        <View style={styles.backdrop} pointerEvents="none" />
 
         <Animated.View
           style={[
@@ -314,12 +316,23 @@ export function GuideAskModal({ visible, onClose }: Props) {
             <View style={styles.handle} />
           </View>
 
-          {/* Header. */}
+          {/* Header — title + subtitle centered, with an explicit X
+              close button in the top-right so users always have a
+              tap-to-dismiss affordance (since the backdrop is no
+              longer tappable). */}
           <View style={styles.headerWrap}>
             <Text style={styles.title}>Ask anything</Text>
             <Text style={styles.subtitle}>
               About the framework, how it works, what anything means
             </Text>
+            <Pressable
+              onPress={onClose}
+              hitSlop={12}
+              style={styles.closeBtn}
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={22} color="rgba(240,237,232,0.55)" />
+            </Pressable>
           </View>
 
           {/* Inner content. The sheet's marginBottom (driven by the
@@ -448,8 +461,22 @@ function formatSecs(s: number): string {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    // Dim is now applied by the absolute `backdrop` view below so the
+    // overlay itself can stay free of pointer-event quirks. The sheet
+    // anchors at the bottom via justifyContent: 'flex-end'.
+    backgroundColor: 'transparent',
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  closeBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 12,
+    width: 32, height: 32,
+    alignItems: 'center', justifyContent: 'center',
   },
   sheet: {
     // maxHeight (not fixed height) so the keyboard listener can lift the

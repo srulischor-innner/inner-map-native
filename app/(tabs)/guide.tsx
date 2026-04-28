@@ -249,9 +249,9 @@ const styles = StyleSheet.create({
   },
   askLabel: {
     fontFamily: fonts.serifItalic,
-    fontSize: 11,
-    color: 'rgba(230,180,122,0.6)',
-    marginBottom: 6,
+    fontSize: 15,
+    color: 'rgba(230,180,122,0.8)',
+    marginBottom: 8,
     letterSpacing: 0.5,
   },
   askBubble: {
