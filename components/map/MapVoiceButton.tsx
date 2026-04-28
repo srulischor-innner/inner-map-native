@@ -236,6 +236,22 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
       await recorder.stop();
       const uri = recorder.uri;
       console.log('[legacy] 3/7 recorder uri:', uri);
+      // CRITICAL iOS FIX: after recording stops the audio session is still in
+      // PlayAndRecord/recording mode — TTS playback through the speaker stays
+      // silent until we explicitly flip back to playback. Mirrors expo-av's
+      // { allowsRecordingIOS:false, playsInSilentModeIOS:true } guidance, but
+      // we use the expo-audio names this project already imports.
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          interruptionMode: 'doNotMix',
+          shouldPlayInBackground: false,
+        });
+        console.log('[map-voice] audio session reset to playback mode');
+      } catch (e) {
+        console.warn('[map-voice] failed to reset audio session to playback:', (e as Error).message);
+      }
       if (!uri) {
         console.warn('[legacy] no uri after stop — aborting');
         setStateAnd('idle'); legacyActive.current = false; return;
@@ -291,6 +307,17 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     console.log('[legacy] 6/7 POST /api/speak (' + text.length + ' chars)');
     setStateAnd('speaking');
     try {
+      // Belt-and-braces: ensure the iOS session is in playback mode right
+      // before we play. playsInSilentMode:true is what lets audio come out
+      // of the speaker even when the ringer switch is off.
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          interruptionMode: 'doNotMix',
+          shouldPlayInBackground: false,
+        });
+      } catch {}
       const buf = await api.speak(text);
       if (!buf) {
         console.warn('[legacy] /api/speak returned null — skipping playback');

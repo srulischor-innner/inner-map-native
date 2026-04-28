@@ -30,7 +30,7 @@ import {
   LEVEL_LABELS, ExperienceLevel,
 } from '../services/experienceLevel';
 
-const SUPPORT_EMAIL = 'srulischorr@gmail.com';
+const SUPPORT_EMAIL = 'innermapapp@gmail.com';
 
 export default function SettingsScreen() {
   const router = useRouter();

@@ -21,11 +21,13 @@
         "NSMicrophoneUsageDescription": "Inner Map uses the microphone for voice notes and voice conversations.",
         "NSSpeechRecognitionUsageDescription": "Inner Map uses speech recognition to transcribe your voice notes.",
         "UIBackgroundModes": [
+          "audio",
           "audio"
         ],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
-        }
+        },
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
