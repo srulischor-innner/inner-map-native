@@ -1,0 +1,21 @@
+<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1024" height="1024" fill="#0a0a0f"/>
+
+  <!-- Triangle lines -->
+  <line x1="512" y1="220" x2="720" y2="580" stroke="rgba(138,122,170,0.6)" stroke-width="8" stroke-linecap="round"/>
+  <line x1="512" y1="220" x2="304" y2="580" stroke="rgba(138,122,170,0.6)" stroke-width="8" stroke-linecap="round"/>
+  <line x1="720" y1="580" x2="304" y2="580" stroke="rgba(138,122,170,0.6)" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- Wound node (top) — red -->
+  <circle cx="512" cy="220" r="100" fill="#E05050" fill-opacity="0.15" stroke="none"/>
+  <circle cx="512" cy="220" r="80" fill="#E05050" fill-opacity="0.25" stroke="#E05050" stroke-width="6"/>
+
+  <!-- Fixer node (bottom right) — amber -->
+  <circle cx="720" cy="580" r="88" fill="#E6B47A" fill-opacity="0.15" stroke="none"/>
+  <circle cx="720" cy="580" r="68" fill="#E6B47A" fill-opacity="0.25" stroke="#E6B47A" stroke-width="6"/>
+
+  <!-- Skeptic node (bottom left) — blue -->
+  <circle cx="304" cy="580" r="88" fill="#86BDDC" fill-opacity="0.15" stroke="none"/>
+  <circle cx="304" cy="580" r="68" fill="#86BDDC" fill-opacity="0.25" stroke="#86BDDC" stroke-width="6"/>
+</svg>
