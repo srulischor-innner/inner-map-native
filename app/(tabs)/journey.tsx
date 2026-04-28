@@ -13,17 +13,22 @@ import { colors, fonts, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { getUserId } from '../../services/user';
 import { EnergiesBar, Energy } from '../../components/journey/EnergiesBar';
-import { LanguageChips } from '../../components/journey/LanguageChips';
 import { SpectrumBar } from '../../components/journey/SpectrumBar';
 import { PathTimeline, PathItem } from '../../components/journey/PathTimeline';
 import { SessionDetailModal } from '../../components/session/SessionDetailModal';
+import { StatCards } from '../../components/journey/StatCards';
+import { MapDepth } from '../../components/journey/MapDepth';
+import { PartPhrases, LanguagePatterns } from '../../components/journey/PartPhrases';
 
 type JourneyData = {
   totalSessions: number;
-  totalMessages: number;
+  totalMessages: number;          // user messages across all sessions
+  firstSessionDate: string | null;
   firstMapDate: string | null;
   mostActiveParts: Energy[];
   clinicalPatterns: any;
+  languagePatterns?: LanguagePatterns;
+  mapData?: any;                  // latest mapData blob — drives YOUR MAP section
   sessions: PathItem[];
   // Reading positions on each spectrum (0..1). DB columns keep their legacy
   // "...Score" suffix; the UI never says "score" anywhere.
@@ -64,10 +69,9 @@ export default function JourneyScreen() {
     try { await load(); } finally { setRefreshing(false); }
   };
 
-  // Empty when the response landed but contains no sessions yet — first
-  // run, fresh user. Distinct from the error state (no response at all).
-  const isEmpty = loadStatus === 'loaded' && (!data || (data.sessions || []).length === 0);
-
+  // Show the layout (with zero-state stat cards) even before any data
+  // lands, so the page never looks "empty". The error state is still
+  // distinct since the network call actually failed.
   if (loadStatus === 'error') {
     return (
       <SafeAreaView style={styles.root} edges={[]}>
@@ -86,27 +90,6 @@ export default function JourneyScreen() {
     );
   }
 
-  if (isEmpty) {
-    return (
-      <SafeAreaView style={styles.root} edges={[]}>
-        <ScrollView
-          contentContainerStyle={[styles.content, styles.centeredScroll]}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.amber} />
-          }
-        >
-          <View style={styles.intro}>
-            <Text style={styles.introTitle}>Your Journey</Text>
-          </View>
-          <Text style={styles.emptyText}>
-            Your journey begins with your first conversation.{'\n'}
-            Each session adds to the picture here.
-          </Text>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.root} edges={[]}>
       <ScrollView
@@ -116,18 +99,29 @@ export default function JourneyScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Minimal intro — quiet instead of metric-y */}
+        {/* Quiet intro */}
         <View style={styles.intro}>
           <Text style={styles.introTitle}>Your Journey</Text>
           <Text style={styles.introSub}>How you're changing across sessions.</Text>
         </View>
+
+        {/* Stat cards — conversations / messages shared / journey began */}
+        <StatCards
+          totalSessions={data?.totalSessions || 0}
+          totalMessages={data?.totalMessages || 0}
+          firstSessionDate={data?.firstSessionDate || null}
+        />
+
+        <Section title="Your map">
+          <MapDepth mapData={data?.mapData} />
+        </Section>
 
         <Section title="Most active energies">
           <EnergiesBar energies={data?.mostActiveParts || []} />
         </Section>
 
         <Section title="Language patterns">
-          <LanguageChips patterns={data?.clinicalPatterns} />
+          <PartPhrases patterns={data?.languagePatterns || null} perPart={3} />
         </Section>
 
         <Section title="The spectrums">

@@ -1,13 +1,25 @@
-// Horizontal bar chart of "most active energies" — one row per detected part, with
-// its label, count, and an amber/red/blue/etc bar sized proportionally to the max
-// count in the dataset. Plain Views + flexbox — no chart lib needed for this shape.
+// Horizontal bar chart of "most active energies" — one row per detected
+// part, with label, count, and a colored bar sized proportionally to the
+// max count. Underneath each row a one-line description grounds the
+// reader in what that part means.
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { colors, radii, spacing } from '../../constants/theme';
+import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { PART_COLOR, PART_DISPLAY } from '../../utils/markers';
 
 export type Energy = { part: string; count: number };
+
+const PART_DESCRIPTION: Record<string, string> = {
+  fixer: 'The part that pushes to prove worth.',
+  skeptic: 'The part that has learned not to try.',
+  wound: 'The core belief at the center.',
+  manager: 'Proactive routines that keep things steady.',
+  firefighter: 'Reactive moves that reach for relief.',
+  'self-like': 'The part that holds it all together.',
+  self: 'The calm presence underneath everything.',
+  compromised: 'The part that holds it all together.',
+};
 
 export function EnergiesBar({ energies }: { energies: Energy[] }) {
   if (!energies || energies.length === 0) {
@@ -27,13 +39,17 @@ export function EnergiesBar({ energies }: { energies: Energy[] }) {
         const color = PART_COLOR[e.part] || colors.amber;
         const display = PART_DISPLAY[e.part] || e.part.toUpperCase();
         const pct = Math.max(0.04, e.count / max);
+        const desc = PART_DESCRIPTION[e.part];
         return (
-          <View key={e.part} style={styles.row}>
-            <Text style={[styles.label, { color }]}>{display.toUpperCase()}</Text>
-            <View style={styles.track}>
-              <View style={[styles.fill, { width: `${pct * 100}%`, backgroundColor: color }]} />
+          <View key={e.part} style={styles.energyBlock}>
+            <View style={styles.row}>
+              <Text style={[styles.label, { color }]}>{display.toUpperCase()}</Text>
+              <View style={styles.track}>
+                <View style={[styles.fill, { width: `${pct * 100}%`, backgroundColor: color }]} />
+              </View>
+              <Text style={styles.count}>{e.count}</Text>
             </View>
-            <Text style={styles.count}>{e.count}</Text>
+            {desc ? <Text style={styles.desc}>{desc}</Text> : null}
           </View>
         );
       })}
@@ -42,7 +58,16 @@ export function EnergiesBar({ energies }: { energies: Energy[] }) {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm },
+  energyBlock: { marginBottom: spacing.md },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  desc: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
+    marginLeft: 88 + spacing.sm,
+  },
   label: {
     width: 88,
     fontSize: 10,

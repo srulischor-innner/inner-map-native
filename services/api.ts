@@ -385,6 +385,11 @@ export const api = {
         if (txt.length > consumed) {
           const tail = txt.slice(consumed);
           consumed = txt.length;
+          // Diagnostic: shows up in Metro as one log per progress event.
+          // If we only see ONE log with the full message length, the
+          // server / proxy is buffering. Many small lines = streaming
+          // is working end-to-end.
+          console.log('[guide-chat] chunk', tail.length, 'chars:', tail.slice(0, 30).replace(/\n/g, '⏎'));
           if (tail) cb.onChunk(tail);
         }
       } catch (e) {
