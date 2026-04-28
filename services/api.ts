@@ -308,6 +308,41 @@ export const api = {
     } catch { return false; }
   },
 
+  /** POST /api/session-summary — returns the structured 3-part summary
+   *  used by the native end-of-session screen. The server also persists
+   *  it onto the session row so the Journal tab can render the preview
+   *  later. Returns null on transport failure; returns the object with
+   *  blank strings (and `fallback: true`) on a soft server fallback. */
+  async getSessionSummary(messages: ChatMessage[], sessionId: string): Promise<{
+    exploredText: string;
+    mapShowingText: string;
+    somethingToTryText: string;
+    fallback?: boolean;
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/session-summary', {
+        label: 'session-summary',
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ messages, sessionId }),
+        timeoutMs: 60000,
+      });
+      if (!res.ok) return null;
+      const j: any = await res.json();
+      if (!j || typeof j !== 'object') return null;
+      return {
+        exploredText: String(j.exploredText || ''),
+        mapShowingText: String(j.mapShowingText || ''),
+        somethingToTryText: String(j.somethingToTryText || ''),
+        fallback: !!j.fallback,
+      };
+    } catch (e) {
+      console.warn('[session-summary] fetch failed:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   async speak(text: string): Promise<ArrayBuffer | null> {
     try {
       const headers = await authHeaders();

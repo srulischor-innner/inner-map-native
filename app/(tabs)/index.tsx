@@ -44,6 +44,7 @@ import { AudioToggle } from '../../components/AudioToggle';
 import { useExperienceLevel } from '../../services/experienceLevel';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
+import { SessionSummaryModal, SessionSummary } from '../../components/session/SessionSummaryModal';
 import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
 import { ConversationStarters } from '../../components/ConversationStarters';
@@ -96,6 +97,19 @@ export default function ChatScreen() {
   const [endingTransition, setEndingTransition] = useState(false);
   const messagesOpacity = useRef(new Animated.Value(1)).current;
   const transitionOpacity = useRef(new Animated.Value(0)).current;
+  // Session summary screen — opens when the user confirms End Session.
+  // `summary` is null while the fetch is in flight (modal shows loader);
+  // gets the structured 3-part object once /api/session-summary resolves.
+  // `summaryFailed` flips true on transport / 500 so the modal can show
+  // the warm fallback line. The "Begin New Session" tap is what actually
+  // resets the chat — the summary screen blocks reset until then.
+  const [summaryVisible, setSummaryVisible] = useState(false);
+  const [summary, setSummary] = useState<SessionSummary | null>(null);
+  const [summaryFailed, setSummaryFailed] = useState(false);
+  // Held continuation that runs the actual reset when the user dismisses
+  // the summary modal. Captured inside the EndSession onEnd handler so
+  // it has access to the closure (snapshots of cancelTTSStream / etc).
+  const continueAfterSummaryRef = useRef<(() => Promise<void>) | null>(null);
   // Safe-area top inset + top-bar chrome height — used as keyboardVerticalOffset
   // so the KeyboardAvoidingView pushes the input bar exactly above the keyboard
   // without leaving a gap or going too far.
@@ -492,14 +506,9 @@ export default function ChatScreen() {
           </ScrollView>
         </Animated.View>
 
-        {/* End-session overlay — only rendered while the transition is
-            active. Absolute-positioned so it sits on top of the messages
-            layer without affecting the keyboard-avoiding layout. */}
-        {endingTransition ? (
-          <Animated.View pointerEvents="none" style={[styles.transition, { opacity: transitionOpacity }]}>
-            <Text style={styles.transitionText}>Your map has been updated.</Text>
-          </Animated.View>
-        ) : null}
+        {/* The legacy "Your map has been updated." overlay was replaced
+            by the SessionSummaryModal below — it now carries the entire
+            end-of-session moment (haptic + structured 3-part summary). */}
         <ChatInput
           disabled={sending}
           onSend={handleSend}
@@ -516,65 +525,88 @@ export default function ChatScreen() {
           visible={historyRef.current.filter((m) => m.role === 'user').length >= 1 && !endingTransition}
           onEnd={async () => {
             // === END SESSION TRANSITION ===
-            // 1) Fade messages out (500ms)
-            // 2) Soft success haptic as the "Your map has been updated." overlay
-            //    fades in
-            // 3) Hold 2s
-            // 4) Fade overlay out (500ms) while we reset + fetch fresh greeting
+            // 1) Fade messages out (400ms — per latest spec, slightly faster
+            //    than before so the summary screen lands quickly).
+            // 2) Open the SessionSummaryModal in its loading state.
+            // 3) Kick the structured-summary fetch + the session save in
+            //    parallel. The modal stays in loading until the summary
+            //    object lands (or fails); the user is never forced to wait
+            //    on the save itself.
+            // 4) The "Begin New Session" button on the modal triggers the
+            //    actual reset (continueAfterSummaryRef.current).
             setEndingTransition(true);
+            const transcriptForSave = historyRef.current.slice();
+            const sessionIdForSave = sessionIdRef.current;
             Animated.timing(messagesOpacity, {
-              toValue: 0, duration: 500,
+              toValue: 0, duration: 400,
               easing: Easing.inOut(Easing.ease), useNativeDriver: true,
             }).start();
 
-            // Kick save/summary in parallel with the fade — no reason to block.
-            const saveWork = (async () => {
-              try {
-                await fetch(api.baseUrl + '/api/summary', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ messages: historyRef.current, sessionId: sessionIdRef.current }),
-                }).catch(() => {});
-                await api.saveSession({ id: sessionIdRef.current, messages: historyRef.current });
-              } catch {}
-            })();
+            // Reset summary state and open the modal in loading mode.
+            setSummary(null);
+            setSummaryFailed(false);
+            setSummaryVisible(true);
 
-            await new Promise((r) => setTimeout(r, 500));
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-            Animated.timing(transitionOpacity, {
-              toValue: 1, duration: 350, useNativeDriver: true,
-            }).start();
+            // Fire the structured-summary call. The server persists the
+            // result onto the session row; we still call saveSession so
+            // the messages array is stored.
+            (async () => {
+              const sum = await api.getSessionSummary(transcriptForSave, sessionIdForSave);
+              if (sum) {
+                setSummary({
+                  exploredText: sum.exploredText,
+                  mapShowingText: sum.mapShowingText,
+                  somethingToTryText: sum.somethingToTryText,
+                });
+                if (sum.fallback) setSummaryFailed(true);
+              } else {
+                setSummaryFailed(true);
+              }
+            })().catch(() => setSummaryFailed(true));
 
-            await new Promise((r) => setTimeout(r, 2000));
-            await saveWork;
+            // Save in parallel — fire-and-forget.
+            api.saveSession({ id: sessionIdForSave, messages: transcriptForSave })
+              .catch(() => {});
 
-            // Reset session while overlay still covers the screen. Self mode
-            // is session-scoped — the next session starts in normal mode.
-            // TTS cache is also session-scoped; drop it so the new session's
-            // first bubble doesn't accidentally play audio from the old one
-            // Audio mute toggle resets to OFF so the new session starts
-            // silent — user opts in again by tapping the speaker icon.
-            cancelTTSStream();
-            setAudioEnabled(false);
-            resetAttentionState();
-            setSelfMode(false);
-            historyRef.current = [];
-            setMessages([]);
-            sessionIdRef.current = uuidv4();
-            const next = await api.getReturningGreeting();
-            const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;
-            if (next.suggestions.length) setStarters(next.suggestions);
-            addAssistantMessage(greeting);
-            historyRef.current.push({ role: 'assistant', content: greeting });
-
-            // Crossfade back to messages.
-            Animated.parallel([
-              Animated.timing(transitionOpacity, { toValue: 0, duration: 500, useNativeDriver: true }),
-              Animated.timing(messagesOpacity,   { toValue: 1, duration: 500, useNativeDriver: true }),
-            ]).start(() => setEndingTransition(false));
+            // Stage the actual reset behind the summary screen's continue
+            // button. Captures the snapshots above so the continuation
+            // doesn't fight a stale historyRef.
+            continueAfterSummaryRef.current = async () => {
+              cancelTTSStream();
+              setAudioEnabled(false);
+              resetAttentionState();
+              setSelfMode(false);
+              historyRef.current = [];
+              setMessages([]);
+              sessionIdRef.current = uuidv4();
+              const next = await api.getReturningGreeting();
+              const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;
+              if (next.suggestions.length) setStarters(next.suggestions);
+              addAssistantMessage(greeting);
+              historyRef.current.push({ role: 'assistant', content: greeting });
+              // Reveal messages again behind the dismissing summary modal.
+              Animated.timing(messagesOpacity, {
+                toValue: 1, duration: 500, useNativeDriver: true,
+              }).start(() => setEndingTransition(false));
+            };
           }}
         />
       </KeyboardAvoidingView>
+
+      <SessionSummaryModal
+        visible={summaryVisible}
+        summary={summary}
+        failed={summaryFailed}
+        onContinue={async () => {
+          // Hide the modal first so the dismiss animation overlaps with
+          // the messages-fade-back-in. Then run the captured continuation
+          // which performs the actual session reset + greeting fetch.
+          setSummaryVisible(false);
+          const cont = continueAfterSummaryRef.current;
+          continueAfterSummaryRef.current = null;
+          if (cont) await cont();
+        }}
+      />
     </SafeAreaView>
   );
 }

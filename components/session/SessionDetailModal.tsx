@@ -106,12 +106,49 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-            {session.summary ? (
-              <View style={styles.summary}>
-                <Text style={styles.summaryLabel}>REFLECTION</Text>
-                <Text style={styles.summaryText}>{session.summary}</Text>
-              </View>
-            ) : null}
+            {(() => {
+              // session.summary is either legacy prose (string) or a JSON
+              // blob persisted by /api/session-summary with shape:
+              //   { exploredText, mapShowingText, somethingToTryText, kind: "structured-v1" }
+              // Render the structured form as three labeled sections; fall
+              // back to the prose form for older sessions.
+              const raw = session.summary;
+              if (!raw) return null;
+              let structured: any = null;
+              if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+                try { structured = JSON.parse(raw); } catch {}
+              }
+              if (structured && structured.kind === 'structured-v1') {
+                return (
+                  <View style={styles.summary}>
+                    {structured.exploredText ? (
+                      <>
+                        <Text style={styles.summaryLabel}>WHAT WE EXPLORED</Text>
+                        <Text style={styles.summaryText}>{structured.exploredText}</Text>
+                      </>
+                    ) : null}
+                    {structured.mapShowingText ? (
+                      <>
+                        <Text style={[styles.summaryLabel, { marginTop: 14 }]}>WHAT THE MAP IS SHOWING</Text>
+                        <Text style={styles.summaryText}>{structured.mapShowingText}</Text>
+                      </>
+                    ) : null}
+                    {structured.somethingToTryText ? (
+                      <>
+                        <Text style={[styles.summaryLabel, { marginTop: 14 }]}>SOMETHING TO TRY</Text>
+                        <Text style={styles.summaryText}>{structured.somethingToTryText}</Text>
+                      </>
+                    ) : null}
+                  </View>
+                );
+              }
+              return (
+                <View style={styles.summary}>
+                  <Text style={styles.summaryLabel}>REFLECTION</Text>
+                  <Text style={styles.summaryText}>{String(raw)}</Text>
+                </View>
+              );
+            })()}
             {messages.map((m) => <MessageBubble key={m.id} msg={m} />)}
           </ScrollView>
         )}
