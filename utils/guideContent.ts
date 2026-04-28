@@ -52,56 +52,54 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     visual: 'intro',
     title: 'Inner Map',
     body: [
-      'Understand what’s happening inside you.',
-      'A space for the patterns underneath your patterns — the parts that push and pull, and the wound they’re organized around.',
+      "Understand what's happening inside you.",
     ],
   },
   {
     visual: 'everyone',
-    title: 'You’re not broken',
+    title: 'We all have patterns',
     body: [
-      'Everyone has a wound. Not from trauma necessarily — just from being human.',
-      'The patterns that grew up around it aren’t signs of damage. They’re signs of intelligence — a child being resourceful with what they were given.',
+      "Ways we react. Things that trigger us. Feelings we can't explain. Most of us don't fully understand why.",
     ],
   },
   {
     visual: 'mapDrawing',
-    title: 'The map is yours',
+    title: 'Inner Map helps you see them',
     body: [
-      'Through conversation we build a picture of your inner world — the wound at the center, and the parts organized around it.',
-      'It draws itself slowly, in the language you use. You don’t need to know the framework. You just need to talk.',
+      'As you talk, patterns emerge. The same feelings, the same voices, the same pushes and pulls — the AI listens for them and gradually reflects them back. We call it your map.',
     ],
   },
   {
     visual: 'chatBubble',
-    title: 'How conversations work',
+    title: 'Your map starts as a sketch',
     body: [
-      'Just talk. Share what’s on your mind, what’s been activated, what pattern keeps showing up.',
-      'The map listens for what’s underneath — the recurring feelings, the quieter voices — and reflects it back so you can see it clearly.',
+      'The more we talk, the more detailed and accurate it becomes. Every conversation adds a layer.',
     ],
   },
   {
     visual: 'nodeDetect',
-    title: 'What gets tracked',
+    title: 'The map changes everything',
     body: [
-      'When a part shows up, the map notices and lights it up gently. Over time, the picture sharpens.',
-      'Twenty conversations give you a picture of yourself most people never get to see.',
+      'When you can see your patterns clearly — where they come from, what drives them, what holds you back — you stop being surprised by yourself. You start to see the logic underneath what felt like chaos. And once you can see it, you can actually work with it.',
     ],
   },
   {
-    visual: 'privacy',
-    title: 'Private to you',
+    // Slide 6 spec: use the breathing full map (every node alive, lines
+    // shimmering) instead of the privacy lock — communicates "system
+    // alive over time" rather than "your data is private".
+    visual: 'fullmap',
+    title: 'A companion for the long journey',
     body: [
-      'Inner Map is not therapy. It’s a mirror. Nothing you share is judged.',
-      'Your conversations and your map belong to you. They never go anywhere they shouldn’t.',
+      "Come when something is activated and you don't know what you're feeling. Come when a pattern repeated and you want to understand why. Come when you need to be heard without advice or fixing. Come when something shifted and you want to mark it. Come when you're in between therapy sessions and need somewhere to land.",
+      'The longer you come — the more it knows you. The more it knows you — the more useful it becomes.',
     ],
   },
   {
     visual: 'readyToBegin',
-    title: 'Ready to begin',
+    title: 'This is not therapy',
     body: [
-      'The work is to see — not to fix. Insight is the start of everything that follows.',
-      'Come when something is alive. Come when you need to be heard. The longer you come, the more it knows you.',
+      "It's a mirror. A space to see yourself more clearly. Nothing you share is judged.",
+      'Everything in this introduction lives in the Guide tab — come back anytime.',
     ],
   },
 ];

@@ -241,21 +241,33 @@ function EveryoneDot({
   x: number; y: number; dotR: number; index: number; count: number;
   phase: ReturnType<typeof useSharedValue<number>>;
 }) {
-  // Each dot's "lit-ness" = 1 when the wave is exactly on it, fading with
-  // distance on either side. Wrapped around 0..1 so the wave loops seamlessly.
-  const glow = useDerivedValue(() => {
+  // Each dot's "lit-ness" — 1 when the wave is exactly on it, fading with
+  // distance on either side. Wrapped 0..1 so the wave loops seamlessly.
+  // We pull the raw 0..1 lit value out separately so we can drive both
+  // the group opacity (the soft amber halo) AND the inner fill alpha,
+  // giving each lit dot a noticeably warmer center as the wave passes.
+  const lit = useDerivedValue(() => {
     const normalized = index / count;
     let d = Math.abs((phase.value - normalized + 1) % 1);
     if (d > 0.5) d = 1 - d;
-    const k = Math.max(0, 1 - d * 3.5);
-    return 0.35 + 0.65 * k;
+    return Math.max(0, 1 - d * 3.5);
   }, [phase, index, count]);
+  // Group opacity fades the whole dot up/down with the wave.
+  const groupOp = useDerivedValue(() => 0.4 + 0.6 * lit.value, [lit]);
+  // Inner fill alpha is much more dramatic — dots far from the wave are
+  // a faint amber outline, the lit dot is a glowing amber core.
+  const fillOp = useDerivedValue(() => 0.15 + 0.85 * lit.value, [lit]);
   return (
-    <Group opacity={glow}>
-      <Circle cx={x} cy={y} r={dotR * 1.6} opacity={0.45}>
-        <RadialGradient c={vec(x, y)} r={dotR * 1.8} colors={[colors.creamDim + '88', colors.creamDim + '00']} />
+    <Group opacity={groupOp}>
+      {/* Soft amber halo. The radial gradient brightens at the dot's center
+          and fades to transparent — reads as warm light, not a flat circle. */}
+      <Circle cx={x} cy={y} r={dotR * 1.9} opacity={0.55}>
+        <RadialGradient c={vec(x, y)} r={dotR * 2} colors={['#E6B47AAA', '#E6B47A00']} />
       </Circle>
-      <Circle cx={x} cy={y} r={dotR} color={colors.creamDim} style="stroke" strokeWidth={1.2} />
+      {/* Amber fill — opacity drives "is this dot lit right now?". */}
+      <Circle cx={x} cy={y} r={dotR} color="#E6B47A" opacity={fillOp} />
+      {/* Steady amber outline so unlit dots still read as part of the ring. */}
+      <Circle cx={x} cy={y} r={dotR} color="#E6B47A" style="stroke" strokeWidth={1.2} opacity={0.6} />
     </Group>
   );
 }
