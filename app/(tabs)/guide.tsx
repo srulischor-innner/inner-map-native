@@ -34,6 +34,7 @@ import {
 import { GuideSlide } from '../../components/guide/GuideSlide';
 import { GuideDots } from '../../components/guide/GuideDots';
 import { GuideAskModal } from '../../components/guide/GuideAskModal';
+import { HealingErrorBoundary } from '../../components/guide/HealingErrorBoundary';
 
 type SectionId = 'welcome' | 'map' | 'healing' | 'using';
 
@@ -83,7 +84,12 @@ export default function GuideScreen() {
       ) : section === 'map' ? (
         <SlideSection slides={MAP_SLIDES} />
       ) : section === 'healing' ? (
-        <SlideSection slides={HEALING_SLIDES} />
+        // Healing tab is currently the most fragile section after the
+        // recent visual additions — wrap in an error boundary so a
+        // single bad visual can't crash the whole app.
+        <HealingErrorBoundary>
+          <SlideSection slides={HEALING_SLIDES} />
+        </HealingErrorBoundary>
       ) : (
         <UsingSection />
       )}

@@ -23,6 +23,13 @@ type Props = { kind: NodeVisualKind; size?: number };
 export function GuideNodeVisual({ kind, size = 140 }: Props) {
   const W = size;
   const H = size;
+  // Defensive size guard. If the parent ever passes a 0/NaN size (first
+  // paint race, layout glitch) we render an empty canvas rather than
+  // letting downstream Skia primitives divide by zero or feed NaN into
+  // a paint matrix — that's been a frequent crash trigger.
+  if (!W || !H || isNaN(W) || isNaN(H) || W <= 0 || H <= 0) {
+    return null;
+  }
   const cx = W / 2;
   const cy = H / 2;
 
@@ -1413,15 +1420,18 @@ function SurvivalMode({ W, H }: { W: number; H: number }) {
   const fixerP   = { x: cx + R * Math.sin(Math.PI * 2 / 3), y: cy - R * Math.cos(Math.PI * 2 / 3) };
   const skepticP = { x: cx - R * Math.sin(Math.PI * 2 / 3), y: cy - R * Math.cos(Math.PI * 2 / 3) };
 
-  // Triangle leg path — solid stroked path so we can pulse opacity together.
-  const legPath = (() => {
+  // Triangle leg path — memoized so we don't allocate a fresh Skia.Path
+  // on every render (which was crashing on some devices when re-renders
+  // happened mid-frame). Static geometry so we can compute it once.
+  const legPath = React.useMemo(() => {
     const p = Skia.Path.Make();
     p.moveTo(woundP.x, woundP.y);
     p.lineTo(fixerP.x, fixerP.y);
     p.lineTo(skepticP.x, skepticP.y);
     p.close();
     return p;
-  })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [W, H]);
 
   // Atmospheric glow opacity — ramps with activation, oscillates with pulse.
   const atmosphereOpacity = useDerivedValue(
@@ -1441,12 +1451,11 @@ function SurvivalMode({ W, H }: { W: number; H: number }) {
     () => 0.25 + activation.value * (0.55 + 0.15 * pulse.value),
     [activation, pulse],
   );
-  // Subtle stroke-width pulse on the triangle legs so the lit state reads
-  // as activation, not just brightness.
-  const lineWidth = useDerivedValue(
-    () => 1.5 + activation.value * (1 + 0.6 * pulse.value),
-    [activation, pulse],
-  );
+  // NOTE: stroke width is intentionally a static 2 instead of a derived
+  // SharedValue. Animating strokeWidth on a Skia <Path> via Reanimated
+  // values has crashed on some device builds — opacity already carries
+  // the "intensity" cue, so the lost stroke-width animation isn't a
+  // visible loss.
 
   return (
     <Group>
@@ -1466,9 +1475,10 @@ function SurvivalMode({ W, H }: { W: number; H: number }) {
         </Circle>
       </Group>
 
-      {/* Triangle legs — pulse in opacity + width when activated. */}
+      {/* Triangle legs — pulse in opacity when activated. Static stroke
+          width per the note above. */}
       <Path path={legPath} color="rgba(255,255,255,0.9)" style="stroke"
-            strokeWidth={lineWidth} opacity={lineOpacity} />
+            strokeWidth={2} opacity={lineOpacity} />
 
       {/* Three lit nodes. Each is a halo + a solid colored circle.
           Halo radius scales with activation; the solid core stays the
@@ -1478,6 +1488,11 @@ function SurvivalMode({ W, H }: { W: number; H: number }) {
       <SurvivalNode cx={skepticP.x} cy={skepticP.y} color="#90C8E8" haloR={haloRadius} coreR={nodeRadius} />
     </Group>
   );
+  // Note: defensive size guard intentionally lives at the dispatcher
+  // level (the parent passes W = size, H = size from a measured layout)
+  // rather than as an early-return inside this component, because
+  // bailing before hooks would violate rules-of-hooks if W flips from
+  // 0 → positive on a re-render.
 }
 
 function SurvivalNode({
