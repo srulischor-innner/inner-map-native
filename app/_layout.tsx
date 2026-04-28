@@ -13,7 +13,7 @@
 //      Stack's layoutEffects have fired and the route is registered.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { AppState } from 'react-native';
+import { AppState, View, Image, StyleSheet } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -28,6 +28,7 @@ import {
   ensureDefaultPreference, authenticate as authenticateBiometric, isLockEnabled,
 } from '../services/biometrics';
 import { LockScreen } from '../components/LockScreen';
+import { LandingScreen } from '../components/LandingScreen';
 
 // Module-level flags for the biometric lock. These persist for the life of
 // the JS process — i.e. cold-start to cold-start. Two purposes:
@@ -78,6 +79,15 @@ export default function RootLayout() {
   // when the preference is on, so the unlocked content is never visible
   // for a frame on cold start. Flips to false after a successful auth.
   const [locked, setLocked] = useState(false);
+  // True from launch until the cold-start biometric check resolves
+  // (success, failure, or 'lock disabled'). While true we render only
+  // a blank dark+triangle splash so no app content peeks behind the
+  // Face ID prompt — the previous behavior briefly flashed the tabs.
+  const [isCheckingBiometrics, setIsCheckingBiometrics] = useState(true);
+  // True until the LandingScreen completes its 1500ms hold. Shown after
+  // biometrics pass on every cold open so the user lands on a calm
+  // arrival moment instead of jumping straight into the chat tab.
+  const [showLanding, setShowLanding] = useState(true);
 
   // Run an auth prompt iff the lock preference is on AND the user hasn't
   // already authenticated this session. The session flag is the firewall
@@ -113,13 +123,20 @@ export default function RootLayout() {
 
   // ONE-TIME cold-start auth gate. Empty deps array — runs once per
   // process. No AppState listener that fires on every focus change.
+  // While this is in flight we keep `isCheckingBiometrics` true so the
+  // app renders only a dark+triangle splash; nothing else is visible
+  // behind / around the Face ID prompt.
   useEffect(() => {
     (async () => {
-      await ensureDefaultPreference();
-      const enabled = await isLockEnabled();
-      if (!enabled || hasAuthenticatedThisSession) return;
-      setLocked(true);                    // hide content while we prompt
-      await runAuthCheck('cold-start');
+      try {
+        await ensureDefaultPreference();
+        const enabled = await isLockEnabled();
+        if (!enabled || hasAuthenticatedThisSession) return;
+        setLocked(true);                    // hide content while we prompt
+        await runAuthCheck('cold-start');
+      } finally {
+        setIsCheckingBiometrics(false);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -227,6 +244,47 @@ export default function RootLayout() {
     return () => { responseSubRef.current?.remove(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // While the cold-start biometric check is in flight (or the user is
+  // still locked because they haven't authenticated yet) we render ONLY
+  // a dark backdrop with the triangle icon. This prevents tab content
+  // from flashing behind the Face ID prompt.
+  if (isCheckingBiometrics || locked) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0a0a0f' }}>
+        <SafeAreaProvider>
+          <StatusBar style="light" />
+          <View style={splashStyles.root}>
+            <Image
+              source={require('../assets/icon.png')}
+              style={splashStyles.icon}
+              resizeMode="contain"
+            />
+          </View>
+          {/* Lock screen sits above the splash when the user has failed
+              biometric auth, so they get an explicit Unlock pill rather
+              than just an indefinite triangle. */}
+          {locked ? (
+            <LockScreen onUnlock={() => runAuthCheck('button-tap')} />
+          ) : null}
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    );
+  }
+
+  // After biometrics, before the tabs — show the LandingScreen for ~1500ms.
+  // This is the arrival moment + a free window for the returning-greeting
+  // fetch on the chat tab to complete in the background.
+  if (showLanding) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0a0a0f' }}>
+        <SafeAreaProvider>
+          <StatusBar style="light" />
+          <LandingScreen onReady={() => setShowLanding(false)} />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    );
+  }
+
   // Stack is ALWAYS rendered — no spinner gate. A user who needs onboarding
   // will flash the tabs for <100ms before the replace takes effect; acceptable
   // vs. the risk of hanging on a spinner forever.
@@ -244,10 +302,17 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
         </Stack>
-        {locked ? (
-          <LockScreen onUnlock={() => runAuthCheck('button-tap')} />
-        ) : null}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
+
+const splashStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#0a0a0f',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  icon: { width: 120, height: 120, opacity: 0.9 },
+});
