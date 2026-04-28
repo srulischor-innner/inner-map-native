@@ -1,445 +1,61 @@
-// Journal tab — a dedicated journaling space, not a session history list.
-// Matches the web version: lock-header, serif "Journal" heading, two prompt
-// cards (FREE FLOW + DEEP DIVE), and a recent-entries list below.
-//
-// Entries live in AsyncStorage only — never leave the device. Tapping a card
-// opens the in-file WriteModal (Free Flow is blank; Deep Dive shows a random
-// prompt at the top).
+// Journal tab — placeholder state until free-form journal entries are
+// built out. Sessions used to live here too, but they already appear in
+// the hamburger menu's Recent Sessions list — duplicating them in the
+// Journal tab created two paths to the same content. The tab now shows
+// just the lock header, the "Journal" heading, and a single centered
+// italic message so the surface is reserved for the journaling feature
+// that's coming next.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  View, Text, Pressable, ScrollView, FlatList, TextInput, Modal,
-  StyleSheet, KeyboardAvoidingView, Platform, Animated, Easing,
-  ActivityIndicator, Alert,
-} from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
-import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
-import { colors, fonts, radii, spacing } from '../../constants/theme';
-import { journal, JournalEntry, JournalKind } from '../../services/journal';
-import { getUserId } from '../../services/user';
-import { api } from '../../services/api';
-import { SessionDetailModal } from '../../components/session/SessionDetailModal';
 
-type SessionListItem = {
-  id: string;
-  date: string;
-  time?: string;
-  preview: string;
-  hasMap: boolean;
-  messageCount: number;
-  summaryPreview: string | null;
-  title: string | null;
-};
+import { colors, fonts, spacing } from '../../constants/theme';
 
 export default function JournalScreen() {
-  const [entries, setEntries] = useState<JournalEntry[]>([]);
-  const [writing, setWriting] = useState<{ kind: JournalKind; prompt?: string } | null>(null);
-  const [query, setQuery] = useState('');
-  // Past chat sessions, fetched from the server. The Journal tab shows
-  // them above the local FREE FLOW + DEEP DIVE entries so saved
-  // conversations and freeform writing live in one place.
-  const [sessions, setSessions] = useState<SessionListItem[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  // Per-session "read more" expansion state — the summary preview is
-  // capped at a few lines by default; tapping read more reveals the full
-  // exploredText paragraph in place.
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
-  const load = useCallback(async () => {
-    const userId = await getUserId();
-    const [localEntries, sessionList] = await Promise.all([
-      journal.list(),
-      api.listSessions().catch(() => [] as any[]),
-    ]);
-    console.log(
-      '[journal] loaded local entries=', localEntries.length,
-      'sessions=', (sessionList || []).length,
-      'userId=', userId.slice(0, 8),
-    );
-    setEntries(localEntries);
-    setSessions((sessionList || []) as SessionListItem[]);
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((e) => e.content.toLowerCase().includes(q));
-  }, [entries, query]);
-
-  function openCard(kind: JournalKind) {
-    Haptics.selectionAsync().catch(() => {});
-    setWriting({
-      kind,
-      prompt: kind === 'deepdive' ? journal.randomDeepDivePrompt() : undefined,
-    });
-  }
-
-  async function handleSave(content: string) {
-    if (!writing) return;
-    if (content.trim()) {
-      await journal.add(writing.kind, content, writing.prompt);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    }
-    setWriting(null);
-    await load();
-  }
-
   return (
     <SafeAreaView style={styles.root} edges={[]}>
-      <ScrollView
-        contentContainerStyle={styles.scrollBody}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* === Private header === */}
-        <View style={styles.privateRow}>
-          <Ionicons name="lock-closed" size={11} color={colors.creamFaint} />
-          <Text style={styles.privateText}>Private — only you can see this</Text>
-        </View>
-        <Text style={styles.heading}>Journal</Text>
-        <Text style={styles.subheading}>A quiet space just for you.</Text>
+      {/* Private header — same lock + caption that lived above the old
+          Journal content, kept so the tab still reads as a private space
+          rather than a placeholder screen. */}
+      <View style={styles.privateRow}>
+        <Ionicons name="lock-closed" size={11} color={colors.creamFaint} />
+        <Text style={styles.privateText}>Private — only you can see this</Text>
+      </View>
 
-        {/* === FREE FLOW card === */}
-        <Pressable style={styles.card} onPress={() => openCard('freeflow')}>
-          <Text style={styles.cardLabel}>FREE FLOW</Text>
-          <Text style={styles.cardTitle}>Just write. No rules. This is yours.</Text>
-          <Text style={styles.cardBody}>
-            A blank space. Type or speak. No AI, no questions. Whatever is present.
-          </Text>
-        </Pressable>
+      <Text style={styles.heading}>Journal</Text>
 
-        {/* === DEEP DIVE card === */}
-        <Pressable style={styles.card} onPress={() => openCard('deepdive')}>
-          <Text style={styles.cardLabel}>DEEP DIVE · FREE ASSOCIATION</Text>
-          <Text style={styles.cardTitle}>Let the slide open.</Text>
-          <Text style={styles.cardBody}>
-            Something a little different. A guided invitation into free association —
-            unfiltered, uncensored, whatever comes up.
-          </Text>
-        </Pressable>
-
-        {/* === PAST SESSIONS === */}
-        {/* Saved chat sessions — each card shows the date, the AI-generated
-            "What we explored" summary preview, and a Read more affordance
-            that expands the preview in place. Tapping the card opens the
-            full transcript modal shared with the Journey tab. */}
-        {sessions.length > 0 ? (
-          <>
-            <Text style={[styles.sectionLabel, { marginTop: spacing.xl }]}>PAST SESSIONS</Text>
-            {sessions.map((s) => (
-              <SessionCard
-                key={s.id}
-                session={s}
-                isExpanded={!!expanded[s.id]}
-                onToggleExpand={() => setExpanded((prev) => ({ ...prev, [s.id]: !prev[s.id] }))}
-                onOpen={() => setSelectedSessionId(s.id)}
-              />
-            ))}
-          </>
-        ) : null}
-
-        {/* === RECENT ENTRIES === */}
-        <Text style={[styles.sectionLabel, { marginTop: spacing.xl }]}>RECENT ENTRIES</Text>
-        <View style={styles.searchRow}>
-          <Ionicons name="search" size={14} color={colors.creamFaint} style={{ marginRight: 8 }} />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search your entries…"
-            placeholderTextColor={colors.creamFaint}
-            style={styles.searchInput}
-          />
-        </View>
-
-        {filtered.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>
-              {query
-                ? 'No entries match that search.'
-                : 'Your conversations will be saved here after each session. Start talking and come back.'}
-            </Text>
-          </View>
-        ) : (
-          filtered.map((e) => <EntryRow key={e.id} entry={e} />)
-        )}
-      </ScrollView>
-
-      {writing ? (
-        <WriteModal
-          kind={writing.kind}
-          prompt={writing.prompt}
-          onClose={() => setWriting(null)}
-          onSave={handleSave}
-        />
-      ) : null}
-
-      {/* Full session transcript — shared with the Journey tab. The X
-          button inside SessionDetailModal already clears the iPhone notch
-          via insets.top + 16. */}
-      <SessionDetailModal
-        visible={!!selectedSessionId}
-        sessionId={selectedSessionId}
-        onClose={() => setSelectedSessionId(null)}
-      />
+      {/* Centered placeholder — reserved space for free-form entries. The
+          flex:1 + center alignment lets the message sit visually balanced
+          regardless of device height. */}
+      <View style={styles.placeholderWrap}>
+        <Text style={styles.placeholderText}>
+          Your personal journal lives here. A space to write freely —
+          reflections, insights, things you want to remember. Coming soon.
+        </Text>
+      </View>
     </SafeAreaView>
   );
 }
 
-// ============================================================================
-// SessionCard — past chat session preview row
-// ============================================================================
-//
-// Renders the date + AI-generated "What we explored" summary preview. If
-// the summary is long, only the first ~3 lines show until the user taps
-// "Read more"; tapping the card itself opens the full transcript modal.
-// When no summary exists yet (older sessions / soft fallback) we fall back
-// to the message-count + a quiet placeholder line.
-function SessionCard({
-  session, isExpanded, onToggleExpand, onOpen,
-}: {
-  session: SessionListItem;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
-  onOpen: () => void;
-}) {
-  const date = new Date(session.date);
-  const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  const hasSummary = !!(session.summaryPreview && session.summaryPreview.trim());
-  const willTruncate = hasSummary && (session.summaryPreview as string).length > 180 && !isExpanded;
-  const previewText = hasSummary
-    ? (willTruncate
-        ? (session.summaryPreview as string).slice(0, 180).trimEnd() + '…'
-        : (session.summaryPreview as string))
-    : 'No summary saved for this session yet.';
-  return (
-    <Pressable
-      style={styles.entry}
-      onPress={() => { Haptics.selectionAsync().catch(() => {}); onOpen(); }}
-      accessibilityLabel={`Open session from ${dateStr}`}
-    >
-      <View style={styles.entryTop}>
-        <Text style={styles.entryDate}>{dateStr}</Text>
-        <Text style={styles.entryKind}>SESSION</Text>
-      </View>
-      {session.title ? (
-        <Text style={styles.sessionTitle} numberOfLines={2}>{session.title}</Text>
-      ) : null}
-      <Text style={hasSummary ? styles.entryText : styles.sessionEmptyText}>
-        {previewText}
-      </Text>
-      {hasSummary && (session.summaryPreview as string).length > 180 ? (
-        <Pressable
-          onPress={(e) => { e.stopPropagation?.(); onToggleExpand(); }}
-          hitSlop={6}
-          style={styles.readMoreBtn}
-          accessibilityLabel={isExpanded ? 'Collapse summary' : 'Read more of summary'}
-        >
-          <Text style={styles.readMoreText}>{isExpanded ? 'READ LESS' : 'READ MORE'}</Text>
-        </Pressable>
-      ) : null}
-    </Pressable>
-  );
-}
-
-// ============================================================================
-// Entry row — compact preview of a saved journal entry
-// ============================================================================
-function EntryRow({ entry }: { entry: JournalEntry }) {
-  const date = new Date(entry.createdAt);
-  const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  const preview = entry.content.slice(0, 120) + (entry.content.length > 120 ? '…' : '');
-  return (
-    <View style={styles.entry}>
-      <View style={styles.entryTop}>
-        <Text style={styles.entryDate}>{dateStr}</Text>
-        <Text style={styles.entryKind}>
-          {entry.kind === 'deepdive' ? 'DEEP DIVE' : 'FREE FLOW'}
-        </Text>
-      </View>
-      {entry.prompt ? <Text style={styles.entryPrompt}>{entry.prompt}</Text> : null}
-      <Text style={styles.entryText}>{preview}</Text>
-    </View>
-  );
-}
-
-// ============================================================================
-// Write modal — full-screen writing space
-// ============================================================================
-function WriteModal({
-  kind, prompt, onClose, onSave,
-}: {
-  kind: JournalKind;
-  prompt?: string;
-  onClose: () => void;
-  onSave: (content: string) => void;
-}) {
-  const [text, setText] = useState('');
-  const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const insets = useSafeAreaInsets();
-
-  // Pulse animation for the mic button while recording.
-  const pulse = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    if (!recording) { pulse.setValue(1); return; }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.12, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1,    duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [recording, pulse]);
-
-  async function startRecord() {
-    try {
-      const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Microphone off', 'Grant mic access in Settings to dictate.');
-        return;
-      }
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      setRecording(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    } catch (e) {
-      console.warn('[journal-mic] start failed:', (e as Error).message);
-      setRecording(false);
-    }
-  }
-
-  async function stopRecordAndAppend() {
-    try {
-      await recorder.stop();
-      const uri = recorder.uri;
-      setRecording(false);
-      if (!uri) return;
-      setTranscribing(true);
-      const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
-      const transcript = await api.transcribe(uri, mime);
-      setTranscribing(false);
-      const t = (transcript || '').trim();
-      if (!t) return;
-      Haptics.selectionAsync().catch(() => {});
-      // Append to whatever the user has already typed. A space separator keeps
-      // paragraph flow natural when dictating multiple passes.
-      setText((prev) => (prev.trim() ? prev.replace(/\s+$/, '') + ' ' + t : t));
-    } catch (e) {
-      console.warn('[journal-mic] stop/transcribe failed:', (e as Error).message);
-      setRecording(false);
-      setTranscribing(false);
-    }
-  }
-
-  return (
-    <Modal visible animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <SafeAreaView style={styles.root} edges={['bottom']}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          {/* Header — paddingTop explicitly includes safe-area top inset so the
-              X and Save buttons clear the iPhone notch/Dynamic Island on every
-              device. Both tap targets are 44x44 for reliable touch. */}
-          <View style={[styles.modalHeader, { paddingTop: insets.top + 16 }]}>
-            <Pressable
-              onPress={onClose}
-              style={styles.headerBtn}
-              hitSlop={10}
-              accessibilityLabel="Close"
-            >
-              <Ionicons name="close" size={26} color={colors.creamDim} />
-            </Pressable>
-            <Text style={styles.modalTitle}>
-              {kind === 'deepdive' ? 'Deep Dive' : 'Free Flow'}
-            </Text>
-            <Pressable
-              onPress={() => onSave(text)}
-              style={styles.headerBtn}
-              hitSlop={10}
-              accessibilityLabel="Save entry"
-            >
-              <Text style={styles.saveText}>Save</Text>
-            </Pressable>
-          </View>
-
-          {prompt ? (
-            <View style={styles.promptBox}>
-              <Text style={styles.promptText}>{prompt}</Text>
-            </View>
-          ) : null}
-
-          <TextInput
-            value={text}
-            onChangeText={setText}
-            editable={!transcribing}
-            multiline
-            placeholder={kind === 'deepdive'
-              ? "Just let it come — unfiltered, uncensored…"
-              : "Type or tap the mic to speak. Whatever is present."}
-            placeholderTextColor={colors.creamFaint}
-            style={styles.textarea}
-            selectionColor={colors.amber}
-            autoFocus
-            textAlignVertical="top"
-          />
-
-          {/* Dictation mic — appends the transcript to the text area. Same
-              pipeline as Chat's ChatInput: /api/transcribe → text. No TTS,
-              no auto-send. User reviews/edits then taps Save. */}
-          {recording ? (
-            <View style={styles.recordingRow}>
-              <View style={styles.recordingDot} />
-              <Text style={styles.recordingLabel}>Recording… tap mic to finish</Text>
-            </View>
-          ) : null}
-          <View style={styles.micRow}>
-            <Pressable
-              onPress={recording ? stopRecordAndAppend : startRecord}
-              disabled={transcribing}
-              accessibilityLabel={recording ? 'Stop dictation' : 'Start voice dictation'}
-            >
-              <Animated.View
-                style={[
-                  styles.micBtn,
-                  recording && styles.micRecording,
-                  recording ? { transform: [{ scale: pulse }] } : null,
-                ]}
-              >
-                {transcribing ? (
-                  <ActivityIndicator size="small" color={colors.amber} />
-                ) : (
-                  <Ionicons
-                    name={recording ? 'stop' : 'mic'}
-                    size={20}
-                    color={recording ? '#fff' : colors.amber}
-                  />
-                )}
-              </Animated.View>
-            </Pressable>
-          </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
-// ============================================================================
-// STYLES
-// ============================================================================
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
-  scrollBody: { padding: spacing.lg, paddingBottom: spacing.xxl },
 
+  // Lock + caption header — same visual language as the old Journal tab.
   privateRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, marginTop: spacing.sm, marginBottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
   },
-  privateText: { color: colors.creamFaint, fontSize: 11, letterSpacing: 0.5 },
+  privateText: {
+    color: colors.creamFaint,
+    fontSize: 11,
+    letterSpacing: 0.5,
+  },
 
   heading: {
     color: colors.cream,
@@ -447,166 +63,24 @@ const styles = StyleSheet.create({
     fontSize: 42,
     textAlign: 'center',
     letterSpacing: 0.5,
-  },
-  subheading: {
-    color: colors.creamDim,
-    fontFamily: fonts.serifItalic,
-    fontSize: 15,
-    textAlign: 'center',
-    marginTop: 4,
     marginBottom: spacing.xl,
   },
 
-  card: {
-    backgroundColor: '#1a1612',
-    borderRadius: radii.md,
-    borderColor: 'rgba(230,180,122,0.15)',
-    borderWidth: 1,
-    padding: spacing.md,
-    marginBottom: spacing.md,
+  // Reserved-space placeholder for the eventual journaling feature.
+  // Cormorant italic, dim cream, generous padding per spec.
+  placeholderWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xxl,
+    paddingBottom: spacing.xxl * 2,
   },
-  cardLabel: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 11,
-    letterSpacing: 2,
-    marginBottom: spacing.sm,
-  },
-  cardTitle: {
-    color: colors.cream,
-    fontFamily: fonts.serif,
-    fontSize: 22, fontWeight: '500', marginBottom: 8, lineHeight: 28,
-  },
-  cardBody: {
-    color: colors.creamDim,
-    fontFamily: fonts.sans,
+  placeholderText: {
+    fontFamily: fonts.serifItalic,
     fontSize: 14,
     lineHeight: 22,
-  },
-
-  sectionLabel: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 11,
-    letterSpacing: 2,
-    marginBottom: spacing.sm,
-  },
-  searchRow: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: colors.backgroundCard, borderRadius: radii.pill,
-    borderWidth: 1, borderColor: colors.border,
-    paddingHorizontal: spacing.md, paddingVertical: 8,
-    marginBottom: spacing.md,
-  },
-  searchInput: { flex: 1, color: colors.cream, fontSize: 13 },
-
-  empty: {
-    padding: spacing.lg, alignItems: 'center',
-    borderStyle: 'dashed', borderWidth: 1, borderColor: colors.border,
-    borderRadius: radii.md, marginTop: spacing.xs,
-  },
-  emptyText: { color: colors.creamFaint, fontSize: 13, fontStyle: 'italic', textAlign: 'center' },
-
-  entry: {
-    backgroundColor: colors.backgroundCard, borderRadius: radii.md,
-    borderColor: colors.border, borderWidth: 1,
-    padding: spacing.md, marginBottom: spacing.sm,
-  },
-  entryTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  entryDate: { color: colors.amber, fontSize: 12, fontWeight: '600' },
-  entryKind: { color: colors.creamFaint, fontSize: 9, letterSpacing: 1.2 },
-  entryPrompt: { color: colors.creamDim, fontStyle: 'italic', fontSize: 13, marginBottom: 6 },
-  entryText: { color: colors.cream, fontSize: 14, lineHeight: 21 },
-  // Session card — title above the summary preview, dim placeholder when
-  // no summary exists, amber READ MORE pill underneath when truncated.
-  sessionTitle: {
-    color: colors.cream,
-    fontFamily: fonts.serifBold,
-    fontSize: 16,
-    lineHeight: 22,
-    marginBottom: 4,
-  },
-  sessionEmptyText: {
-    color: colors.creamFaint,
-    fontFamily: fonts.serifItalic,
-    fontSize: 13,
-    lineHeight: 20,
-    opacity: 0.7,
-  },
-  readMoreBtn: {
-    alignSelf: 'flex-start',
-    marginTop: 8,
-    paddingVertical: 4,
-  },
-  readMoreText: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 10,
-    letterSpacing: 1.4,
-  },
-
-  modalHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: spacing.md, paddingBottom: spacing.sm,
-    // paddingTop applied inline (insets.top + 12) so the header clears the
-    // iPhone notch/Dynamic Island regardless of device.
-    borderBottomColor: colors.border, borderBottomWidth: 1,
-  },
-  modalTitle: { color: colors.amber, fontSize: 15, fontWeight: '600', letterSpacing: 0.5 },
-  saveText: { color: colors.amber, fontSize: 15, fontWeight: '600', letterSpacing: 0.5 },
-  headerBtn: {
-    // 44x44 minimum touch target so Close/Save are reliably tappable even when
-    // the iOS status bar compresses the header on small devices.
-    width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
-  },
-
-  // Dictation mic — bottom-right of the modal, floats above the keyboard
-  // avoider so it stays tappable while the user is typing too.
-  micRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  micBtn: {
-    width: 48, height: 48, borderRadius: 24,
-    borderWidth: 1, borderColor: colors.amberDim,
-    backgroundColor: 'rgba(20,19,26,0.9)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  micRecording: {
-    backgroundColor: '#d4726a',
-    borderColor: '#d4726a',
-    shadowColor: '#d4726a', shadowOpacity: 0.6, shadowRadius: 8, shadowOffset: { width: 0, height: 0 },
-  },
-  recordingRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingTop: 4, paddingBottom: 2,
-  },
-  recordingDot: {
-    width: 8, height: 8, borderRadius: 4,
-    backgroundColor: '#d4726a',
-    shadowColor: '#d4726a', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
-  },
-  recordingLabel: {
-    color: '#d4726a', fontSize: 11, fontWeight: '600',
-    letterSpacing: 1.2, textTransform: 'uppercase',
-  },
-
-  promptBox: {
-    margin: spacing.md, padding: spacing.md,
-    backgroundColor: colors.backgroundCard, borderRadius: radii.md,
-    borderLeftWidth: 2, borderLeftColor: colors.amber,
-  },
-  promptText: {
-    color: colors.cream,
-    fontFamily: fonts.serif,
-    fontSize: 18, fontStyle: 'italic', lineHeight: 26,
-  },
-
-  textarea: {
-    flex: 1,
-    padding: spacing.md,
-    color: colors.cream, fontSize: 17, lineHeight: 26,
+    color: 'rgba(240,237,232,0.35)',
+    textAlign: 'center',
+    letterSpacing: 0.3,
   },
 });
