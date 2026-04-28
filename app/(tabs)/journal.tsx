@@ -20,20 +20,46 @@ import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { journal, JournalEntry, JournalKind } from '../../services/journal';
 import { getUserId } from '../../services/user';
 import { api } from '../../services/api';
+import { SessionDetailModal } from '../../components/session/SessionDetailModal';
+
+type SessionListItem = {
+  id: string;
+  date: string;
+  time?: string;
+  preview: string;
+  hasMap: boolean;
+  messageCount: number;
+  summaryPreview: string | null;
+  title: string | null;
+};
 
 export default function JournalScreen() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [writing, setWriting] = useState<{ kind: JournalKind; prompt?: string } | null>(null);
   const [query, setQuery] = useState('');
+  // Past chat sessions, fetched from the server. The Journal tab shows
+  // them above the local FREE FLOW + DEEP DIVE entries so saved
+  // conversations and freeform writing live in one place.
+  const [sessions, setSessions] = useState<SessionListItem[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // Per-session "read more" expansion state — the summary preview is
+  // capped at a few lines by default; tapping read more reveals the full
+  // exploredText paragraph in place.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     const userId = await getUserId();
-    const localEntries = await journal.list();
+    const [localEntries, sessionList] = await Promise.all([
+      journal.list(),
+      api.listSessions().catch(() => [] as any[]),
+    ]);
     console.log(
       '[journal] loaded local entries=', localEntries.length,
+      'sessions=', (sessionList || []).length,
       'userId=', userId.slice(0, 8),
     );
     setEntries(localEntries);
+    setSessions((sessionList || []) as SessionListItem[]);
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -94,6 +120,26 @@ export default function JournalScreen() {
           </Text>
         </Pressable>
 
+        {/* === PAST SESSIONS === */}
+        {/* Saved chat sessions — each card shows the date, the AI-generated
+            "What we explored" summary preview, and a Read more affordance
+            that expands the preview in place. Tapping the card opens the
+            full transcript modal shared with the Journey tab. */}
+        {sessions.length > 0 ? (
+          <>
+            <Text style={[styles.sectionLabel, { marginTop: spacing.xl }]}>PAST SESSIONS</Text>
+            {sessions.map((s) => (
+              <SessionCard
+                key={s.id}
+                session={s}
+                isExpanded={!!expanded[s.id]}
+                onToggleExpand={() => setExpanded((prev) => ({ ...prev, [s.id]: !prev[s.id] }))}
+                onOpen={() => setSelectedSessionId(s.id)}
+              />
+            ))}
+          </>
+        ) : null}
+
         {/* === RECENT ENTRIES === */}
         <Text style={[styles.sectionLabel, { marginTop: spacing.xl }]}>RECENT ENTRIES</Text>
         <View style={styles.searchRow}>
@@ -128,7 +174,72 @@ export default function JournalScreen() {
           onSave={handleSave}
         />
       ) : null}
+
+      {/* Full session transcript — shared with the Journey tab. The X
+          button inside SessionDetailModal already clears the iPhone notch
+          via insets.top + 16. */}
+      <SessionDetailModal
+        visible={!!selectedSessionId}
+        sessionId={selectedSessionId}
+        onClose={() => setSelectedSessionId(null)}
+      />
     </SafeAreaView>
+  );
+}
+
+// ============================================================================
+// SessionCard — past chat session preview row
+// ============================================================================
+//
+// Renders the date + AI-generated "What we explored" summary preview. If
+// the summary is long, only the first ~3 lines show until the user taps
+// "Read more"; tapping the card itself opens the full transcript modal.
+// When no summary exists yet (older sessions / soft fallback) we fall back
+// to the message-count + a quiet placeholder line.
+function SessionCard({
+  session, isExpanded, onToggleExpand, onOpen,
+}: {
+  session: SessionListItem;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onOpen: () => void;
+}) {
+  const date = new Date(session.date);
+  const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const hasSummary = !!(session.summaryPreview && session.summaryPreview.trim());
+  const willTruncate = hasSummary && (session.summaryPreview as string).length > 180 && !isExpanded;
+  const previewText = hasSummary
+    ? (willTruncate
+        ? (session.summaryPreview as string).slice(0, 180).trimEnd() + '…'
+        : (session.summaryPreview as string))
+    : 'No summary saved for this session yet.';
+  return (
+    <Pressable
+      style={styles.entry}
+      onPress={() => { Haptics.selectionAsync().catch(() => {}); onOpen(); }}
+      accessibilityLabel={`Open session from ${dateStr}`}
+    >
+      <View style={styles.entryTop}>
+        <Text style={styles.entryDate}>{dateStr}</Text>
+        <Text style={styles.entryKind}>SESSION</Text>
+      </View>
+      {session.title ? (
+        <Text style={styles.sessionTitle} numberOfLines={2}>{session.title}</Text>
+      ) : null}
+      <Text style={hasSummary ? styles.entryText : styles.sessionEmptyText}>
+        {previewText}
+      </Text>
+      {hasSummary && (session.summaryPreview as string).length > 180 ? (
+        <Pressable
+          onPress={(e) => { e.stopPropagation?.(); onToggleExpand(); }}
+          hitSlop={6}
+          style={styles.readMoreBtn}
+          accessibilityLabel={isExpanded ? 'Collapse summary' : 'Read more of summary'}
+        >
+          <Text style={styles.readMoreText}>{isExpanded ? 'READ LESS' : 'READ MORE'}</Text>
+        </Pressable>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -406,6 +517,33 @@ const styles = StyleSheet.create({
   entryKind: { color: colors.creamFaint, fontSize: 9, letterSpacing: 1.2 },
   entryPrompt: { color: colors.creamDim, fontStyle: 'italic', fontSize: 13, marginBottom: 6 },
   entryText: { color: colors.cream, fontSize: 14, lineHeight: 21 },
+  // Session card — title above the summary preview, dim placeholder when
+  // no summary exists, amber READ MORE pill underneath when truncated.
+  sessionTitle: {
+    color: colors.cream,
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    lineHeight: 22,
+    marginBottom: 4,
+  },
+  sessionEmptyText: {
+    color: colors.creamFaint,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    lineHeight: 20,
+    opacity: 0.7,
+  },
+  readMoreBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingVertical: 4,
+  },
+  readMoreText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 10,
+    letterSpacing: 1.4,
+  },
 
   modalHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

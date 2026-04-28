@@ -10,10 +10,15 @@ import type { GuideSlide as SlideData } from '../../utils/guideContent';
 export function GuideSlide({ data, width }: { data: SlideData; width: number }) {
   const { height } = useWindowDimensions();
   const visualSize = Math.min(width * 0.5, height * 0.32);
+  // The Guide closing slide is laid out distinctly: no title, the body
+  // sits in larger centered Cormorant with generous spacing so the words
+  // land as their own moment. Detected by visual kind so the slide data
+  // remains a plain GuideSlide.
+  const isClosing = data.visual === 'triangleToCircle';
   return (
     <ScrollView
       style={{ width }}
-      contentContainerStyle={styles.container}
+      contentContainerStyle={[styles.container, isClosing && styles.closingContainer]}
       showsVerticalScrollIndicator={false}
     >
       {/* 'noVisual' slides render no canvas — just a slim spacer so the
@@ -23,16 +28,21 @@ export function GuideSlide({ data, width }: { data: SlideData; width: number }) 
       {data.visual === 'noVisual' ? (
         <View style={{ height: 60 }} />
       ) : (
-        <View style={styles.visualWrap}>
-          <GuideNodeVisual kind={data.visual} size={visualSize} />
+        <View style={[styles.visualWrap, isClosing && styles.closingVisualWrap]}>
+          <GuideNodeVisual
+            kind={data.visual}
+            size={isClosing ? Math.min(width * 0.7, height * 0.4) : visualSize}
+          />
         </View>
       )}
-      <Text style={[styles.title, data.titleColor ? { color: data.titleColor } : null]}>
-        {data.title}
-      </Text>
-      <View style={styles.body}>
+      {data.title ? (
+        <Text style={[styles.title, data.titleColor ? { color: data.titleColor } : null]}>
+          {data.title}
+        </Text>
+      ) : null}
+      <View style={[styles.body, isClosing && styles.closingBody]}>
         {data.body.map((para, i) => (
-          <Text key={i} style={styles.para}>
+          <Text key={i} style={isClosing ? styles.closingPara : styles.para}>
             {para}
           </Text>
         ))}
@@ -69,5 +79,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 24,
     marginBottom: spacing.sm,
+  },
+
+  // Closing slide — generous vertical breathing room so the morphing
+  // visual + the words feel like an arrival rather than another slide.
+  closingContainer: {
+    paddingTop: spacing.xxl,
+    paddingBottom: spacing.xxl,
+    justifyContent: 'center',
+    minHeight: '100%',
+  },
+  closingVisualWrap: {
+    marginTop: spacing.xl,
+    marginBottom: spacing.xxl,
+  },
+  closingBody: { width: '100%', maxWidth: 480, alignItems: 'center' },
+  // Cormorant 20px, cream, centered, generous line height per spec.
+  closingPara: {
+    color: colors.cream,
+    fontFamily: fonts.serif,
+    fontSize: 20,
+    lineHeight: 32,
+    textAlign: 'center',
+    letterSpacing: 0.3,
+    marginBottom: 6,
   },
 });

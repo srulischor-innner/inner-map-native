@@ -33,6 +33,7 @@ export type NodeVisualKind =
   | 'buildingCapacity'     // the band is raised by a base of life-elements lighting up
   | 'twoTracks'            // two vertical lines growing upward, finding their own paths
   | 'energyMoves'          // soft amber wave traveling left-to-right through a contained space
+  | 'triangleToCircle'     // closing visual — triangle with three colored nodes morphs into a unified circle
   | 'noVisual';            // no canvas — text-only slides
 
 export type GuideSlide = {
@@ -315,6 +316,20 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "The wound changed you. It revealed depths that wouldn't have existed without the breaking. The fixer's extraordinary drive, the skeptic's hard-won wisdom, the sensitivity that comes from having felt things deeply — none of that disappears. It transforms.",
       "What you're moving toward has never existed before. Not a restoration of something lost — a creation of something new. A version of yourself that is both shaped by everything you've been through AND no longer limited by it.",
       "This is why the work is worth doing. Not to undo your history. To become what your history was always pointing toward.",
+    ],
+  },
+  // Closing slide — the last thing a user sees in the entire Guide tab.
+  // No header. The words land on their own; the triangle slowly becomes
+  // a circle behind them, looping continuously. Felt sense over content.
+  {
+    visual: 'triangleToCircle',
+    title: '',
+    body: [
+      'You are not broken.',
+      'You are compressed.',
+      'What you are has always been there —',
+      'waiting for the parts to stop fighting',
+      'long enough to let it through.',
     ],
   },
 ];

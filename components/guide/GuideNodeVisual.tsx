@@ -53,10 +53,108 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'buildingCapacity'     ? <BuildingCapacity W={W} H={H} /> : null}
       {kind === 'twoTracks'            ? <TwoTracks W={W} H={H} /> : null}
       {kind === 'energyMoves'          ? <EnergyMoves W={W} H={H} /> : null}
+      {kind === 'triangleToCircle'     ? <TriangleToCircle W={W} H={H} /> : null}
       {/* 'noVisual' renders nothing inside the canvas. GuideSlide skips
           the Canvas wrapper entirely for this kind so a tiny placeholder
           spacer is shown instead — see GuideSlide.tsx. */}
     </Canvas>
+  );
+}
+
+// =============================================================================
+// CLOSING — triangle slowly morphs into a unified circle.
+// Three colored nodes (wound red, fixer amber, skeptic blue) start at the
+// triangle's vertices and migrate into positions on a single circle. As
+// they move, their hard edges soften and their colors blend where they
+// meet. Self at the center brightens last and steadiest. The whole loop
+// is ~7s — slow on purpose. Felt sense over content.
+// =============================================================================
+function TriangleToCircle({ W, H }: { W: number; H: number }) {
+  const cx = W / 2;
+  const cy = H / 2;
+  const R = Math.min(W, H) * 0.32;
+
+  // Single 0..1 progress that drives the morph. We hold at full circle
+  // briefly before re-running so the arrival is felt, not blurred past.
+  const p = useSharedValue(0);
+  useEffect(() => {
+    p.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 4000, easing: Easing.inOut(Easing.cubic) }),
+        withTiming(1, { duration: 1500 }), // hold at the circle
+        withTiming(0, { duration: 1500, easing: Easing.inOut(Easing.cubic) }),
+      ),
+      -1, false,
+    );
+  }, [p]);
+
+  // Triangle anchor positions (0=top, then bottom-right, bottom-left going
+  // clockwise to match the map's triangle).
+  const triTop = { x: cx,                  y: cy - R };
+  const triBR  = { x: cx + R * Math.sin(Math.PI * 2 / 3), y: cy - R * Math.cos(Math.PI * 2 / 3) };
+  const triBL  = { x: cx - R * Math.sin(Math.PI * 2 / 3), y: cy - R * Math.cos(Math.PI * 2 / 3) };
+  // Circle anchor positions — same three angles but with progress shifting
+  // them onto a more even ring (still 0/120/240).
+  function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
+
+  // The three node positions interpolate from triangle to circle. In this
+  // design the angles are already evenly spaced for both shapes, so the
+  // morph is mostly a softening of the connecting lines + a brightening
+  // of self — but we still drive the radii so they breathe slightly.
+  const woundX = useDerivedValue(() => lerp(triTop.x, cx + R * Math.cos(-Math.PI / 2),       p.value), [p]);
+  const woundY = useDerivedValue(() => lerp(triTop.y, cy + R * Math.sin(-Math.PI / 2),       p.value), [p]);
+  const fixerX = useDerivedValue(() => lerp(triBR.x,  cx + R * Math.cos(Math.PI / 6),        p.value), [p]);
+  const fixerY = useDerivedValue(() => lerp(triBR.y,  cy + R * Math.sin(Math.PI / 6),        p.value), [p]);
+  const skepX  = useDerivedValue(() => lerp(triBL.x,  cx + R * Math.cos(Math.PI - Math.PI / 6), p.value), [p]);
+  const skepY  = useDerivedValue(() => lerp(triBL.y,  cy + R * Math.sin(Math.PI - Math.PI / 6), p.value), [p]);
+
+  // Triangle leg opacity fades to 0 as the unified circle ring fades in.
+  const legOpacity   = useDerivedValue(() => 0.45 * (1 - p.value), [p]);
+  const ringOpacity  = useDerivedValue(() => 0.35 * p.value, [p]);
+  // Self brightens last + steadiest — only really lights up after the
+  // morph is mostly complete.
+  const selfOpacity  = useDerivedValue(() => 0.2 + 0.7 * Math.max(0, p.value - 0.4) / 0.6, [p]);
+  const selfHaloR    = useDerivedValue(() => R * (0.18 + 0.05 * p.value), [p]);
+  // Node radii grow gently as they soften — softening communicated via
+  // a glowing halo rather than a hard outline.
+  const nodeR        = useDerivedValue(() => R * (0.13 + 0.04 * p.value), [p]);
+  const nodeHaloR    = useDerivedValue(() => R * (0.22 + 0.10 * p.value), [p]);
+
+  return (
+    <Group>
+      {/* Triangle legs — fade out as the circle takes over. Three explicit
+          lines connecting the (animated) node positions. */}
+      <Line p1={vec(triTop.x, triTop.y)} p2={vec(triBR.x, triBR.y)} color={'#E6B47A'} strokeWidth={1} opacity={legOpacity} />
+      <Line p1={vec(triBR.x, triBR.y)}   p2={vec(triBL.x, triBL.y)} color={'#E6B47A'} strokeWidth={1} opacity={legOpacity} />
+      <Line p1={vec(triBL.x, triBL.y)}   p2={vec(triTop.x, triTop.y)} color={'#E6B47A'} strokeWidth={1} opacity={legOpacity} />
+
+      {/* Unified perimeter circle — fades in as the triangle dissolves. */}
+      <Circle cx={cx} cy={cy} r={R} color={'rgba(255,255,255,0.5)'} style={'stroke'} strokeWidth={0.8} opacity={ringOpacity} />
+
+      {/* Wound — red */}
+      <Circle cx={woundX} cy={woundY} r={nodeHaloR} opacity={0.45}>
+        <RadialGradient c={vec(triTop.x, triTop.y)} r={R * 0.32} colors={['#FF555588', '#FF555500']} />
+      </Circle>
+      <Circle cx={woundX} cy={woundY} r={nodeR} color={'#FF5555'} opacity={0.95} />
+
+      {/* Fixer — amber */}
+      <Circle cx={fixerX} cy={fixerY} r={nodeHaloR} opacity={0.45}>
+        <RadialGradient c={vec(triBR.x, triBR.y)} r={R * 0.32} colors={['#F0C07088', '#F0C07000']} />
+      </Circle>
+      <Circle cx={fixerX} cy={fixerY} r={nodeR} color={'#F0C070'} opacity={0.95} />
+
+      {/* Skeptic — blue */}
+      <Circle cx={skepX} cy={skepY} r={nodeHaloR} opacity={0.45}>
+        <RadialGradient c={vec(triBL.x, triBL.y)} r={R * 0.32} colors={['#90C8E888', '#90C8E800']} />
+      </Circle>
+      <Circle cx={skepX} cy={skepY} r={nodeR} color={'#90C8E8'} opacity={0.95} />
+
+      {/* Self at center — brightens last and steadiest. */}
+      <Circle cx={cx} cy={cy} r={selfHaloR} opacity={selfOpacity}>
+        <RadialGradient c={vec(cx, cy)} r={R * 0.3} colors={[colors.self + 'CC', colors.self + '00']} />
+      </Circle>
+      <Circle cx={cx} cy={cy} r={R * 0.06} color={colors.self} opacity={selfOpacity} />
+    </Group>
   );
 }
 
