@@ -227,8 +227,11 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     >
       <SafeAreaView style={styles.root} edges={['bottom']}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+          // iOS handles 'padding' natively for full-screen Modals. On
+          // Android we fall back to 'height' in case windowSoftInputMode
+          // isn't set to adjustResize on a particular build.
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={0}
           style={styles.flex}
         >
           {/* Top bar — close (X) on the left, Save on the right. */}

@@ -16,8 +16,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, ScrollView, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Animated, Easing,
-  PanResponder, Alert,
+  Platform, ActivityIndicator, Animated, Easing,
+  PanResponder, Alert, Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -63,6 +63,22 @@ export function GuideAskModal({ visible, onClose }: Props) {
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
   const dotPulse = useRef(new Animated.Value(1)).current;
+
+  // Track the keyboard height so the bottom sheet can lift above it. We
+  // do this manually instead of relying on KeyboardAvoidingView because
+  // KAV plays poorly with transparent slide-up Modals on iOS — the
+  // modal's overlay sits BELOW the keyboard region by default and the
+  // keyboard ends up covering the input bar at the bottom of the sheet.
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKbHeight(e.endCoordinates?.height || 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
   // Reset state every time the modal becomes visible. Conversation never
   // persists across dismiss — keeps the surface educational and stateless.
@@ -212,6 +228,17 @@ export function GuideAskModal({ visible, onClose }: Props) {
   const showStarters = turns.length === 0 && !loading;
   const canSend = input.trim().length > 0 && !loading && !recording;
 
+  // Auto-scroll to the bottom whenever the message list grows OR the
+  // loading/transcribing indicators appear/disappear. The 100ms delay
+  // gives the new bubble time to render into the layout before we
+  // measure-and-scroll.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+    return () => clearTimeout(t);
+  }, [turns.length, loading, transcribing, kbHeight]);
+
   return (
     <Modal
       visible={visible}
@@ -227,7 +254,12 @@ export function GuideAskModal({ visible, onClose }: Props) {
         <Animated.View
           style={[
             styles.sheet,
-            { paddingBottom: Math.max(insets.bottom, 12) },
+            // Lift the sheet by the keyboard height when it's open so the
+            // input bar stays visible above the keyboard. When the
+            // keyboard is closed we restore the safe-area bottom padding.
+            kbHeight > 0
+              ? { marginBottom: kbHeight, paddingBottom: 12 }
+              : { paddingBottom: Math.max(insets.bottom, 12) },
             { transform: [{ translateY: dismissTranslate }] },
           ]}
         >
@@ -244,16 +276,20 @@ export function GuideAskModal({ visible, onClose }: Props) {
             </Text>
           </View>
 
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
-            style={styles.flex}
-          >
+          {/* Inner content. The sheet's marginBottom (driven by the
+              keyboard listener above) lifts the whole sheet — so the
+              ScrollView simply fills the remaining sheet height. */}
+          <View style={styles.flex}>
             <ScrollView
               ref={scrollRef}
               style={styles.flex}
               contentContainerStyle={styles.scrollContent}
               keyboardShouldPersistTaps="handled"
+              onContentSizeChange={() => {
+                // Belt-and-braces — also scroll on content-size growth so a
+                // wrapping long bubble doesn't leave its tail offscreen.
+                scrollRef.current?.scrollToEnd({ animated: true });
+              }}
             >
               <AIBubble text={OPENING_MESSAGE} opening />
 
@@ -334,7 +370,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
                 </Pressable>
               )}
             </View>
-          </KeyboardAvoidingView>
+          </View>
         </Animated.View>
       </View>
     </Modal>
@@ -370,7 +406,12 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    height: '75%',
+    // maxHeight (not fixed height) so the keyboard listener can lift the
+    // sheet via marginBottom without the layout fighting with a hard
+    // height value. minHeight keeps the sheet substantial when the
+    // keyboard is closed and the conversation is short.
+    maxHeight: '75%',
+    minHeight: '55%',
     backgroundColor: '#14131A',
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
@@ -411,6 +452,7 @@ const styles = StyleSheet.create({
   },
 
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.lg,
