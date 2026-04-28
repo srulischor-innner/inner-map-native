@@ -4,22 +4,27 @@
 // save), now reachable from anywhere in the Guide tab without
 // interrupting the slide experience.
 //
+// SNAP-BASED RESIZE — the sheet has three positions the user drags
+// between: collapsed (drag handle peeking), half (50% screen, the
+// default open state), and full (90% screen for longer reads). Drag
+// the handle, fling vertically, or tap the dim backdrop / drag handle
+// to snap. Conversation is preserved across collapse/expand; only the
+// X button fully dismisses (that's the moment we wipe state).
+//
 // Voice notes: WhatsApp-style press-and-hold on the mic. Release →
 // /api/transcribe → the transcript is sent as a regular text message
 // (no audio bubble — keep it simple per the design brief).
-//
-// Conversation lives in component state and resets each time the modal
-// is fully dismissed (parent passes a `key` change on close, or the
-// component clears state on visible→true transition — we use the
-// latter so the parent doesn't need to know).
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, ScrollView, StyleSheet,
-  Platform, Animated, Easing,
-  PanResponder, Alert, Keyboard,
+  Platform, KeyboardAvoidingView, Dimensions, Alert,
 } from 'react-native';
-import { TypingIndicator } from '../TypingIndicator';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue, useAnimatedStyle,
+  withSpring, withRepeat, withTiming, Easing,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -27,8 +32,19 @@ import {
   useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync,
 } from 'expo-audio';
 
+import { TypingIndicator } from '../TypingIndicator';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api, ChatMessage } from '../../services/api';
+
+// Three snap positions for the resizable sheet. translateY is the
+// vertical offset of the sheet's TOP edge; the sheet itself is
+// full-screen tall so the bottom always reaches the screen bottom.
+// Smaller value = sheet covers more of the screen.
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const SNAP_FULL = SCREEN_HEIGHT * 0.10;       // ~90% visible
+const SNAP_HALF = SCREEN_HEIGHT * 0.50;       // 50% visible (default)
+const SNAP_COLLAPSED = SCREEN_HEIGHT * 0.88;  // ~12% visible — drag handle peeking
+const SPRING = { damping: 20 } as const;
 
 const OPENING_MESSAGE =
   "Curious about something you read? Ask me anything — about the framework, how it works, what any of it means. There are no wrong questions here. We can stay simple or go as deep as you want.";
@@ -63,85 +79,103 @@ export function GuideAskModal({ visible, onClose }: Props) {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
-  const dotPulse = useRef(new Animated.Value(1)).current;
 
-  // Track the keyboard height so the bottom sheet can lift above it. We
-  // do this manually instead of relying on KeyboardAvoidingView because
-  // KAV plays poorly with transparent slide-up Modals on iOS — the
-  // modal's overlay sits BELOW the keyboard region by default and the
-  // keyboard ends up covering the input bar at the bottom of the sheet.
-  const [kbHeight, setKbHeight] = useState(0);
+  // Reanimated red-dot pulse during voice recording.
+  const dotScale = useSharedValue(1);
   useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvent, (e) => {
-      setKbHeight(e.endCoordinates?.height || 0);
-    });
-    const hideSub = Keyboard.addListener(hideEvent, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+    if (recording) {
+      dotScale.value = withRepeat(
+        withTiming(1.2, { duration: 600, easing: Easing.inOut(Easing.ease) }),
+        -1, true,
+      );
+    } else {
+      dotScale.value = withTiming(1, { duration: 200 });
+    }
+  }, [recording, dotScale]);
+  const dotStyle = useAnimatedStyle(() => ({ transform: [{ scale: dotScale.value }] }));
 
-  // Reset state every time the modal becomes visible. Conversation never
-  // persists across dismiss — keeps the surface educational and stateless.
+  // Sheet translateY — driven by gesture and snap target.
+  const translateY = useSharedValue(SNAP_HALF);
+
+  // When the modal opens fresh (visible flips false→true), reset to half
+  // and wipe the conversation. While the user just collapses the sheet
+  // the modal stays mounted (visible stays true), so this effect doesn't
+  // run and the conversation is preserved.
   useEffect(() => {
-    if (!visible) return;
-    setTurns([]);
-    setInput('');
-    setLoading(false);
-    setRecording(false);
-    setTranscribing(false);
-    setSeconds(0);
-    idRef.current = 0;
+    if (visible) {
+      translateY.value = withSpring(SNAP_HALF, SPRING);
+      setTurns([]);
+      setInput('');
+      setLoading(false);
+      setRecording(false);
+      setTranscribing(false);
+      setSeconds(0);
+      idRef.current = 0;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   // Cleanup timers on unmount.
-  useEffect(() => () => {
-    if (tickRef.current) clearInterval(tickRef.current);
-  }, []);
+  useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current); }, []);
 
-  // Red dot pulse during recording.
-  useEffect(() => {
-    if (!recording) { dotPulse.setValue(1); return; }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(dotPulse, { toValue: 1.2, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(dotPulse, { toValue: 1.0, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [recording, dotPulse]);
+  function snapTo(target: number) {
+    Haptics.selectionAsync().catch(() => {});
+    translateY.value = withSpring(target, SPRING);
+  }
 
-  // Swipe-down-to-dismiss gesture on the drag handle area.
-  const dismissTranslate = useRef(new Animated.Value(0)).current;
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_e, g) => g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx),
-      onPanResponderMove: (_e, g) => {
-        if (g.dy > 0) dismissTranslate.setValue(g.dy);
-      },
-      onPanResponderRelease: (_e, g) => {
-        if (g.dy > 80) {
-          Haptics.selectionAsync().catch(() => {});
-          onClose();
-          // Reset for next open.
-          dismissTranslate.setValue(0);
-        } else {
-          Animated.spring(dismissTranslate, { toValue: 0, useNativeDriver: true, friction: 8 }).start();
-        }
-      },
-      onPanResponderTerminate: () => {
-        Animated.spring(dismissTranslate, { toValue: 0, useNativeDriver: true, friction: 8 }).start();
-      },
-    }),
-  ).current;
+  // Pan gesture on the drag handle area — drag the sheet to a new
+  // height. On release, snap to the nearest of full/half/collapsed,
+  // honoring fling velocity. Uses the modern Gesture.Pan() API
+  // (Reanimated v4 dropped useAnimatedGestureHandler).
+  const startY = useSharedValue(SNAP_HALF);
+  const panGesture = Gesture.Pan()
+    .onStart(() => {
+      'worklet';
+      startY.value = translateY.value;
+    })
+    .onUpdate((event) => {
+      'worklet';
+      const y = startY.value + event.translationY;
+      // Clamp between full and collapsed so the user can't drag the
+      // sheet off-screen in either direction.
+      translateY.value = Math.max(SNAP_FULL, Math.min(SNAP_COLLAPSED, y));
+    })
+    .onEnd((event) => {
+      'worklet';
+      const v = event.velocityY;
+      const cur = translateY.value;
+      if (v > 500) {
+        // Fast swipe down — snap one step toward collapsed.
+        translateY.value = cur > SNAP_HALF
+          ? withSpring(SNAP_COLLAPSED, SPRING)
+          : withSpring(SNAP_HALF, SPRING);
+      } else if (v < -500) {
+        // Fast swipe up — snap one step toward full.
+        translateY.value = cur < SNAP_HALF
+          ? withSpring(SNAP_FULL, SPRING)
+          : withSpring(SNAP_HALF, SPRING);
+      } else {
+        // Slow release — snap to nearest of the three positions.
+        const dC = Math.abs(cur - SNAP_COLLAPSED);
+        const dH = Math.abs(cur - SNAP_HALF);
+        const dF = Math.abs(cur - SNAP_FULL);
+        const min = Math.min(dC, dH, dF);
+        if (min === dF) translateY.value = withSpring(SNAP_FULL, SPRING);
+        else if (min === dH) translateY.value = withSpring(SNAP_HALF, SPRING);
+        else translateY.value = withSpring(SNAP_COLLAPSED, SPRING);
+      }
+    });
 
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  // ───── chat send ─────
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
     Haptics.selectionAsync().catch(() => {});
     const userTurn: Turn = { id: nextId(), role: 'user', text: trimmed };
-    // Append user turn + an empty assistant turn we'll stream into.
     const assistantId = nextId();
     const nextTurns: Turn[] = [
       ...turns,
@@ -158,7 +192,6 @@ export function GuideAskModal({ visible, onClose }: Props) {
     let firstChunk = true;
     api.streamGuide(apiMessages, {
       onChunk: (chunk) => {
-        // First chunk has arrived → drop the typing indicator.
         if (firstChunk) { firstChunk = false; setLoading(false); }
         setTurns((prev) => {
           const idx = prev.findIndex((t) => t.id === assistantId);
@@ -167,30 +200,19 @@ export function GuideAskModal({ visible, onClose }: Props) {
           updated[idx] = { ...updated[idx], text: updated[idx].text + chunk };
           return updated;
         });
-        // Scroll to bottom as the bubble grows. Use animated:false so the
-        // scroll itself doesn't fight with rapid chunks.
-        setTimeout(() => {
-          scrollRef.current?.scrollToEnd({ animated: false });
-        }, 30);
+        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 30);
       },
       onDone: () => {
         setLoading(false);
-        // If no chunks ever arrived, replace the empty assistant bubble
-        // with a polite error so the UI doesn't sit blank.
         setTurns((prev) => {
           const idx = prev.findIndex((t) => t.id === assistantId);
           if (idx === -1) return prev;
           const trimmedReply = prev[idx].text.trim();
-          if (trimmedReply) {
-            // Trim leading whitespace from heartbeat keep-alive spaces.
-            const updated = prev.slice();
-            updated[idx] = { ...updated[idx], text: trimmedReply };
-            return updated;
-          }
           const updated = prev.slice();
           updated[idx] = {
             ...updated[idx],
-            text: "I couldn't reach the framework guide just now — try again in a moment?",
+            text: trimmedReply ||
+              "I couldn't reach the framework guide just now — try again in a moment?",
           };
           return updated;
         });
@@ -212,7 +234,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
     });
   }, [turns, loading]);
 
-  // ---- Voice note: WhatsApp-style press-and-hold ----
+  // ───── voice note (press-and-hold mic) ─────
   async function startRecording() {
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
@@ -263,7 +285,6 @@ export function GuideAskModal({ visible, onClose }: Props) {
       const cleaned = (transcript || '').trim();
       setTranscribing(false);
       if (!cleaned) return;
-      // Send the transcript as a regular user message — no audio bubble.
       send(cleaned);
     } catch (err) {
       console.warn('[guide-ask-mic] endRecording failed:', (err as Error).message);
@@ -274,52 +295,51 @@ export function GuideAskModal({ visible, onClose }: Props) {
   const showStarters = turns.length === 0 && !loading;
   const canSend = input.trim().length > 0 && !loading && !recording;
 
-  // Auto-scroll to the bottom whenever the message list grows OR the
-  // loading/transcribing indicators appear/disappear. The 100ms delay
-  // gives the new bubble time to render into the layout before we
-  // measure-and-scroll.
+  // Auto-scroll to the bottom whenever the message list grows or the
+  // loading/transcribing indicators appear/disappear.
   useEffect(() => {
     const t = setTimeout(() => {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
     return () => clearTimeout(t);
-  }, [turns.length, loading, transcribing, kbHeight]);
+  }, [turns.length, loading, transcribing]);
 
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="none"
       transparent
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={styles.overlay}>
-        {/* Dim backdrop — purely visual, NOT tappable. The user dismisses
-            via the X button in the header or a downward swipe on the
-            drag handle so a stray tap can't blow away the conversation. */}
-        <View style={styles.backdrop} pointerEvents="none" />
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        {/* Dim backdrop — tap COLLAPSES the sheet (does not dismiss).
+            Only the X button fully closes the modal. */}
+        <Pressable
+          style={styles.backdrop}
+          onPress={() => snapTo(SNAP_COLLAPSED)}
+          accessibilityLabel="Collapse Ask sheet"
+        />
 
-        <Animated.View
-          style={[
-            styles.sheet,
-            // Lift the sheet by the keyboard height when it's open so the
-            // input bar stays visible above the keyboard. When the
-            // keyboard is closed we restore the safe-area bottom padding.
-            kbHeight > 0
-              ? { marginBottom: kbHeight, paddingBottom: 12 }
-              : { paddingBottom: Math.max(insets.bottom, 12) },
-            { transform: [{ translateY: dismissTranslate }] },
-          ]}
-        >
-          {/* Drag handle area — swipe down or tap to dismiss. */}
-          <View {...panResponder.panHandlers} style={styles.handleArea}>
-            <View style={styles.handle} />
-          </View>
+        {/* Resizable sheet — full-screen tall, translated down by
+            translateY so its top edge sits at the snap position. */}
+        <Animated.View style={[styles.sheet, sheetStyle]}>
+          {/* Drag handle area — pan gesture for resize, AND a tap
+              that springs the sheet to the half snap so a user who
+              left the sheet collapsed can re-expand with one tap. */}
+          <GestureDetector gesture={panGesture}>
+            <Animated.View>
+              <Pressable
+                style={styles.handleArea}
+                onPress={() => snapTo(SNAP_HALF)}
+                accessibilityLabel="Expand Ask sheet"
+              >
+                <View style={styles.handle} />
+              </Pressable>
+            </Animated.View>
+          </GestureDetector>
 
-          {/* Header — title + subtitle centered, with an explicit X
-              close button in the top-right so users always have a
-              tap-to-dismiss affordance (since the backdrop is no
-              longer tappable). */}
+          {/* Header — title + subtitle + X close. */}
           <View style={styles.headerWrap}>
             <Text style={styles.title}>Ask anything</Text>
             <Text style={styles.subtitle}>
@@ -335,18 +355,22 @@ export function GuideAskModal({ visible, onClose }: Props) {
             </Pressable>
           </View>
 
-          {/* Inner content. The sheet's marginBottom (driven by the
-              keyboard listener above) lifts the whole sheet — so the
-              ScrollView simply fills the remaining sheet height. */}
-          <View style={styles.flex}>
+          {/* Chat surface + input bar — KAV pushes the input above the
+              keyboard within the sheet bounds. */}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+            style={styles.flex}
+          >
             <ScrollView
               ref={scrollRef}
               style={styles.flex}
-              contentContainerStyle={styles.scrollContent}
+              contentContainerStyle={[
+                styles.scrollContent,
+                { paddingBottom: spacing.lg + Math.max(insets.bottom, 8) },
+              ]}
               keyboardShouldPersistTaps="handled"
               onContentSizeChange={() => {
-                // Belt-and-braces — also scroll on content-size growth so a
-                // wrapping long bubble doesn't leave its tail offscreen.
                 scrollRef.current?.scrollToEnd({ animated: true });
               }}
             >
@@ -386,10 +410,10 @@ export function GuideAskModal({ visible, onClose }: Props) {
             </ScrollView>
 
             {/* Input bar. */}
-            <View style={styles.inputBar}>
+            <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
               {recording ? (
                 <View style={styles.recordingPill}>
-                  <Animated.View style={[styles.recordingDot, { transform: [{ scale: dotPulse }] }]} />
+                  <Animated.View style={[styles.recordingDot, dotStyle]} />
                   <Text style={styles.recordingText}>Recording…</Text>
                   <Text style={styles.recordingTime}>{formatSecs(seconds)}</Text>
                 </View>
@@ -429,9 +453,9 @@ export function GuideAskModal({ visible, onClose }: Props) {
                 </Pressable>
               )}
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Animated.View>
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -459,46 +483,36 @@ function formatSecs(s: number): string {
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    // Dim is now applied by the absolute `backdrop` view below so the
-    // overlay itself can stay free of pointer-event quirks. The sheet
-    // anchors at the bottom via justifyContent: 'flex-end'.
-    backgroundColor: 'transparent',
-    justifyContent: 'flex-end',
-  },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
-  closeBtn: {
-    position: 'absolute',
-    top: 8,
-    right: 12,
-    width: 32, height: 32,
-    alignItems: 'center', justifyContent: 'center',
-  },
+  // Sheet is full-screen tall; translateY shifts it down so only the
+  // bottom (SCREEN_HEIGHT − translateY) portion is visible. Bottom of
+  // the sheet always reaches the bottom of the screen at every snap
+  // position.
   sheet: {
-    // maxHeight (not fixed height) so the keyboard listener can lift the
-    // sheet via marginBottom without the layout fighting with a hard
-    // height value. minHeight keeps the sheet substantial when the
-    // keyboard is closed and the conversation is short.
-    maxHeight: '75%',
-    minHeight: '55%',
-    backgroundColor: '#14131A',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: SCREEN_HEIGHT,
+    backgroundColor: '#0e0e1a',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     borderTopWidth: 0.5,
-    borderTopColor: 'rgba(230,180,122,0.35)',
+    borderColor: 'rgba(230,180,122,0.2)',
     overflow: 'hidden',
   },
   flex: { flex: 1 },
 
   // Drag handle.
-  handleArea: { paddingVertical: 10, alignItems: 'center' },
+  handleArea: { paddingVertical: 12, alignItems: 'center' },
   handle: {
-    width: 42, height: 4, borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(240,237,232,0.2)',
   },
 
   headerWrap: {
@@ -511,7 +525,7 @@ const styles = StyleSheet.create({
   title: {
     color: colors.amber,
     fontFamily: fonts.serifBold,
-    fontSize: 24,
+    fontSize: 20,
     letterSpacing: 0.4,
     textAlign: 'center',
   },
@@ -523,12 +537,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
     letterSpacing: 0.3,
   },
+  closeBtn: {
+    position: 'absolute',
+    top: 0,
+    right: 12,
+    width: 32, height: 32,
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
-    paddingBottom: spacing.lg,
     gap: spacing.md,
   },
 
@@ -608,11 +628,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingTop: spacing.sm,
     borderTopWidth: 0.5,
     borderTopColor: colors.border,
     gap: 8,
-    backgroundColor: '#14131A',
+    backgroundColor: '#0e0e1a',
   },
   input: {
     flex: 1,
