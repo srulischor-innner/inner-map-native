@@ -336,13 +336,13 @@ export default function MapScreen() {
     Animated.parallel([
       Animated.timing(triangleOpacity, {
         toValue: goingToCircle ? 0 : 1,
-        duration: 800,
+        duration: 2000,
         easing: Easing.inOut(Easing.ease),
         useNativeDriver: true,
       }),
       Animated.timing(circleOpacity, {
         toValue: goingToCircle ? 1 : 0,
-        duration: 800,
+        duration: 2000,
         easing: Easing.inOut(Easing.ease),
         useNativeDriver: true,
       }),

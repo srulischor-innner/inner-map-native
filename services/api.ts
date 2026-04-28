@@ -343,12 +343,12 @@ export const api = {
     }
   },
 
-  async speak(text: string): Promise<ArrayBuffer | null> {
+  async speak(text: string, opts?: { mapVoice?: boolean }): Promise<ArrayBuffer | null> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/speak', {
         label: 'speak', method: 'POST', headers,
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, mapVoice: !!opts?.mapVoice }),
       });
       if (!res.ok) return null;
       return await res.arrayBuffer();

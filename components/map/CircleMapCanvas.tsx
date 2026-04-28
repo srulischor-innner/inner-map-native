@@ -21,7 +21,9 @@ import {
 } from '@shopify/react-native-skia';
 import {
   useSharedValue, withRepeat, withTiming, Easing, useDerivedValue,
+  useAnimatedStyle,
 } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 import { colors, fonts } from '../../constants/theme';
 import type { NodeKey } from './InnerMapCanvas';
 
@@ -94,24 +96,59 @@ export function CircleMapCanvas({ width, height, onNodeTap }: Props) {
   // quality of the integration view. Slower than the triangle's
   // breath; reads as stillness, not motion.
   const breath = useSharedValue(0.45);
+  // Circle-arc breath — the unified perimeter slowly inhales (0.4 → 0.7
+  // over 3s) so the boundary feels alive rather than drawn-on.
+  const arcBreath = useSharedValue(0.4);
+  // Self pulse — slower, deeper than the rest. 0.6 → 1.0 over 4s. Reads
+  // as the steady center of the integrated system.
+  const selfPulse = useSharedValue(0.6);
+  // Traveling-light orbit — 0..1 over 10s, one full revolution. A single
+  // warm amber dot drifts around the perimeter as a sign that the system
+  // is in motion even at rest.
+  const orbit = useSharedValue(0);
   useEffect(() => {
     breath.value = withRepeat(
       withTiming(0.7, { duration: 4500, easing: Easing.inOut(Easing.ease) }),
       -1, true,
     );
-  }, [breath]);
+    arcBreath.value = withRepeat(
+      withTiming(0.7, { duration: 3000, easing: Easing.inOut(Easing.ease) }),
+      -1, true,
+    );
+    selfPulse.value = withRepeat(
+      withTiming(1.0, { duration: 4000, easing: Easing.inOut(Easing.ease) }),
+      -1, true,
+    );
+    orbit.value = withRepeat(
+      withTiming(1, { duration: 10000, easing: Easing.linear }),
+      -1, false,
+    );
+  }, [breath, arcBreath, selfPulse, orbit]);
   const ambientOpacity = useDerivedValue(() => breath.value, [breath]);
+  const arcOpacity = useDerivedValue(() => arcBreath.value, [arcBreath]);
+  const selfHaloOpacity = useDerivedValue(() => selfPulse.value, [selfPulse]);
+  // Slightly larger Self than the previous build; spec calls for a more
+  // present centerpiece in the integration view.
+  const selfRadius = 46;
 
-  // Self breathes very gently in radius — almost imperceptible. The point
-  // of the view is stillness; movement here is a whisper, not a pulse.
-  const selfRadius = 40;
-  const selfHaloOpacity = useDerivedValue(() => 0.45 + 0.2 * breath.value, [breath]);
+  // Traveling-light position derived from orbit progress.
+  const orbitX = useDerivedValue(
+    () => cx + radius * Math.cos(orbit.value * Math.PI * 2 - Math.PI / 2),
+    [orbit, cx, radius],
+  );
+  const orbitY = useDerivedValue(
+    () => cy + radius * Math.sin(orbit.value * Math.PI * 2 - Math.PI / 2),
+    [orbit, cy, radius],
+  );
 
-  // Helper — convert a clock hour to (x,y) on the circle.
-  function hourPos(hour: number): { x: number; y: number } {
+  // Helper — convert a clock hour to (x,y) on the circle. Labels sit JUST
+  // INSIDE the perimeter (78% of radius) so the names feel contained
+  // within the unified circle rather than floating outside it.
+  const LABEL_RADIUS_FACTOR = 0.78;
+  function hourPos(hour: number, factor = 1): { x: number; y: number } {
     // Hour 0 = 12 o'clock = -π/2 in standard math coords.
     const angle = (hour / 12) * Math.PI * 2 - Math.PI / 2;
-    return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+    return { x: cx + Math.cos(angle) * radius * factor, y: cy + Math.sin(angle) * radius * factor };
   }
 
   return (
@@ -135,16 +172,29 @@ export function CircleMapCanvas({ width, height, onNodeTap }: Props) {
         </Group>
 
         {/* Faint perimeter arc — a unified circle binding all positions.
-            One stroked circle, very low alpha. Replaces the triangle's
-            three structural lines. */}
-        <Circle
-          cx={cx}
-          cy={cy}
-          r={radius}
-          color="rgba(255,255,255,0.08)"
-          style="stroke"
-          strokeWidth={1}
-        />
+            Opacity breathes 0.4 → 0.7 over 3s so the boundary feels alive,
+            not drawn-on. Replaces the triangle's three structural lines. */}
+        <Group opacity={arcOpacity}>
+          <Circle
+            cx={cx}
+            cy={cy}
+            r={radius}
+            color="rgba(255,255,255,0.18)"
+            style="stroke"
+            strokeWidth={1}
+          />
+        </Group>
+
+        {/* Traveling amber light — a tiny radial-gradient dot orbits the
+            perimeter once every 10s. Subtle: reads as light moving along
+            the edge of something alive, not a UI indicator. */}
+        <Circle cx={orbitX} cy={orbitY} r={10}>
+          <RadialGradient
+            c={vec(0, 0)}
+            r={10}
+            colors={['rgba(230,180,122,0.9)', 'rgba(230,180,122,0.35)', 'rgba(230,180,122,0)']}
+          />
+        </Circle>
 
         {/* Self at center — a steady glowing presence. Larger than the
             triangle view's Self. Soft halo + a thin lavender ring; no
@@ -167,11 +217,12 @@ export function CircleMapCanvas({ width, height, onNodeTap }: Props) {
         <Circle cx={cx} cy={cy} r={selfRadius * 0.55} color={colors.self + '40'} style="fill" />
       </Canvas>
 
-      {/* Floating part-name labels around the circle. Rendered as RN <Text>
-          overlays so they can use Cormorant Garamond Italic + a soft text
-          shadow. Each is tappable via a Pressable wrapping it; 44x44 min. */}
-      {(Object.keys(HOUR) as Array<Exclude<IntegrationKey, 'self'>>).map((k) => {
-        const pos = hourPos(HOUR[k]);
+      {/* Floating part-name labels JUST INSIDE the perimeter (78% radius).
+          Each label gently pulses 0.6 → 0.9 in its own color over 2.5s,
+          offset by 0.4s per node so they don't all pulse together — the
+          ring reads as a chorus, not a metronome. */}
+      {(Object.keys(HOUR) as Array<Exclude<IntegrationKey, 'self'>>).map((k, i) => {
+        const pos = hourPos(HOUR[k], LABEL_RADIUS_FACTOR);
         return (
           <NameLabel
             key={k}
@@ -180,6 +231,7 @@ export function CircleMapCanvas({ width, height, onNodeTap }: Props) {
             label={LABEL[k]}
             color={COLOR_FOR[k]}
             onPress={() => onNodeTap?.(k)}
+            phaseOffsetMs={i * 400}
           />
         );
       })}
@@ -197,13 +249,26 @@ export function CircleMapCanvas({ width, height, onNodeTap }: Props) {
 }
 
 function NameLabel({
-  x, y, label, color, onPress, center,
+  x, y, label, color, onPress, center, phaseOffsetMs = 0,
 }: {
   x: number; y: number; label: string; color: string;
-  onPress?: () => void; center?: boolean;
+  onPress?: () => void; center?: boolean; phaseOffsetMs?: number;
 }) {
   const W = 120;            // tap-target width
   const H = 44;             // tap-target height (≥44 per HIG)
+  // Per-label opacity pulse 0.6 ↔ 0.9 / 2.5s, started after a per-node
+  // phaseOffsetMs delay so the ring of names doesn't beat in unison.
+  const pulse = useSharedValue(0.6);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      pulse.value = withRepeat(
+        withTiming(0.9, { duration: 2500, easing: Easing.inOut(Easing.ease) }),
+        -1, true,
+      );
+    }, phaseOffsetMs);
+    return () => clearTimeout(t);
+  }, [pulse, phaseOffsetMs]);
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
   return (
     <Pressable
       onPress={onPress}
@@ -214,7 +279,7 @@ function NameLabel({
         { left: x - W / 2, top: y - H / 2, width: W, height: H },
       ]}
     >
-      <Text
+      <Animated.Text
         allowFontScaling={false}
         style={[
           styles.labelText,
@@ -222,11 +287,12 @@ function NameLabel({
           // Self's label sits on top of its glow; bump font slightly so
           // it reads as the visual centerpiece without crowding.
           center ? styles.labelTextCenter : null,
+          animatedStyle,
         ]}
         numberOfLines={1}
       >
         {label}
-      </Text>
+      </Animated.Text>
     </Pressable>
   );
 }

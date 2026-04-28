@@ -15,7 +15,7 @@
 
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, Linking, Alert,
+  View, Text, Pressable, ScrollView, StyleSheet, Linking, Alert, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,6 +29,9 @@ import {
   useExperienceLevel, loadExperienceLevel, setExperienceLevel,
   LEVEL_LABELS, ExperienceLevel,
 } from '../services/experienceLevel';
+import {
+  biometricsAvailable, isLockEnabled, setLockEnabled,
+} from '../services/biometrics';
 
 const SUPPORT_EMAIL = 'innermapapp@gmail.com';
 
@@ -36,11 +39,27 @@ export default function SettingsScreen() {
   const router = useRouter();
   const level = useExperienceLevel();
   const [userId, setUserId] = useState<string>('');
+  // App Lock toggle visibility is gated on biometric capability — if the
+  // device has no Face ID / Touch ID the toggle is hidden entirely so we
+  // never offer a setting that does nothing.
+  const [bioAvailable, setBioAvailable] = useState<boolean>(false);
+  const [lockOn, setLockOn] = useState<boolean>(false);
 
   useEffect(() => {
     loadExperienceLevel().catch(() => {});
     getUserId().then(setUserId).catch(() => {});
+    (async () => {
+      const ok = await biometricsAvailable();
+      setBioAvailable(ok);
+      if (ok) setLockOn(await isLockEnabled());
+    })();
   }, []);
+
+  async function toggleLock(next: boolean) {
+    Haptics.selectionAsync().catch(() => {});
+    setLockOn(next);
+    await setLockEnabled(next);
+  }
 
   const version = (Constants.expoConfig?.version || '1.0.0');
 
@@ -96,6 +115,23 @@ export default function SettingsScreen() {
 
         {/* ===== PRIVACY ===== */}
         <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>PRIVACY</Text>
+        {bioAvailable ? (
+          <View style={[styles.row, { marginBottom: spacing.sm }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>App Lock</Text>
+              <Text style={styles.rowSub}>
+                Require Face ID to open Inner Map. Your conversations are private.
+              </Text>
+            </View>
+            <Switch
+              value={lockOn}
+              onValueChange={toggleLock}
+              trackColor={{ false: '#3A3340', true: 'rgba(230,180,122,0.45)' }}
+              thumbColor={lockOn ? colors.amber : '#bdb6c8'}
+              ios_backgroundColor="#3A3340"
+            />
+          </View>
+        ) : null}
         <Pressable onPress={() => router.push('/privacy')} style={styles.linkRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowTitle}>Privacy policy</Text>

@@ -661,6 +661,7 @@ export default function ChatScreen() {
         visible={summaryVisible}
         summary={summary}
         failed={summaryFailed}
+        messages={messages.map((m) => ({ role: m.role, text: m.text }))}
         onContinue={async () => {
           // Hide the modal first so the dismiss animation overlaps with
           // the messages-fade-back-in. Then run the captured continuation

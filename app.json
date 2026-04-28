@@ -21,9 +21,9 @@
         "NSMicrophoneUsageDescription": "Inner Map uses the microphone for voice notes and voice conversations.",
         "NSSpeechRecognitionUsageDescription": "Inner Map uses speech recognition to transcribe your voice notes.",
         "UIBackgroundModes": [
-          "audio",
           "audio"
         ],
+        "NSFaceIDUsageDescription": "Inner Map uses Face ID to keep your conversations private.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },
@@ -50,7 +50,8 @@
       "expo-router",
       "expo-secure-store",
       "expo-font",
-      "expo-asset"
+      "expo-asset",
+      "expo-local-authentication"
     ],
     "extra": {
       "apiBaseUrl": "https://inner-map-production.up.railway.app",

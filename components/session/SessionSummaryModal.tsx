@@ -16,6 +16,7 @@ import {
   Modal, View, Text, Pressable, ScrollView, StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { Canvas, Path, Skia, Group } from '@shopify/react-native-skia';
 import {
   useSharedValue, withRepeat, withTiming, Easing, useDerivedValue,
@@ -23,6 +24,7 @@ import {
 import * as Haptics from 'expo-haptics';
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
+import { buildSessionExport, shareSessionText, ExportMessage } from '../../utils/sessionExport';
 
 export type SessionSummary = {
   exploredText: string;
@@ -38,11 +40,14 @@ type Props = {
   /** Set true if the fetch failed entirely (transport / 500). The screen
    *  shows a warm fallback line in place of the three sections. */
   failed?: boolean;
+  /** Marker-stripped transcript for the share-export action. Optional —
+   *  if absent the share button still works but only includes the summary. */
+  messages?: ExportMessage[];
   /** Fires when the user taps "Begin New Session". */
   onContinue: () => void;
 };
 
-export function SessionSummaryModal({ visible, summary, failed, onContinue }: Props) {
+export function SessionSummaryModal({ visible, summary, failed, messages, onContinue }: Props) {
   const insets = useSafeAreaInsets();
   // Soft success haptic the moment the modal becomes visible — this is
   // the "the session landed" felt-sense the spec calls for. Fires once
@@ -70,6 +75,27 @@ export function SessionSummaryModal({ visible, summary, failed, onContinue }: Pr
       statusBarTranslucent
     >
       <View style={[styles.root, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
+        {/* Share button — top right of the modal. Tapping opens the OS
+            share sheet with a plain-text export of the session. */}
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            const text = buildSessionExport({
+              summary: summary ? {
+                exploredText: summary.exploredText,
+                mapShowingText: summary.mapShowingText,
+                somethingToTryText: summary.somethingToTryText,
+              } : null,
+              messages: messages || [],
+            });
+            shareSessionText(text);
+          }}
+          hitSlop={12}
+          style={[styles.shareBtn, { top: insets.top + 16 }]}
+          accessibilityLabel="Share this session"
+        >
+          <Ionicons name="share-outline" size={20} color="rgba(230,180,122,0.6)" />
+        </Pressable>
         <ScrollView
           contentContainerStyle={styles.body}
           showsVerticalScrollIndicator={false}
@@ -171,6 +197,13 @@ function BreathingTriangle() {
 // ============================================================================
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
+  shareBtn: {
+    position: 'absolute',
+    right: 18,
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 10,
+  },
 
   body: { padding: spacing.lg, paddingBottom: spacing.xxl },
 

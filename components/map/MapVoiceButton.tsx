@@ -66,27 +66,19 @@ import { RealtimeSession, VoiceState } from './RealtimeSession';
 // ============================================================================
 // FEATURE FLAG: Realtime WebSocket path.
 //
-// Disabled by default because expo-audio's RecordingPresets.HIGH_QUALITY
-// records AAC-in-M4A on iOS, not linear PCM16 WAV — OpenAI Realtime expects
-// PCM16. Stripping a "44-byte WAV header" from an M4A file produces
-// garbage bytes that the upstream silently ignores, so the response.done
-// event never fires and the user sits on "Thinking…" forever.
-//
-// Getting real PCM16 streaming in Expo requires a custom native audio
-// module (AVAudioEngine / AudioRecord) which needs a dev build. Until that
-// lands we default to the legacy pipeline (record → /api/transcribe via
-// Whisper → /api/chat → /api/speak), which handles M4A natively and is
-// stable on the current build.
+// Re-enabled now that we're on a real EAS dev build (was previously off in
+// Expo Go where PCM16 WAV recording wasn't reliable). On a real build the
+// custom PCM16_RECORDING preset above produces honest LPCM that the
+// Realtime API accepts. If anything still fails, the legacy pipeline is
+// kept as a fallback — see realtime watchdog timers below.
 // ============================================================================
-// DISABLED: when this was on, the WebSocket opened cleanly so the 2.5s
-// fallback timer didn't trigger, but the upstream Realtime API never
-// fired response.done — leaving the user stuck on "Thinking…" with no
-// audible response and no error path. The legacy pipeline below
-// (record → /api/transcribe → /api/chat → /api/speak) is fully
-// instrumented end-to-end and reliably returns a spoken reply, so we
-// route every map-voice turn through it until the Realtime PCM16
-// streaming has been validated on a real device build.
-const USE_REALTIME = false;
+const USE_REALTIME = true;
+// Watchdog windows. The Realtime path opens a WebSocket and waits for the
+// upstream to acknowledge — if either step misses its window we tear down
+// and run the legacy /api/transcribe → /api/chat → /api/speak pipeline so
+// the user always hears a reply even when the realtime endpoint is sick.
+const REALTIME_CONNECT_TIMEOUT_MS = 3000;   // WS open + first state change
+const REALTIME_RESPONSE_TIMEOUT_MS = 8000;  // commit → first audio response
 
 type Props = {
   onDetectedPart?: (part: string, label?: string | null) => void;
@@ -105,6 +97,14 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   const audioPlayerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const legacyHistory = useRef<ChatMessage[]>([]);
   const legacyActive = useRef(false);
+  // Realtime watchdog timers — cleared on successful state transitions or
+  // tear-down. If they fire we drop realtime and fall back to legacy.
+  const realtimeConnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const realtimeResponseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function clearRealtimeTimers() {
+    if (realtimeConnectTimer.current) { clearTimeout(realtimeConnectTimer.current); realtimeConnectTimer.current = null; }
+    if (realtimeResponseTimer.current) { clearTimeout(realtimeResponseTimer.current); realtimeResponseTimer.current = null; }
+  }
 
   function setStateAnd(s: VoiceState) { setState(s); onStateChange?.(s); }
 
@@ -123,8 +123,26 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
     // Commit the current turn (second tap while recording).
     if (state === 'listening') {
+      // Immediate "received, processing" feedback — fires BEFORE we wait on
+      // recorder.stop() / transcribe so the user feels the system react the
+      // instant they release. Heavy haptic + flip the visible state to
+      // 'thinking' so the spinner appears now, not 800ms later.
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+      setStateAnd('thinking');
+
       if (realtimeRef.current) {
         console.log('[map-voice] SECOND TAP → commitTurn ONLY (no stop, no cleanup)');
+        // Arm the response watchdog — if no audible response within
+        // REALTIME_RESPONSE_TIMEOUT_MS we tear down and try legacy.
+        if (realtimeResponseTimer.current) clearTimeout(realtimeResponseTimer.current);
+        realtimeResponseTimer.current = setTimeout(() => {
+          console.warn('[map-voice] Realtime response timeout — falling back to legacy');
+          try { realtimeRef.current?.stop(); } catch {}
+          realtimeRef.current = null;
+          // Legacy needs a fresh recording — we can't reuse the realtime
+          // capture. Best we can do is reset to idle so the user re-records.
+          setStateAnd('idle');
+        }, REALTIME_RESPONSE_TIMEOUT_MS);
         await realtimeRef.current.commitTurn();
         console.log('[map-voice] commitTurn resolved, session still open — awaiting response.done');
       } else if (legacyActive.current) {
@@ -152,18 +170,44 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
       if (USE_REALTIME) {
         console.log('[map-voice] starting new realtime session');
         const rt = new RealtimeSession({
-          onStateChange: setStateAnd,
+          onStateChange: (s) => {
+            // Any state transition counts as "the socket is alive" — clear
+            // the connect watchdog. The response watchdog is cleared when
+            // we hear the first audio response (state → 'speaking').
+            if (s !== 'connecting' && realtimeConnectTimer.current) {
+              clearTimeout(realtimeConnectTimer.current);
+              realtimeConnectTimer.current = null;
+            }
+            if (s === 'speaking' && realtimeResponseTimer.current) {
+              clearTimeout(realtimeResponseTimer.current);
+              realtimeResponseTimer.current = null;
+            }
+            setStateAnd(s);
+          },
           onPartDetected: (p, l) => onDetectedPart?.(p, l),
           onUserTranscript: (t) => console.log('[map-voice] user said:', t.slice(0, 60)),
           onAssistantTranscript: (t) => console.log('[map-voice] AI said:', t.slice(0, 60)),
           onEnded: (turns) => {
             console.log('[map-voice] session ended, turns=', turns.length);
+            clearRealtimeTimers();
             if (!turns.length) return;
             api.saveSession({ id: sessionId, messages: turns });
           },
         });
         rt.attachRecorder(recorder);
+        // Arm the connect watchdog before await — if start() hangs past
+        // REALTIME_CONNECT_TIMEOUT_MS we'll have already kicked off legacy.
+        let connectTimedOut = false;
+        realtimeConnectTimer.current = setTimeout(() => {
+          connectTimedOut = true;
+          console.warn('[map-voice] Realtime connect timeout — falling back to legacy');
+          try { rt.stop(); } catch {}
+          realtimeRef.current = null;
+          legacyStart();
+        }, REALTIME_CONNECT_TIMEOUT_MS);
         const ok = await rt.start();
+        if (connectTimedOut) return;       // legacy already started
+        clearRealtimeTimers();
         if (ok) { realtimeRef.current = rt; return; }
         console.log('[map-voice] realtime unavailable — falling back to legacy pipeline');
       }
@@ -183,6 +227,7 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   useEffect(() => {
     return () => {
       console.log('[map-voice] unmounting — tearing down session');
+      clearRealtimeTimers();
       try { realtimeRef.current?.stop(); } catch {}
       realtimeRef.current = null;
       try { audioPlayerRef.current?.pause(); audioPlayerRef.current?.remove(); } catch {}
@@ -268,8 +313,35 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
       }
       legacyHistory.current.push({ role: 'user', content: text });
       console.log('[legacy] 5/7 POST /api/chat (msgs=' + legacyHistory.current.length + ')');
+      // Sentence-streaming TTS pipeline: as Claude streams the reply, we
+      // detect complete sentences (ending . ! ? or newline) and start
+      // fetching their TTS in parallel. A single sequential play-chain
+      // ensures the user hears them in order. This dramatically cuts the
+      // perceived latency — first sentence often plays while later ones
+      // are still being generated.
       let fullReply = '';
       let partFired = false;
+      let cleanedConsumed = 0;            // chars of stripped text already enqueued
+      let speakingStateSet = false;       // flip 'thinking' → 'speaking' once first audio plays
+      let playChain: Promise<void> = Promise.resolve();
+
+      function enqueueSentenceForTTS(sentence: string) {
+        const speakP = api.speak(sentence, { mapVoice: true });
+        playChain = playChain.then(async () => {
+          try {
+            const buf = await speakP;
+            if (!buf) return;
+            if (!speakingStateSet) {
+              speakingStateSet = true;
+              setStateAnd('speaking');
+            }
+            await playArrayBuffer(buf);
+          } catch (e) {
+            console.warn('[map-voice] sentence playback failed:', (e as Error).message);
+          }
+        });
+      }
+
       await api.streamChat(
         { messages: legacyHistory.current, mode: 'ongoing', sessionId },
         {
@@ -283,13 +355,42 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
                 onDetectedPart?.(meta.detectedPart, meta.partLabel ?? null);
               }
             }
+            // Detect complete sentences in the stripped (marker-free) text
+            // and enqueue them for TTS. cleanedConsumed tracks our cursor
+            // into stripMarkers(fullReply) so we never re-enqueue.
+            const cleaned = stripMarkers(fullReply);
+            const tail = cleaned.slice(cleanedConsumed);
+            const sentenceRegex = /[^.!?\n]+[.!?\n]+/g;
+            let m: RegExpExecArray | null;
+            let lastEnd = 0;
+            while ((m = sentenceRegex.exec(tail)) !== null) {
+              const s = m[0].trim();
+              if (s.length >= 10) {
+                console.log('[map-voice] enqueue sentence (' + s.length + ' chars)');
+                enqueueSentenceForTTS(s);
+              }
+              lastEnd = m.index + m[0].length;
+            }
+            cleanedConsumed += lastEnd;
           },
           onDone: async (full) => {
             const cleaned = stripMarkers(full || fullReply);
             console.log('[legacy] 5/7 ✓ reply:', cleaned.slice(0, 60) + (cleaned.length > 60 ? '…' : ''));
             legacyHistory.current.push({ role: 'assistant', content: cleaned });
-            if (!cleaned) { setStateAnd('idle'); legacyActive.current = false; return; }
-            await legacyPlayTTS(cleaned);
+            // Flush any trailing fragment that didn't end with .!?
+            const tail = cleaned.slice(cleanedConsumed).trim();
+            if (tail.length >= 3) {
+              console.log('[map-voice] enqueue tail fragment (' + tail.length + ' chars)');
+              enqueueSentenceForTTS(tail);
+            }
+            if (!cleaned && cleanedConsumed === 0) {
+              setStateAnd('idle'); legacyActive.current = false; return;
+            }
+            // Wait for the playback chain to fully drain, then return to idle.
+            try { await playChain; } catch {}
+            legacyActive.current = false;
+            setStateAnd('idle');
+            console.log('[map-voice] 7/7 ✓ all sentences played');
           },
           onError: (err) => {
             console.warn('[legacy] 5/7 chat error:', err);
@@ -303,52 +404,42 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     }
   }
 
-  async function legacyPlayTTS(text: string) {
-    console.log('[legacy] 6/7 POST /api/speak (' + text.length + ' chars)');
-    setStateAnd('speaking');
+  // Play one MP3 ArrayBuffer through the bottom speaker. Used by the
+  // sentence-streaming TTS pipeline — each sentence is decoded + played
+  // in turn off a single chained promise so order is preserved.
+  //
+  // iOS speaker routing: setting the session to playback (allowsRecording:
+  // false, playsInSilentMode:true) before play() ensures audio routes to
+  // the bottom main speaker rather than the earpiece. The earpiece bug
+  // happens when the session is still in PlayAndRecord/recording category
+  // from the prior mic capture — this is the explicit reset.
+  async function playArrayBuffer(buf: ArrayBuffer) {
     try {
-      // Belt-and-braces: ensure the iOS session is in playback mode right
-      // before we play. playsInSilentMode:true is what lets audio come out
-      // of the speaker even when the ringer switch is off.
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        interruptionMode: 'doNotMix',
+        shouldPlayInBackground: false,
+      });
+    } catch {}
+    const { bytesToBase64 } = await import('../../utils/audioWav');
+    const b64 = bytesToBase64(new Uint8Array(buf));
+    const dataUri = 'data:audio/mpeg;base64,' + b64;
+    const player = createAudioPlayer({ uri: dataUri });
+    audioPlayerRef.current = player;
+    // Volume 1.0 — full output. Belt-and-braces in case the session was
+    // left at a reduced gain by another component.
+    try { (player as any).volume = 1.0; } catch {}
+    player.play();
+    while (audioPlayerRef.current === player) {
       try {
-        await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-          interruptionMode: 'doNotMix',
-          shouldPlayInBackground: false,
-        });
-      } catch {}
-      const buf = await api.speak(text);
-      if (!buf) {
-        console.warn('[legacy] /api/speak returned null — skipping playback');
-        setStateAnd('idle'); legacyActive.current = false; return;
-      }
-      console.log('[legacy] 6/7 ✓ MP3 received (' + buf.byteLength + ' bytes)');
-      const { bytesToBase64 } = await import('../../utils/audioWav');
-      const b64 = bytesToBase64(new Uint8Array(buf));
-      const dataUri = 'data:audio/mpeg;base64,' + b64;
-      console.log('[legacy] 7/7 playing audio…');
-      const player = createAudioPlayer({ uri: dataUri });
-      audioPlayerRef.current = player;
-      player.play();
-      while (audioPlayerRef.current === player) {
-        try {
-          const s = player.currentStatus;
-          if (s?.didJustFinish || s?.isLoaded === false) break;
-        } catch { break; }
-        await new Promise((r) => setTimeout(r, 250));
-      }
-      try { player.remove(); } catch {}
-      if (audioPlayerRef.current === player) audioPlayerRef.current = null;
-      console.log('[legacy] 7/7 ✓ playback finished, auto-resuming listening');
-    } catch (e) {
-      console.warn('[legacy] TTS failed:', (e as Error).message);
-    } finally {
-      // Return to idle. User taps mic again to start the next turn — no
-      // auto-resume, so the flow is predictable.
-      legacyActive.current = false;
-      setStateAnd('idle');
+        const s = player.currentStatus;
+        if (s?.didJustFinish || s?.isLoaded === false) break;
+      } catch { break; }
+      await new Promise((r) => setTimeout(r, 150));
     }
+    try { player.remove(); } catch {}
+    if (audioPlayerRef.current === player) audioPlayerRef.current = null;
   }
 
   /* =====================================================================

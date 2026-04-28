@@ -15,10 +15,13 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
+import * as Haptics from 'expo-haptics';
+
 import { colors, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { parseChatMeta, stripMarkers } from '../../utils/markers';
 import { MessageBubble, ChatMsg } from '../MessageBubble';
+import { buildSessionExport, shareSessionText } from '../../utils/sessionExport';
 
 type Props = {
   visible: boolean;
@@ -82,6 +85,32 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
             {header.date ? <Text style={styles.date}>{header.date}</Text> : null}
             {header.title ? <Text style={styles.title} numberOfLines={2}>{header.title}</Text> : null}
           </View>
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              const raw = session?.summary;
+              let structured: any = null;
+              if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+                try { structured = JSON.parse(raw); } catch {}
+              }
+              const sessionDate = session?.date ? new Date(session.date) : new Date();
+              const text = buildSessionExport({
+                date: sessionDate,
+                summary: structured && structured.kind === 'structured-v1' ? {
+                  exploredText: structured.exploredText,
+                  mapShowingText: structured.mapShowingText,
+                  somethingToTryText: structured.somethingToTryText,
+                } : null,
+                messages: messages.map((m) => ({ role: m.role, text: m.text })),
+              });
+              shareSessionText(text);
+            }}
+            style={styles.shareBtn}
+            hitSlop={10}
+            accessibilityLabel="Share this session"
+          >
+            <Ionicons name="share-outline" size={20} color="rgba(230,180,122,0.6)" />
+          </Pressable>
           <Pressable
             onPress={onClose}
             style={styles.closeBtn}
@@ -189,6 +218,10 @@ const styles = StyleSheet.create({
   },
   closeBtn: {
     width: 44, height: 44,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  shareBtn: {
+    width: 36, height: 36,
     alignItems: 'center', justifyContent: 'center',
   },
   date: { color: colors.amber, fontSize: 12, fontWeight: '600', letterSpacing: 0.3 },

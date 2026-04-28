@@ -12,7 +12,8 @@
 //   4. The redirect to /onboarding runs after a setTimeout(0) so the
 //      Stack's layoutEffects have fired and the route is registered.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -23,6 +24,10 @@ import { useFonts } from 'expo-font';
 import { colors } from '../constants/theme';
 import { getOnboardingState, OnboardingState } from '../services/onboarding';
 import { registerForPushNotifications } from '../services/push';
+import {
+  ensureDefaultPreference, authenticate as authenticateBiometric, isLockEnabled,
+} from '../services/biometrics';
+import { LockScreen } from '../components/LockScreen';
 
 // Race helper — if `p` doesn't settle inside `ms`, resolve with `fallback`. Used
 // to cap how long the boot sequence can spend reading flags from AsyncStorage.
@@ -53,6 +58,52 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T, tag: string): Pr
 export default function RootLayout() {
   const router = useRouter();
   const responseSubRef = useRef<Notifications.Subscription | null>(null);
+  // Biometric lock state. `locked` true → render <LockScreen> over the
+  // Stack until the user successfully authenticates. We default to true
+  // when the preference is on, so the unlocked content is never visible
+  // for a frame on cold start. Flips to false after a successful auth.
+  const [locked, setLocked] = useState(false);
+  // Tracks whether we've completed the very first auth check this session
+  // — prevents the AppState listener from firing twice on initial mount.
+  const firstAuthDone = useRef(false);
+
+  async function runAuthCheck(reason: string) {
+    try {
+      const enabled = await isLockEnabled();
+      if (!enabled) { setLocked(false); return; }
+      console.log(`[lock] auth check (${reason})`);
+      const ok = await authenticateBiometric();
+      setLocked(!ok);
+      if (ok) console.log('[lock] unlocked');
+      else console.log('[lock] failed/canceled — staying locked');
+    } catch (e) {
+      console.warn('[lock] auth check threw:', (e as Error)?.message);
+      setLocked(false);
+    }
+  }
+
+  // First-launch default + initial auth gate.
+  useEffect(() => {
+    (async () => {
+      await ensureDefaultPreference();
+      const enabled = await isLockEnabled();
+      if (enabled) {
+        setLocked(true);                  // hide content while we prompt
+        await runAuthCheck('cold-start');
+      }
+      firstAuthDone.current = true;
+    })();
+  }, []);
+
+  // Re-auth when the app returns from background.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active' && firstAuthDone.current) {
+        runAuthCheck('foreground');
+      }
+    });
+    return () => { sub?.remove(); };
+  }, []);
 
   // Load the custom font pairing (Cormorant Garamond for display, DM Sans
   // for body). TTFs live in assets/fonts/ and are required directly — we
@@ -144,6 +195,9 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
         </Stack>
+        {locked ? (
+          <LockScreen onUnlock={() => runAuthCheck('button-tap')} />
+        ) : null}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
