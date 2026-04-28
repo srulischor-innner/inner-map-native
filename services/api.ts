@@ -427,16 +427,26 @@ export const api = {
         label: 'speak', method: 'POST', headers,
         body: JSON.stringify({ text: cleanText, mapVoice: !!opts?.mapVoice }),
       });
+      console.log('[speak] status:', res.status,
+        '| content-type:', res.headers.get('content-type'));
       if (!res.ok) {
         // Pull a short preview of the error body so 400s with
         // 'Empty text after scrubbing markers' are visible in Metro
-        // instead of just 'returned null'.
+        // instead of just 'returned null'. Also logs the full body
+        // when small enough so JSON {error: "..."} responses surface
+        // as a single readable line.
         let bodyPreview = '';
-        try { bodyPreview = (await res.text()).slice(0, 200); } catch {}
+        try { bodyPreview = (await res.text()).slice(0, 300); } catch {}
         console.warn(`[speak] non-OK ${res.status} — body: ${bodyPreview}`);
         return null;
       }
-      return await res.arrayBuffer();
+      const buf = await res.arrayBuffer();
+      console.log('[speak] arrayBuffer bytes:', buf.byteLength);
+      if (!buf || buf.byteLength === 0) {
+        console.warn('[speak] empty arrayBuffer despite 200 OK');
+        return null;
+      }
+      return buf;
     } catch (e) {
       console.warn('[speak] threw:', (e as Error)?.message);
       return null;

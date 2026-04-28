@@ -481,13 +481,15 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     'mic';
 
   // Explicit, instructive status text — tells the user exactly what to do next.
+  // 'error' state intentionally falls through to 'Tap to speak' so a transient
+  // backend hiccup never surfaces as user-visible failure copy. The console
+  // logs still capture the diagnostic; the UI just resets silently.
   const label =
     state === 'listening'  ? 'Recording… tap to send' :
     state === 'thinking'   ? 'Thinking…' :
     state === 'speaking'   ? 'Speaking…' :
     state === 'connecting' ? 'Connecting…' :
     state === 'retrying'   ? 'Retrying…' :
-    state === 'error'      ? 'Something went wrong' :
     'Tap to speak';
 
   // Always show the status label. In idle state it's a small dim
