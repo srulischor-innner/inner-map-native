@@ -66,13 +66,13 @@ import { RealtimeSession, VoiceState } from './RealtimeSession';
 // ============================================================================
 // FEATURE FLAG: Realtime WebSocket path.
 //
-// Re-enabled now that we're on a real EAS dev build (was previously off in
-// Expo Go where PCM16 WAV recording wasn't reliable). On a real build the
-// custom PCM16_RECORDING preset above produces honest LPCM that the
-// Realtime API accepts. If anything still fails, the legacy pipeline is
-// kept as a fallback — see realtime watchdog timers below.
+// Disabled (again) because the dev-build attempt regressed map voice into
+// silent failures — "thinking" → back to "tap to speak" with no audible
+// response. Until the Realtime PCM16 path is validated against an EAS
+// PRODUCTION build, route every map-voice turn through the legacy
+// /api/transcribe → /api/chat → /api/speak pipeline below.
 // ============================================================================
-const USE_REALTIME = true;
+const USE_REALTIME = false;
 // Watchdog windows. The Realtime path opens a WebSocket and waits for the
 // upstream to acknowledge — if either step misses its window we tear down
 // and run the legacy /api/transcribe → /api/chat → /api/speak pipeline so
@@ -276,16 +276,24 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   }
 
   async function legacyStopAndRespond() {
-    console.log('[legacy] 3/7 mic tapped again — stopping recorder');
+    // Wrap the ENTIRE pipeline in a single try/catch so any throw — from
+    // recorder, transcribe, chat, TTS, playback — surfaces a visible
+    // error log and resets the UI rather than failing silently.
     try {
+      console.log('[map-voice] Step 1: stopping recorder...');
       await recorder.stop();
       const uri = recorder.uri;
-      console.log('[legacy] 3/7 recorder uri:', uri);
-      // CRITICAL iOS FIX: after recording stops the audio session is still in
-      // PlayAndRecord/recording mode — TTS playback through the speaker stays
-      // silent until we explicitly flip back to playback. Mirrors expo-av's
-      // { allowsRecordingIOS:false, playsInSilentModeIOS:true } guidance, but
-      // we use the expo-audio names this project already imports.
+      console.log('[map-voice] Step 1 ✓ recorder.uri =', uri);
+
+      // CRITICAL iOS FIX: after recording stops the audio session is still
+      // in PlayAndRecord/recording mode — TTS playback through the speaker
+      // stays silent until we explicitly flip back to playback. We do this
+      // BEFORE the chat call so the session is ready by the time the first
+      // sentence's TTS arrives. (expo-av equivalent:
+      //   allowsRecordingIOS:false, playsInSilentModeIOS:true,
+      //   staysActiveInBackground:false, shouldDuckAndroid:false,
+      //   playThroughEarpieceAndroid:false.)
+      console.log('[map-voice] Step 2: resetting audio session to playback mode...');
       try {
         await setAudioModeAsync({
           allowsRecording: false,
@@ -293,114 +301,122 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
           interruptionMode: 'doNotMix',
           shouldPlayInBackground: false,
         });
-        console.log('[map-voice] audio session reset to playback mode');
+        console.log('[map-voice] Step 2 ✓ audio session is now playback');
       } catch (e) {
-        console.warn('[map-voice] failed to reset audio session to playback:', (e as Error).message);
+        console.error('[map-voice] Step 2 ✗ setAudioModeAsync threw:', (e as Error).message);
       }
+
       if (!uri) {
-        console.warn('[legacy] no uri after stop — aborting');
+        console.error('[map-voice] no uri after recorder.stop() — aborting');
         setStateAnd('idle'); legacyActive.current = false; return;
       }
-      setStateAnd('thinking');
+
       const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
-      console.log('[legacy] 4/7 POST /api/transcribe (mime=' + mime + ')');
+      console.log('[map-voice] Step 3: POST /api/transcribe (mime=' + mime + ')');
       const transcript = await api.transcribe(uri, mime);
       const text = (transcript || '').trim();
-      console.log('[legacy] 4/7 transcript:', text ? `"${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"` : '(empty)');
+      console.log('[map-voice] Step 3 ✓ transcript:', text.length, 'chars',
+        text ? `"${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"` : '(empty)');
       if (!text) {
-        console.warn('[legacy] empty transcript — mic may have captured silence');
+        console.warn('[map-voice] empty transcript — mic may have captured silence; returning to idle');
         setStateAnd('idle'); legacyActive.current = false; return;
       }
       legacyHistory.current.push({ role: 'user', content: text });
-      console.log('[legacy] 5/7 POST /api/chat (msgs=' + legacyHistory.current.length + ')');
-      // Sentence-streaming TTS pipeline: as Claude streams the reply, we
-      // detect complete sentences (ending . ! ? or newline) and start
-      // fetching their TTS in parallel. A single sequential play-chain
-      // ensures the user hears them in order. This dramatically cuts the
-      // perceived latency — first sentence often plays while later ones
-      // are still being generated.
+
+      console.log('[map-voice] Step 4: POST /api/chat (msgs=' + legacyHistory.current.length + ')');
+      // Sentence-streaming TTS pipeline: as Claude streams the reply we
+      // detect complete sentences and fire each /api/speak in parallel,
+      // playing through a single sequential chain. The previous
+      // implementation `await`ed api.streamChat directly — but streamChat
+      // returns a Promise that resolves IMMEDIATELY with the abort
+      // function, not when onDone fires. That meant if anything in the
+      // stream path threw asynchronously, the outer try/catch missed it
+      // and the user saw "thinking → idle" with no log. We now wrap the
+      // stream in a manual Promise that resolves on onDone / onError so
+      // the outer try/catch actually owns the lifetime.
       let fullReply = '';
       let partFired = false;
-      let cleanedConsumed = 0;            // chars of stripped text already enqueued
-      let speakingStateSet = false;       // flip 'thinking' → 'speaking' once first audio plays
+      let cleanedConsumed = 0;
+      let speakingStateSet = false;
       let playChain: Promise<void> = Promise.resolve();
 
       function enqueueSentenceForTTS(sentence: string) {
+        console.log('[map-voice] Step 5: POST /api/speak (' + sentence.length + ' chars) — "' + sentence.slice(0, 40) + '…"');
         const speakP = api.speak(sentence, { mapVoice: true });
         playChain = playChain.then(async () => {
           try {
             const buf = await speakP;
-            if (!buf) return;
+            if (!buf) {
+              console.error('[map-voice] Step 5 ✗ /api/speak returned null');
+              return;
+            }
+            console.log('[map-voice] Step 6: audio received (' + buf.byteLength + ' bytes), playing...');
             if (!speakingStateSet) {
               speakingStateSet = true;
               setStateAnd('speaking');
             }
             await playArrayBuffer(buf);
+            console.log('[map-voice] Step 7: playback complete for sentence');
           } catch (e) {
-            console.warn('[map-voice] sentence playback failed:', (e as Error).message);
+            console.error('[map-voice] sentence playback threw:', (e as Error).message);
           }
         });
       }
 
-      await api.streamChat(
-        { messages: legacyHistory.current, mode: 'ongoing', sessionId },
-        {
-          onDelta: (d) => {
-            fullReply += d;
-            if (!partFired) {
-              const meta = parseChatMeta(fullReply);
-              if (meta?.detectedPart && meta.detectedPart !== 'unknown') {
-                partFired = true;
-                console.log('[legacy] 5/7 CHAT_META detected:', meta.detectedPart);
-                onDetectedPart?.(meta.detectedPart, meta.partLabel ?? null);
+      await new Promise<void>((resolve) => {
+        api.streamChat(
+          { messages: legacyHistory.current, mode: 'ongoing', sessionId },
+          {
+            onDelta: (d) => {
+              fullReply += d;
+              if (!partFired) {
+                const meta = parseChatMeta(fullReply);
+                if (meta?.detectedPart && meta.detectedPart !== 'unknown') {
+                  partFired = true;
+                  console.log('[map-voice] CHAT_META detected:', meta.detectedPart);
+                  onDetectedPart?.(meta.detectedPart, meta.partLabel ?? null);
+                }
               }
-            }
-            // Detect complete sentences in the stripped (marker-free) text
-            // and enqueue them for TTS. cleanedConsumed tracks our cursor
-            // into stripMarkers(fullReply) so we never re-enqueue.
-            const cleaned = stripMarkers(fullReply);
-            const tail = cleaned.slice(cleanedConsumed);
-            const sentenceRegex = /[^.!?\n]+[.!?\n]+/g;
-            let m: RegExpExecArray | null;
-            let lastEnd = 0;
-            while ((m = sentenceRegex.exec(tail)) !== null) {
-              const s = m[0].trim();
-              if (s.length >= 10) {
-                console.log('[map-voice] enqueue sentence (' + s.length + ' chars)');
-                enqueueSentenceForTTS(s);
+              const cleaned = stripMarkers(fullReply);
+              const tail = cleaned.slice(cleanedConsumed);
+              const sentenceRegex = /[^.!?\n]+[.!?\n]+/g;
+              let m: RegExpExecArray | null;
+              let lastEnd = 0;
+              while ((m = sentenceRegex.exec(tail)) !== null) {
+                const s = m[0].trim();
+                if (s.length >= 10) enqueueSentenceForTTS(s);
+                lastEnd = m.index + m[0].length;
               }
-              lastEnd = m.index + m[0].length;
-            }
-            cleanedConsumed += lastEnd;
+              cleanedConsumed += lastEnd;
+            },
+            onDone: (full) => {
+              const cleaned = stripMarkers(full || fullReply);
+              console.log('[map-voice] Step 4 ✓ chat reply:', cleaned.length, 'chars');
+              legacyHistory.current.push({ role: 'assistant', content: cleaned });
+              const tail = cleaned.slice(cleanedConsumed).trim();
+              if (tail.length >= 3) enqueueSentenceForTTS(tail);
+              resolve();
+            },
+            onError: (err) => {
+              console.error('[map-voice] Step 4 ✗ chat error:', err);
+              resolve();    // resolve so outer pipeline returns to idle
+            },
           },
-          onDone: async (full) => {
-            const cleaned = stripMarkers(full || fullReply);
-            console.log('[legacy] 5/7 ✓ reply:', cleaned.slice(0, 60) + (cleaned.length > 60 ? '…' : ''));
-            legacyHistory.current.push({ role: 'assistant', content: cleaned });
-            // Flush any trailing fragment that didn't end with .!?
-            const tail = cleaned.slice(cleanedConsumed).trim();
-            if (tail.length >= 3) {
-              console.log('[map-voice] enqueue tail fragment (' + tail.length + ' chars)');
-              enqueueSentenceForTTS(tail);
-            }
-            if (!cleaned && cleanedConsumed === 0) {
-              setStateAnd('idle'); legacyActive.current = false; return;
-            }
-            // Wait for the playback chain to fully drain, then return to idle.
-            try { await playChain; } catch {}
-            legacyActive.current = false;
-            setStateAnd('idle');
-            console.log('[map-voice] 7/7 ✓ all sentences played');
-          },
-          onError: (err) => {
-            console.warn('[legacy] 5/7 chat error:', err);
-            setStateAnd('idle'); legacyActive.current = false;
-          },
-        },
-      );
-    } catch (e) {
-      console.warn('[legacy] respond failed:', (e as Error).message);
-      setStateAnd('idle'); legacyActive.current = false;
+        );
+      });
+
+      // Drain the playback chain so we don't return to 'idle' while a
+      // sentence is still being read aloud.
+      try { await playChain; } catch (e) {
+        console.error('[map-voice] playChain final await threw:', (e as Error).message);
+      }
+      legacyActive.current = false;
+      setStateAnd('idle');
+      console.log('[map-voice] ✓ pipeline complete — back to idle');
+    } catch (error) {
+      console.error('[map-voice] PIPELINE FAILED at:', (error as Error).message, error);
+      legacyActive.current = false;
+      setStateAnd('idle');
     }
   }
 
