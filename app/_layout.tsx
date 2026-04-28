@@ -29,6 +29,21 @@ import {
 } from '../services/biometrics';
 import { LockScreen } from '../components/LockScreen';
 
+// Module-level flags for the biometric lock. These persist for the life of
+// the JS process — i.e. cold-start to cold-start. Two purposes:
+//   1. hasAuthenticatedThisSession — once the user has unlocked, we never
+//      prompt again from any code path during this run (no AppState
+//      'active' churn, no remounts of RootLayout, nothing).
+//   2. lastBackgroundedAt — when the app goes to background we stamp it.
+//      On return-to-active, ONLY if more than 30 minutes have passed do
+//      we clear the session flag and re-arm the lock. This stops the
+//      "Face ID prompt every 2 seconds" bug where any system overlay
+//      (notification, Control Center, Camera) was triggering an active
+//      transition that kicked off a fresh auth.
+let hasAuthenticatedThisSession = false;
+let lastBackgroundedAt = 0;
+const RE_AUTH_AFTER_BACKGROUND_MS = 30 * 60 * 1000;   // 30 minutes
+
 // Race helper — if `p` doesn't settle inside `ms`, resolve with `fallback`. Used
 // to cap how long the boot sequence can spend reading flags from AsyncStorage.
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T, tag: string): Promise<T> {
@@ -63,44 +78,78 @@ export default function RootLayout() {
   // when the preference is on, so the unlocked content is never visible
   // for a frame on cold start. Flips to false after a successful auth.
   const [locked, setLocked] = useState(false);
-  // Tracks whether we've completed the very first auth check this session
-  // — prevents the AppState listener from firing twice on initial mount.
-  const firstAuthDone = useRef(false);
 
+  // Run an auth prompt iff the lock preference is on AND the user hasn't
+  // already authenticated this session. The session flag is the firewall
+  // against the "every 2 seconds" bug: anything that re-enters this code
+  // path (remounts, AppState transitions, etc.) is a no-op once the user
+  // has unlocked once. The flag is reset only by full process death (cold
+  // launch) or by the 30-minute background grace period below.
   async function runAuthCheck(reason: string) {
+    if (hasAuthenticatedThisSession) {
+      console.log(`[lock] skip (${reason}) — already authenticated this session`);
+      return;
+    }
     try {
       const enabled = await isLockEnabled();
       if (!enabled) { setLocked(false); return; }
       console.log(`[lock] auth check (${reason})`);
       const ok = await authenticateBiometric();
-      setLocked(!ok);
-      if (ok) console.log('[lock] unlocked');
-      else console.log('[lock] failed/canceled — staying locked');
+      if (ok) {
+        hasAuthenticatedThisSession = true;
+        setLocked(false);
+        console.log('[lock] unlocked');
+      } else {
+        setLocked(true);
+        console.log('[lock] failed/canceled — staying locked');
+      }
     } catch (e) {
       console.warn('[lock] auth check threw:', (e as Error)?.message);
+      // Fail-open rather than trapping the user behind a black screen if
+      // the biometric subsystem itself misbehaves.
       setLocked(false);
     }
   }
 
-  // First-launch default + initial auth gate.
+  // ONE-TIME cold-start auth gate. Empty deps array — runs once per
+  // process. No AppState listener that fires on every focus change.
   useEffect(() => {
     (async () => {
       await ensureDefaultPreference();
       const enabled = await isLockEnabled();
-      if (enabled) {
-        setLocked(true);                  // hide content while we prompt
-        await runAuthCheck('cold-start');
-      }
-      firstAuthDone.current = true;
+      if (!enabled || hasAuthenticatedThisSession) return;
+      setLocked(true);                    // hide content while we prompt
+      await runAuthCheck('cold-start');
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-auth when the app returns from background.
+  // Background grace-period guard. When the app moves to 'background' we
+  // stamp the time. On return to 'active' we only re-arm the lock if it
+  // has been MORE THAN 30 MINUTES since the user backgrounded. Anything
+  // shorter (notifications, Control Center pull-down, brief switch to
+  // another app, screen dim) is treated as continuous use — no prompt.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active' && firstAuthDone.current) {
-        runAuthCheck('foreground');
+      if (next === 'background' || next === 'inactive') {
+        lastBackgroundedAt = Date.now();
+        return;
       }
+      if (next !== 'active') return;
+      // No previous backgrounding stamp → first activation, handled by
+      // the cold-start effect above. Don't double-prompt.
+      if (lastBackgroundedAt === 0) return;
+      const awayMs = Date.now() - lastBackgroundedAt;
+      if (awayMs < RE_AUTH_AFTER_BACKGROUND_MS) return;
+      // Long enough away to require another auth.
+      console.log(`[lock] grace expired (${Math.round(awayMs / 60000)}m) — re-arming`);
+      hasAuthenticatedThisSession = false;
+      (async () => {
+        const enabled = await isLockEnabled();
+        if (!enabled) return;
+        setLocked(true);
+        await runAuthCheck('grace-expired');
+      })();
     });
     return () => { sub?.remove(); };
   }, []);
