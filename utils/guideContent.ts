@@ -28,11 +28,15 @@ export type NodeVisualKind =
   | 'nodeDetect'           // node fades in, ripple expands outward, fades
   | 'privacy'              // breathing amber rings around a small lock glyph
   | 'readyToBegin'         // full map fades in; Self brightens last and holds
-  // ----- "what holds you" — opens the HEALING section -----
-  | 'windowOfTolerance'    // a horizontal band that gently widens — the window
-  | 'buildingCapacity'     // the band is raised by a base of life-elements lighting up
-  | 'twoTracks'            // two vertical lines growing upward, finding their own paths
-  | 'energyMoves'          // soft amber wave traveling left-to-right through a contained space
+  // ----- "what holds you" — opens the HEALING section (3 slides) -----
+  | 'buildingCapacity'     // base of warm dots builds, threshold line rises
+  | 'survivalMode'         // triangle with all three nodes lit + pulsing, then settling
+  | 'groundBuilding'       // dim canvas warms as life elements appear, energy flows up
+  // ----- legacy visuals (kept so the dispatcher type-checks even if some
+  //       older code still references them; not used by current slides) -----
+  | 'windowOfTolerance'
+  | 'twoTracks'
+  | 'energyMoves'
   | 'triangleToCircle'     // closing visual — triangle with three colored nodes morphs into a unified circle
   | 'noVisual';            // no canvas — text-only slides
 
@@ -217,47 +221,39 @@ export const MAP_SLIDES: GuideSlide[] = [
 
 // ===== SECTION 2: HEALING =====
 // ===== "WHAT HOLDS YOU" — opens the HEALING section =====
-// Three slides that frame healing through the window-of-tolerance lens.
-// Lands FIRST in the HEALING pill so it sets up everything that follows
-// about the three stages.
+// Three slides that frame healing through capacity, system protection, and
+// the ground that makes inner work possible. Lands FIRST in the HEALING
+// pill so it sets up everything that follows about the three stages.
+//
+// The three slides form a deliberate arc:
+//   1. Capacity is built (safety = capacity)
+//   2. The system protects itself when capacity is short (survival mode)
+//   3. Ground first — the actual work
 export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
   {
-    visual: 'windowOfTolerance',
-    title: 'Your window of tolerance',
-    body: [
-      "Everyone has a window of tolerance — the range of emotional intensity you can sit with without getting flooded.",
-      "Inside the window, painful or intense feelings are bearable. You can stay present with them and let them move through.",
-      "Beyond the window, the system floods. It protects itself — by shutting down, reaching for relief, or going into panic.",
-      "Healing doesn't push past the window. Healing is the window getting wider over time.",
-    ],
-  },
-  {
     visual: 'buildingCapacity',
-    title: 'What widens it',
+    title: 'Safety and capacity are the same thing',
     body: [
-      "Your window of tolerance widens through safety — and safety is built through your life.",
-      "Sleep. Food. Movement. Relationships. Therapy. Basic stability.",
-      "Self-care isn't separate from inner work. It builds the capacity to sit with painful emotions — to feel them, process them, let them move through — without being overwhelmed.",
-      "The safer you feel, the more you can feel.",
+      "As you build safety in your life, you also build your capacity to hold painful or heavy emotions without being overwhelmed by them.",
+      "The stronger your foundation, the more you can feel — and let pass through.",
     ],
   },
   {
-    visual: 'twoTracks',
-    title: 'Two tracks, not one',
+    visual: 'survivalMode',
+    title: 'When the system is in survival mode',
     body: [
-      "Inner work and your outer life run in parallel. They build each other.",
-      "When your life holds enough safety, more can surface and move through. When safety is thin, the system protects itself — and that protection is wisdom, not failure.",
-      "The work you do here matters most when your life outside is also being tended to. They aren't in competition. They're the same journey.",
+      "When parts are activated and scared, allowing feelings to surface and move through becomes very difficult.",
+      "The system is protecting itself — and that protection makes sense. Going deep before there's enough safety doesn't work.",
+      "The system will resist because it's trying to keep you safe.",
     ],
   },
   {
-    visual: 'energyMoves',
-    title: "It's energy. It moves.",
+    visual: 'groundBuilding',
+    title: 'Build the ground first',
     body: [
-      "That heavy feeling. The weight in your chest. The ache that seems like it will never lift.",
-      "It's energy. And energy, by its nature, moves.",
-      "Not immediately. Not on demand. But when you stop fighting it — when you let it be there without trying to fix it or push it away — it begins to shift.",
-      "You don't have to hold it forever. You were never meant to. The feeling passing through you is not the same as the feeling staying.",
+      "Relationships. Therapy. Exercise. Hobbies. Sleep. Consistency. Basic stability.",
+      "These aren't preparation for the real work. They are the real work. They build your sense of safety — which in turn opens the door to healing.",
+      "Healing usually happens from a place of okayness, not desperation. If life feels thin right now, that's where to start.",
     ],
   },
 ];

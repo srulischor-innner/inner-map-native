@@ -53,6 +53,8 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'buildingCapacity'     ? <BuildingCapacity W={W} H={H} /> : null}
       {kind === 'twoTracks'            ? <TwoTracks W={W} H={H} /> : null}
       {kind === 'energyMoves'          ? <EnergyMoves W={W} H={H} /> : null}
+      {kind === 'survivalMode'         ? <SurvivalMode W={W} H={H} /> : null}
+      {kind === 'groundBuilding'       ? <GroundBuilding W={W} H={H} /> : null}
       {kind === 'triangleToCircle'     ? <TriangleToCircle W={W} H={H} /> : null}
       {/* 'noVisual' renders nothing inside the canvas. GuideSlide skips
           the Canvas wrapper entirely for this kind so a tiny placeholder
@@ -1371,6 +1373,248 @@ function BuildingCapacityDot({
         <RadialGradient c={vec(cx, cy)} r={12} colors={[colors.amber + 'AA', colors.amber + '00']} />
       </Circle>
       <Circle cx={cx} cy={cy} r={6} color={colors.amber} style="fill" />
+    </Group>
+  );
+}
+
+// SURVIVAL MODE — the triangle with all three nodes lit + pulsing in their
+// colors, atmospheric glow heightened, lines pulsing. Holds for ~3s in the
+// activated state, then dims and settles for ~2s, then re-activates. The
+// felt sense is "alert and protective, then standing down once it feels
+// safer." Loops continuously.
+function SurvivalMode({ W, H }: { W: number; H: number }) {
+  // 0 = settled, 1 = full activation. Cycle: ramp up 600ms → hold 2400ms →
+  // settle 800ms → rest 1200ms → repeat.
+  const activation = useSharedValue(0);
+  // A slightly-faster pulse layered on top of the activation envelope so
+  // the lit state still reads as urgent, not just bright.
+  const pulse = useSharedValue(0);
+  useEffect(() => {
+    activation.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 600, easing: Easing.out(Easing.ease) }),
+        withTiming(1, { duration: 2400 }),
+        withTiming(0.25, { duration: 800, easing: Easing.in(Easing.ease) }),
+        withTiming(0.25, { duration: 1200 }),
+      ),
+      -1, false,
+    );
+    pulse.value = withRepeat(
+      withTiming(1, { duration: 700, easing: Easing.inOut(Easing.ease) }),
+      -1, true,
+    );
+  }, [activation, pulse]);
+
+  // Triangle anchors (same proportions as the small map illustration).
+  const cx = W / 2;
+  const cy = H * 0.55;
+  const R = Math.min(W, H) * 0.34;
+  const woundP   = { x: cx,                              y: cy - R };
+  const fixerP   = { x: cx + R * Math.sin(Math.PI * 2 / 3), y: cy - R * Math.cos(Math.PI * 2 / 3) };
+  const skepticP = { x: cx - R * Math.sin(Math.PI * 2 / 3), y: cy - R * Math.cos(Math.PI * 2 / 3) };
+
+  // Triangle leg path — solid stroked path so we can pulse opacity together.
+  const legPath = (() => {
+    const p = Skia.Path.Make();
+    p.moveTo(woundP.x, woundP.y);
+    p.lineTo(fixerP.x, fixerP.y);
+    p.lineTo(skepticP.x, skepticP.y);
+    p.close();
+    return p;
+  })();
+
+  // Atmospheric glow opacity — ramps with activation, oscillates with pulse.
+  const atmosphereOpacity = useDerivedValue(
+    () => 0.15 + activation.value * (0.45 + 0.15 * pulse.value),
+    [activation, pulse],
+  );
+  // Per-node halo radius scales with activation so the lit state reads BIG.
+  const nodeRadius = useDerivedValue(
+    () => 14 + activation.value * (8 + 2 * pulse.value),
+    [activation, pulse],
+  );
+  const haloRadius = useDerivedValue(
+    () => 22 + activation.value * (16 + 4 * pulse.value),
+    [activation, pulse],
+  );
+  const lineOpacity = useDerivedValue(
+    () => 0.25 + activation.value * (0.55 + 0.15 * pulse.value),
+    [activation, pulse],
+  );
+  // Subtle stroke-width pulse on the triangle legs so the lit state reads
+  // as activation, not just brightness.
+  const lineWidth = useDerivedValue(
+    () => 1.5 + activation.value * (1 + 0.6 * pulse.value),
+    [activation, pulse],
+  );
+
+  return (
+    <Group>
+      {/* Atmospheric glow centered between Fixer and Skeptic — brighter
+          than usual when activated. Reads as the system contracted. */}
+      <Group opacity={atmosphereOpacity}>
+        <Circle cx={cx} cy={cy + R * 0.05} r={R * 0.95}>
+          <RadialGradient
+            c={vec(cx, cy + R * 0.05)}
+            r={R * 1.0}
+            colors={[
+              'rgba(224, 110, 100, 0.55)',
+              'rgba(177, 156, 217, 0.30)',
+              'rgba(177, 156, 217, 0)',
+            ]}
+          />
+        </Circle>
+      </Group>
+
+      {/* Triangle legs — pulse in opacity + width when activated. */}
+      <Path path={legPath} color="rgba(255,255,255,0.9)" style="stroke"
+            strokeWidth={lineWidth} opacity={lineOpacity} />
+
+      {/* Three lit nodes. Each is a halo + a solid colored circle.
+          Halo radius scales with activation; the solid core stays the
+          same color (wound red / fixer amber / skeptic blue). */}
+      <SurvivalNode cx={woundP.x}   cy={woundP.y}   color="#E05050" haloR={haloRadius} coreR={nodeRadius} />
+      <SurvivalNode cx={fixerP.x}   cy={fixerP.y}   color="#F0C070" haloR={haloRadius} coreR={nodeRadius} />
+      <SurvivalNode cx={skepticP.x} cy={skepticP.y} color="#90C8E8" haloR={haloRadius} coreR={nodeRadius} />
+    </Group>
+  );
+}
+
+function SurvivalNode({
+  cx, cy, color, haloR, coreR,
+}: {
+  cx: number; cy: number; color: string;
+  haloR: ReturnType<typeof useDerivedValue<number>>;
+  coreR: ReturnType<typeof useDerivedValue<number>>;
+}) {
+  return (
+    <Group>
+      <Circle cx={cx} cy={cy} r={haloR}>
+        <RadialGradient c={vec(cx, cy)} r={28}
+          colors={[color + 'BB', color + '33', color + '00']} />
+      </Circle>
+      <Circle cx={cx} cy={cy} r={coreR} color={color} style="fill" opacity={0.85} />
+      <Circle cx={cx} cy={cy} r={coreR} color={color} style="stroke" strokeWidth={1.5} />
+    </Group>
+  );
+}
+
+// GROUND BUILDING — dim canvas warms as life elements (warm amber dots)
+// appear from the bottom upward. Once enough have accumulated, a vertical
+// wave of light flows upward through the canvas — the felt sense of
+// energy moving freely once there's enough ground beneath it. Continuous
+// loop: dots build → canvas warms → wave flows → soft reset.
+function GroundBuilding({ W, H }: { W: number; H: number }) {
+  // build: 0 → 1 over 4.5s as dots accumulate.
+  // wave:  0 → 1 once build > 0.65, drives the upward light current.
+  // reset: 0.5s soft fade back to start, then loop.
+  const build = useSharedValue(0);
+  const wave = useSharedValue(0);
+  useEffect(() => {
+    build.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 4500, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 1500 }),
+        withTiming(0, { duration: 500, easing: Easing.in(Easing.ease) }),
+      ),
+      -1, false,
+    );
+    // Wave ticks continuously and is masked to invisibility while build
+    // is below the gating threshold inside the derived opacity.
+    wave.value = withRepeat(
+      withTiming(1, { duration: 2200, easing: Easing.linear }),
+      -1, false,
+    );
+  }, [build, wave]);
+
+  // Background warm tint — empty canvas brightens as the ground builds.
+  const warmthOpacity = useDerivedValue(() => 0.05 + build.value * 0.35, [build]);
+
+  // Rising current of light — only visible after ~0.45 ground built so
+  // the visual feels EARNED, not gratuitous.
+  const waveOpacity = useDerivedValue(() => {
+    const gate = Math.max(0, (build.value - 0.45) / 0.55);   // 0 below 0.45, 1 at 1.0
+    const flicker = 0.6 + 0.4 * Math.sin(wave.value * Math.PI * 2);
+    return gate * 0.55 * flicker;
+  }, [build, wave]);
+  const waveY = useDerivedValue(
+    () => H * (1 - wave.value) - H * 0.05,
+    [wave, H],
+  );
+  const waveCenter = useDerivedValue(
+    () => vec(W / 2, H * (1 - wave.value) - H * 0.05),
+    [wave, W, H],
+  );
+
+  // 9 ground dots arranged in a slightly randomized cluster across the
+  // bottom 60% of the canvas. Each appears in turn — dot i lights up at
+  // build-progress >= i / N.
+  const dots: Array<{ fx: number; fy: number }> = [
+    { fx: 0.18, fy: 0.92 }, { fx: 0.42, fy: 0.95 }, { fx: 0.66, fy: 0.93 },
+    { fx: 0.30, fy: 0.82 }, { fx: 0.55, fy: 0.84 }, { fx: 0.78, fy: 0.80 },
+    { fx: 0.22, fy: 0.70 }, { fx: 0.50, fy: 0.68 }, { fx: 0.74, fy: 0.66 },
+  ];
+
+  return (
+    <Group>
+      {/* Background warm tint — radial gradient anchored at the bottom
+          center so the warmth feels like it rises from the ground. */}
+      <Group opacity={warmthOpacity}>
+        <Circle cx={W / 2} cy={H * 0.95} r={W * 0.85}>
+          <RadialGradient
+            c={vec(W / 2, H * 0.95)}
+            r={W * 0.95}
+            colors={[colors.amber + '55', colors.amber + '22', colors.amber + '00']}
+          />
+        </Circle>
+      </Group>
+
+      {/* Rising current — a soft horizontal band of light moves upward
+          once enough ground has been built. */}
+      <Group opacity={waveOpacity}>
+        <Circle cx={W / 2} cy={waveY} r={W * 0.55}>
+          <RadialGradient
+            c={waveCenter}
+            r={W * 0.6}
+            colors={[colors.amber + 'AA', colors.amber + '22', colors.amber + '00']}
+          />
+        </Circle>
+      </Group>
+
+      {/* Ground dots — appear in turn from bottom upward. */}
+      {dots.map((d, i) => (
+        <GroundDot
+          key={i}
+          cx={W * d.fx}
+          cy={H * d.fy}
+          phase={build}
+          myStart={i / dots.length}
+        />
+      ))}
+    </Group>
+  );
+}
+
+function GroundDot({
+  cx, cy, phase, myStart,
+}: {
+  cx: number; cy: number;
+  phase: ReturnType<typeof useSharedValue<number>>;
+  myStart: number;
+}) {
+  const slotEnd = myStart + 0.10;
+  const opacity = useDerivedValue(() => {
+    const v = phase.value;
+    if (v < myStart) return 0;
+    if (v < slotEnd) return ((v - myStart) / (slotEnd - myStart)) * 0.9;
+    return 0.9;
+  }, [phase, myStart, slotEnd]);
+  return (
+    <Group opacity={opacity}>
+      <Circle cx={cx} cy={cy} r={10} opacity={0.5}>
+        <RadialGradient c={vec(cx, cy)} r={12} colors={[colors.amber + 'AA', colors.amber + '00']} />
+      </Circle>
+      <Circle cx={cx} cy={cy} r={5} color={colors.amber} style="fill" />
     </Group>
   );
 }
