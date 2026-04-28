@@ -60,9 +60,17 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'buildingCapacity'     ? <BuildingCapacity W={W} H={H} /> : null}
       {kind === 'twoTracks'            ? <TwoTracks W={W} H={H} /> : null}
       {kind === 'energyMoves'          ? <EnergyMoves W={W} H={H} /> : null}
-      {kind === 'survivalMode'         ? <SurvivalMode W={W} H={H} /> : null}
-      {kind === 'groundBuilding'       ? <GroundBuilding W={W} H={H} /> : null}
-      {kind === 'triangleToCircle'     ? <TriangleToCircle W={W} H={H} /> : null}
+      {/* DISABLED PROBE — these three visuals are the most recently-added
+          and the prime suspects for the Healing-tab native crash that
+          the JS error boundary can't catch. Render nothing for them so
+          we can verify whether disabling them stops the crash. If the
+          tab now opens cleanly the offender is one of these three; we
+          re-enable them one at a time to identify the exact culprit.
+          The implementations below are intentionally left in place so
+          the revert is a one-line change. */}
+      {kind === 'survivalMode'         ? null /* <SurvivalMode W={W} H={H} /> */ : null}
+      {kind === 'groundBuilding'       ? null /* <GroundBuilding W={W} H={H} /> */ : null}
+      {kind === 'triangleToCircle'     ? null /* <TriangleToCircle W={W} H={H} /> */ : null}
       {/* 'noVisual' renders nothing inside the canvas. GuideSlide skips
           the Canvas wrapper entirely for this kind so a tiny placeholder
           spacer is shown instead — see GuideSlide.tsx. */}
