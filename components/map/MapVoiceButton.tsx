@@ -243,15 +243,21 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   /* =====================================================================
    * LEGACY FALLBACK PIPELINE
    * ===================================================================== */
-  // Hard stop on whatever audio is currently playing — ALWAYS called
-  // immediately before a new player is created and before a new
-  // recording session begins. Without this, the sentence-streaming
-  // playback chain from the PREVIOUS turn could still be draining when
-  // the user kicks off a new turn, producing two voices on top of each
-  // other. Mutating audioPlayerRef.current to null also breaks the
-  // 'while (audioPlayerRef.current === player)' wait loop inside
-  // playArrayBuffer so the old chain unwinds cleanly.
+  // Monotonic turn id. Every time the user starts a new voice turn
+  // (mic press → recording) we increment this. The sentence-streaming
+  // chain in legacyStopAndRespond captures the id at enqueue time and
+  // bails out if the id no longer matches at play time — the previous
+  // turn's pending TTS responses cannot create a new player while a
+  // newer turn is in flight. Combined with stopAndClearAudio() this
+  // gives a hard "kill all" guarantee end-to-end.
+  const voiceTurnId = useRef(0);
+
+  // Hard stop on whatever audio is currently playing AND invalidate any
+  // sentence-stream playback chains from prior turns. Called at the
+  // start of every recording AND before each sentence's player is
+  // allocated.
   async function stopAndClearAudio() {
+    voiceTurnId.current += 1;
     const prev = audioPlayerRef.current;
     audioPlayerRef.current = null;
     if (prev) {
@@ -299,6 +305,12 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   }
 
   async function legacyStopAndRespond() {
+    // Snapshot the turn id at the moment we start handling this commit.
+    // Every async branch below — TTS fetch, sentence playback chain —
+    // checks against this so a stale turn whose response arrived AFTER
+    // a new turn started can't accidentally play.
+    const myTurn = voiceTurnId.current;
+    const isStale = () => voiceTurnId.current !== myTurn;
     // Wrap the ENTIRE pipeline in a single try/catch so any throw — from
     // recorder, transcribe, chat, TTS, playback — surfaces a visible
     // error log and resets the UI rather than failing silently.
@@ -336,7 +348,19 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
       const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
       console.log('[map-voice] Step 3: POST /api/transcribe (mime=' + mime + ')');
-      const transcript = await api.transcribe(uri, mime);
+      // 5s transcription timeout — Whisper rarely takes more than 1-2s
+      // for short voice clips, so anything past 5s is almost certainly
+      // a stalled connection and we should reset the UI rather than
+      // hold the user on 'thinking…' indefinitely.
+      const transcript = await Promise.race([
+        api.transcribe(uri, mime),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error('transcription timeout')), 5000),
+        ),
+      ]).catch((e) => {
+        console.warn('[map-voice] Step 3 ✗ transcribe failed/timeout:', (e as Error)?.message);
+        return null;
+      });
       const text = (transcript || '').trim();
       console.log('[map-voice] Step 3 ✓ transcript:', text.length, 'chars',
         text ? `"${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"` : '(empty)');
@@ -377,8 +401,13 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
         console.log('[map-voice] Step 5: POST /api/speak (' + finalText.length + ' chars) — "' + finalText.slice(0, 40) + '…"');
         const speakP = api.speak(finalText, { mapVoice: true });
         playChain = playChain.then(async () => {
+          // Stale-turn check — if the user started a new voice turn
+          // while this sentence's TTS was in flight, drop the audio
+          // on the floor instead of overlapping with the new turn.
+          if (isStale()) return;
           try {
             const buf = await speakP;
+            if (isStale()) return;
             if (!buf) {
               console.error('[map-voice] Step 5 ✗ /api/speak returned null');
               return;
