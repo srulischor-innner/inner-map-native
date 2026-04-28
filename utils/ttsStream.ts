@@ -48,6 +48,29 @@ function bytesToBase64(bytes: Uint8Array): string {
 export function isStreamingActive(): boolean { return active; }
 export function getStreamingMessageId(): string | null { return currentMessageId; }
 
+/** One-shot playback of an already-complete message. Used when the user
+ *  flips the audio toggle ON and we want the most recent AI bubble to
+ *  play immediately. Cancels anything currently playing, then queues the
+ *  full text as a single TTS fetch. Bypasses the chunking machinery so
+ *  the user hears the message from the first sentence — no streaming
+ *  partials, no contention with a future streamed turn. */
+export async function playMessageNow(messageId: string, text: string): Promise<void> {
+  const t = (text || '').trim();
+  console.log('[tts-stream] playMessageNow id=' + messageId.slice(0, 8) + ' chars=' + t.length);
+  if (!t) return;
+  // Reset state via cancelStream + the explicit reassignments. This makes
+  // sure consumedSoFar / buffer / queue from any prior stream are cleared
+  // so a later streamed turn starts from a clean slate.
+  cancelStream();
+  active = false;          // we're not appending; mark as one-shot
+  currentMessageId = messageId;
+  buffer = '';
+  consumedSoFar = 0;
+  queue = [];
+  watchToken++;
+  await enqueueFetch(t);
+}
+
 /** Begin a new streaming session for the given AI message id. Cancels
  *  any prior streaming session AND stops the single-clip ttsPlayer.
  *  Returns immediately — the caller appends text via appendStreamText
@@ -187,15 +210,27 @@ async function playNext(): Promise<void> {
   }
   const next = queue.shift()!;
   const myToken = watchToken;
+  // Claim the player slot SYNCHRONOUSLY. Without this, `await
+  // setAudioModeAsync` below is a window where a second enqueueFetch
+  // sees `!player === true` and kicks off a parallel playNext —
+  // producing two simultaneous audio players and the "last sentence
+  // jumps to the beginning" symptom.
+  const p = createAudioPlayer({ uri: next.uri });
+  player = p;
+  console.log('[tts-stream] playNext claim id=' + (currentMessageId?.slice(0, 8) || '?') + ' remaining=' + queue.length);
   try {
     await setAudioModeAsync({
       allowsRecording: false, playsInSilentMode: true,
       interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
     });
   } catch {}
-  if (myToken !== watchToken) return;
-  const p = createAudioPlayer({ uri: next.uri });
-  player = p;
+  if (myToken !== watchToken) {
+    // We were cancelled during the audio-mode setup. Drop the player
+    // we claimed without playing it.
+    try { p.remove(); } catch {}
+    if (player === p) player = null;
+    return;
+  }
   try { p.play(); } catch {}
   // Watch for finish — poll cheaply, then advance.
   while (player === p && myToken === watchToken) {

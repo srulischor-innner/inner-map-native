@@ -40,6 +40,7 @@ import { consumeSelfMode } from '../../utils/selfMode';
 import {
   startStream as startTTSStream, appendStreamText as appendTTSStream,
   finishStream as finishTTSStream, cancelStream as cancelTTSStream,
+  playMessageNow as playTTSNow,
 } from '../../utils/ttsStream';
 import { AudioToggle } from '../../components/AudioToggle';
 import { useExperienceLevel } from '../../services/experienceLevel';
@@ -84,9 +85,40 @@ export default function ChatScreen() {
   const [audioEnabled, setAudioEnabled] = useState(false);
   const audioEnabledRef = useRef(audioEnabled);
   useEffect(() => { audioEnabledRef.current = audioEnabled; }, [audioEnabled]);
+  // Latest messages snapshot accessible from the toggle handler without
+  // hitting React's stale-closure trap. Updated on every render — cheap.
+  const messagesRef = useRef<ChatMsg[]>([]);
+  useEffect(() => { messagesRef.current = messages; });
   function toggleAudio() {
-    if (audioEnabled) cancelTTSStream();
-    setAudioEnabled((prev) => !prev);
+    const wasOn = audioEnabledRef.current;
+    console.log('[audio] toggle:', wasOn ? 'ON→OFF' : 'OFF→ON');
+    if (wasOn) {
+      cancelTTSStream();
+      setAudioEnabled(false);
+      return;
+    }
+    // Flipping from OFF→ON. Set the ref synchronously so the next AI
+    // turn's `streamingTTSStarted` capture sees the new value even if
+    // the user sends a message before React's re-render lands.
+    audioEnabledRef.current = true;
+    setAudioEnabled(true);
+    // Find the most recent assistant bubble that has finished streaming
+    // and play it. Streaming bubbles are skipped — those will be handled
+    // by the live chunked TTS path on their next delta.
+    const list = messagesRef.current;
+    const lastAI = (() => {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const m = list[i];
+        if (m.role === 'assistant' && !m.streaming && m.text && m.text.trim()) return m;
+      }
+      return null;
+    })();
+    console.log('[audio] last AI message:', lastAI ? `id=${lastAI.id.slice(0, 8)} chars=${lastAI.text.length}` : '(none)');
+    if (lastAI) {
+      playTTSNow(lastAI.id, lastAI.text).catch((e) =>
+        console.warn('[audio] playMessageNow threw:', (e as Error)?.message),
+      );
+    }
   }
   // Experience level — drives which voice mode the AI uses on the server.
   // Synced from AsyncStorage; updates immediately when changed in settings.
@@ -305,6 +337,7 @@ export default function ChatScreen() {
       // so a mid-stream flip doesn't half-start things — the toggle's
       // own cancelTTSStream call still kills any in-flight playback.
       const streamingTTSStarted = audioEnabledRef.current;
+      console.log('[audio] stream starting, audioEnabledRef:', audioEnabledRef.current, 'streamingTTSStarted:', streamingTTSStarted);
       if (streamingTTSStarted) {
         startTTSStream(streamId).catch(() => {});
       }

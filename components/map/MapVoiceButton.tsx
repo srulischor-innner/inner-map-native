@@ -78,10 +78,15 @@ import { RealtimeSession, VoiceState } from './RealtimeSession';
 // Whisper → /api/chat → /api/speak), which handles M4A natively and is
 // stable on the current build.
 // ============================================================================
-// Re-enabled: recorder now writes true PCM16 WAV on both platforms, so the
-// Realtime path can actually upload valid audio. Falls back to legacy
-// automatically if the WebSocket fails to open in 2.5s.
-const USE_REALTIME = true;
+// DISABLED: when this was on, the WebSocket opened cleanly so the 2.5s
+// fallback timer didn't trigger, but the upstream Realtime API never
+// fired response.done — leaving the user stuck on "Thinking…" with no
+// audible response and no error path. The legacy pipeline below
+// (record → /api/transcribe → /api/chat → /api/speak) is fully
+// instrumented end-to-end and reliably returns a spoken reply, so we
+// route every map-voice turn through it until the Realtime PCM16
+// streaming has been validated on a real device build.
+const USE_REALTIME = false;
 
 type Props = {
   onDetectedPart?: (part: string, label?: string | null) => void;
