@@ -35,6 +35,7 @@ import { setAttentionState, setNoticedPart, resetAttentionState } from '../../ut
 import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
+import { activatePartOnMap, ActivatablePart } from '../../utils/mapActivation';
 import { consumeSelfMode } from '../../utils/selfMode';
 import {
   startStream as startTTSStream, appendStreamText as appendTTSStream,
@@ -334,6 +335,16 @@ export default function ChatScreen() {
                   // Signal the top tab bar to pulse the MAP label — a gentle
                   // "your map just updated" cue that doesn't interrupt chat.
                   pulseMapTab();
+                  // Light up the matching node on the Map tab — drives the
+                  // ripple + connection-line glow in InnerMapCanvas. Maps
+                  // any incoming category names to the canvas's NodeKey set.
+                  const partActivationMap: Record<string, ActivatablePart> = {
+                    wound: 'wound', fixer: 'fixer', skeptic: 'skeptic', self: 'self',
+                    'self-like': 'self-like', compromised: 'self-like',
+                    manager: 'manager', firefighter: 'firefighter',
+                  };
+                  const activatable = partActivationMap[detectedPart];
+                  if (activatable) activatePartOnMap(activatable);
                 }
               }
               // Update the ambient attention indicator if the AI emitted a

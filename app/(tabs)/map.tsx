@@ -23,10 +23,12 @@ import { MapVoiceButton } from '../../components/map/MapVoiceButton';
 import { ProgressStrip } from '../../components/map/ProgressStrip';
 import { CircleMapCanvas, IntegrationKey } from '../../components/map/CircleMapCanvas';
 import { IntegrationPanel } from '../../components/map/IntegrationPanel';
+import { subscribeMapActivation } from '../../utils/mapActivation';
 
 const INTEGRATION_VIEW_SEEN_KEY = 'integration_view_seen';
 const SECOND_LAYER_INTRODUCED_KEY = 'second_layer_introduced';
 const CIRCLE_VIEW_INTRO_SEEN_KEY = 'circle_view_intro_seen';
+const MAP_INTRO_SEEN_KEY = 'map_intro_seen';
 
 // A "layer" is one wound + its surrounding fixer/skeptic/compromise/objective
 // /alternative-story content. The map tab renders one layer at a time. When
@@ -63,6 +65,23 @@ export default function MapScreen() {
     const t = setTimeout(() => setActivePart(null), 8000);
     return () => clearTimeout(t);
   }, [activePart]);
+
+  // Subscribe to chat-tab activations — when the AI detects a part during
+  // conversation (CHAT_META fires), activatePartOnMap is called from the
+  // chat tab and the Map's activePart gets set, which springs the matching
+  // node + lights up the connection lines + emits a ripple. Lets the map
+  // respond to what's happening in the chat, not just to user taps.
+  useEffect(() => {
+    const unsub = subscribeMapActivation((part) => {
+      const known: Record<string, NodeKey> = {
+        wound: 'wound', fixer: 'fixer', skeptic: 'skeptic', self: 'self',
+        'self-like': 'self-like', manager: 'manager', firefighter: 'firefighter',
+      };
+      const key = known[part];
+      if (key) setActivePart(key);
+    });
+    return unsub;
+  }, []);
 
   // Fetch the latest map + parts on mount. Swallow errors — empty still renders.
   // The DB columns + API fields keep their legacy "...Score" suffix to avoid a
@@ -281,6 +300,29 @@ export default function MapScreen() {
     return () => { cancelled = true; };
   }, [layers.length, secondLayerOpacity]);
 
+  // First-time intro panel for the Map tab itself. Slides up the very
+  // first time a user opens the Map; never reappears once dismissed.
+  // Replaces the on-canvas hint that was getting in the way of the
+  // (faint) triangle.
+  const [mapIntroVisible, setMapIntroVisible] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const seen = await AsyncStorage.getItem(MAP_INTRO_SEEN_KEY);
+        if (seen === '1' || cancelled) return;
+        // Small delay so the tab transition + canvas first paint settle
+        // before the bottom sheet slides up.
+        setTimeout(() => { if (!cancelled) setMapIntroVisible(true); }, 500);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  function dismissMapIntro() {
+    setMapIntroVisible(false);
+    AsyncStorage.setItem(MAP_INTRO_SEEN_KEY, '1').catch(() => {});
+  }
+
   // First-time intro panel for the integration view. Auto-opens 600ms
   // after the user toggles into circle view for the very first time, so
   // the cross-fade can complete before the sheet slides up. AsyncStorage
@@ -476,6 +518,11 @@ export default function MapScreen() {
       <CircleIntroPanel
         visible={circleIntroVisible}
         onClose={dismissCircleIntro}
+      />
+
+      <MapIntroPanel
+        visible={mapIntroVisible}
+        onClose={dismissMapIntro}
       />
 
       <PartFolderModal
@@ -722,6 +769,46 @@ function CircleIntroPanel({ visible, onClose }: { visible: boolean; onClose: () 
           </Text>
           <Pressable onPress={onClose} style={styles.introButton} accessibilityLabel="Explore">
             <Text style={styles.introButtonText}>Explore</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ============================================================================
+// First-time intro panel for the Map tab itself. Auto-opens 500ms after
+// the Map tab first mounts; AsyncStorage flag MAP_INTRO_SEEN_KEY ensures
+// it never reappears. Same bottom-sheet grammar as CircleIntroPanel.
+// ============================================================================
+function MapIntroPanel({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <Pressable style={styles.introBackdrop} onPress={onClose} />
+      <View style={[styles.introSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View style={styles.introHandle} />
+        <View style={styles.introHeaderRow}>
+          <Text style={styles.introTitle}>Your Map</Text>
+          <Pressable onPress={onClose} style={styles.introClose} accessibilityLabel="Close" hitSlop={10}>
+            <Ionicons name="close" size={22} color={colors.creamFaint} />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.introBody} showsVerticalScrollIndicator={false}>
+          <Text style={styles.introParagraph}>
+            This is where your inner world takes shape. As you have
+            conversations, parts of your system will appear here. Tap any
+            node to learn more. Your map gets more accurate the longer you
+            use it.
+          </Text>
+          <Pressable onPress={onClose} style={styles.introButton} accessibilityLabel="Got it">
+            <Text style={styles.introButtonText}>Got it</Text>
           </Pressable>
         </ScrollView>
       </View>
