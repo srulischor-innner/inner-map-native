@@ -166,8 +166,14 @@ export function GuideAskModal({ visible, onClose }: Props) {
       }
     });
 
+  // Sheet height shrinks with translateY so the BOTTOM always sits at
+  // the bottom of the screen at every snap. Without this, the sheet was
+  // full-screen tall at top:0 with only translateY shifting it down,
+  // which pushed its bottom edge (and the input bar inside it) off
+  // screen at every non-zero translateY.
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
+    height: SCREEN_HEIGHT - translateY.value,
   }));
 
   // ───── chat send ─────
@@ -359,7 +365,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
               keyboard within the sheet bounds. */}
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={0}
+            keyboardVerticalOffset={60}
             style={styles.flex}
           >
             <ScrollView
@@ -487,22 +493,21 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.4)',
   },
-  // Sheet is full-screen tall; translateY shifts it down so only the
-  // bottom (SCREEN_HEIGHT − translateY) portion is visible. Bottom of
-  // the sheet always reaches the bottom of the screen at every snap
-  // position.
+  // Sheet is positioned at top:0 — translateY (from sheetStyle) shifts
+  // it down to its snap; height (also from sheetStyle) is set to
+  // (SCREEN_HEIGHT − translateY) so the bottom always reaches the
+  // bottom of the screen and the input bar inside is on-screen at
+  // every snap. The static height: SCREEN_HEIGHT was the bug.
   sheet: {
     position: 'absolute',
     left: 0,
     right: 0,
     top: 0,
-    height: SCREEN_HEIGHT,
     backgroundColor: '#0e0e1a',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     borderTopWidth: 0.5,
     borderColor: 'rgba(230,180,122,0.2)',
-    overflow: 'hidden',
   },
   flex: { flex: 1 },
 
