@@ -185,26 +185,44 @@ const OUTSIDE_IN: SpectrumCopy = {
   rightIndicatorsHeading: 'Inside-Out indicators',
   leftPlaceholders: [
     "if they would just…",
-    "when things settle down…",
-    "once I achieve…",
+    "when things calm down…",
+    "once this changes…",
+    "language that places the source of resolution outside",
+    "reactions to events without curiosity about what they're showing",
   ],
   rightPlaceholders: [
     "I notice in myself…",
-    "something in me…",
+    "something in me is…",
     "I'm starting to see that…",
+    "this keeps happening and I wonder what it's showing me",
+    "taking responsibility for inner experience regardless of outer circumstances",
   ],
   sections: [
     {
-      label: 'What this tracks',
+      label: 'What this measures',
       paragraphs: [
-        "This tracks how your protective parts are orienting to the world. Are they still looking outside for what can only be found within?",
-        "Toward Outside-In suggests your parts are still largely focused outward — believing that external things (other people changing, circumstances improving, achievements) will resolve what's happening inside.",
-        "Toward Inside-Out suggests a conceptual shift is happening — your parts are beginning to recognize that the resources exist internally. This is understanding, not healing — but understanding is where healing begins.",
+        "This isn't about ignoring your outer life. It's about the direction of flow.",
+        "Outside-in means external events are driving you — what happens determines how you feel and what you do. Your mood, your sense of worth, your peace — all of it contingent on what's happening around you.",
+        "Inside-out means something has shifted. Your inner world is becoming the source, and your outer life is beginning to reflect it. Your relationships, your choices, your way of moving through the world — flowing from within rather than reacting to what's outside.",
+        "Your outer life is also worth looking at — not because the answer is out there, but because it's a mirror. The patterns that keep repeating, the situations that keep finding you, the relationships that activate the same feelings — these are showing you something about what's happening inside.",
+        "This spectrum tracks that shift. From being driven by what happens — to moving from who you are.",
+      ],
+    },
+    {
+      label: 'Toward Outside-In',
+      paragraphs: [
+        "External events are still largely driving the experience. Worth, peace, and direction feel contingent on circumstances — on other people changing, situations improving, things settling down.",
+      ],
+    },
+    {
+      label: 'Toward Inside-Out',
+      paragraphs: [
+        "A shift is happening. There's growing recognition that what you're looking for can only be found within — and that your outer life is beginning to reflect your inner one rather than dictate it.",
       ],
     },
   ],
   howItMoves:
-    "This shifts as your understanding deepens — as you begin to genuinely recognize that what you're looking for outside cannot be found there. It often moves through conversation and insight before the system catches up experientially.",
+    "This shifts as genuine recognition deepens — not just understanding the concept but actually beginning to live from the inside out. It often moves first through insight, then through practice, then through the outer life gradually beginning to reflect the inner shift. The mirror becomes clearer over time.",
 };
 
 const BLENDED_SELF_LED: SpectrumCopy = {
