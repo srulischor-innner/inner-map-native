@@ -375,7 +375,7 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
       await new Promise<void>((resolve) => {
         api.streamChat(
-          { messages: legacyHistory.current, mode: 'ongoing', sessionId },
+          { messages: legacyHistory.current, mode: 'ongoing', sessionId, mapVoice: true },
           {
             onDelta: (d) => {
               fullReply += d;

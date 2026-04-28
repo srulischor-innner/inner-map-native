@@ -113,6 +113,9 @@ export const api = {
       wasInterrupted?: boolean;
       selfMode?: boolean;
       experienceLevel?: 'curious' | 'familiar' | 'experienced';
+      /** When true, server swaps in MAP_VOICE_PROMPT and caps max_tokens
+       *  at 150 for snappy spoken replies. */
+      mapVoice?: boolean;
     },
     cb: StreamCallbacks,
   ): Promise<() => void> {
@@ -127,6 +130,7 @@ export const api = {
     };
     if (params.selfMode) bodyObj.selfMode = true;
     if (params.experienceLevel) bodyObj.experienceLevel = params.experienceLevel;
+    if (params.mapVoice) bodyObj.mapVoice = true;
     console.log(
       `[chat] sending mode=${bodyObj.mode} msgCount=${params.messages.length} lastRole=${params.messages[params.messages.length - 1]?.role}`,
     );
