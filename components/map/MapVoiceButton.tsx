@@ -241,10 +241,33 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   }, []);
 
   /* =====================================================================
-   * LEGACY FALLBACK PIPELINE (unchanged behavior from the previous build)
+   * LEGACY FALLBACK PIPELINE
    * ===================================================================== */
+  // Hard stop on whatever audio is currently playing — ALWAYS called
+  // immediately before a new player is created and before a new
+  // recording session begins. Without this, the sentence-streaming
+  // playback chain from the PREVIOUS turn could still be draining when
+  // the user kicks off a new turn, producing two voices on top of each
+  // other. Mutating audioPlayerRef.current to null also breaks the
+  // 'while (audioPlayerRef.current === player)' wait loop inside
+  // playArrayBuffer so the old chain unwinds cleanly.
+  async function stopAndClearAudio() {
+    const prev = audioPlayerRef.current;
+    audioPlayerRef.current = null;
+    if (prev) {
+      try { prev.pause(); } catch {}
+      try { prev.remove(); } catch {}
+    }
+  }
+
   async function legacyStart() {
     console.log('[legacy] 1/7 requesting mic permission');
+    // Stop any in-flight TTS playback BEFORE we re-arm the mic. Two
+    // bugs fall out of this: (a) the prior turn's sentence chain
+    // overlapping with the new turn's reply audio, (b) the audio
+    // session getting flipped to recording while a player is still
+    // alive on the playback channel.
+    await stopAndClearAudio();
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
       console.log('[legacy] 1/7 permission granted:', perm.granted);
@@ -440,6 +463,11 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   // happens when the session is still in PlayAndRecord/recording category
   // from the prior mic capture — this is the explicit reset.
   async function playArrayBuffer(buf: ArrayBuffer) {
+    // Single-player guarantee. Tear down any prior player BEFORE we
+    // create the next one. Combined with the sequential playChain in
+    // legacyStopAndRespond this keeps overlapping voices impossible
+    // even when the chain is racing tightly between sentences.
+    await stopAndClearAudio();
     try {
       await setAudioModeAsync({
         allowsRecording: false,
