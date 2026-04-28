@@ -7,13 +7,13 @@
 // Animated visuals use Reanimated shared values + useDerivedValue so Skia
 // paints read them on the UI thread (no React re-renders per frame).
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   Canvas, Circle, Group, Path, RadialGradient, LinearGradient, Skia, Line, Rect, DashPathEffect, vec,
 } from '@shopify/react-native-skia';
-import {
+import Animated, {
   useSharedValue, withRepeat, withTiming, withSequence, withDelay,
-  Easing, useDerivedValue,
+  Easing, useDerivedValue, useAnimatedStyle,
 } from 'react-native-reanimated';
 import { colors } from '../../constants/theme';
 import type { NodeVisualKind } from '../../utils/guideContent';
@@ -32,6 +32,17 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
   }
   const cx = W / 2;
   const cy = H / 2;
+
+  // The two visuals that previously crashed on iOS Skia get their own
+  // self-contained renderers OUTSIDE the shared Canvas dispatcher. Each
+  // one wraps its Canvas in an Animated.View whose opacity is driven by
+  // a Reanimated SharedValue — so the only animated property on the
+  // hot path is RN's view opacity (rock-solid) and every Skia primitive
+  // inside is rendered with static numeric values. No animated
+  // strokeWidth, no Skia.Path.Make() in render, no derived Skia paint
+  // inputs. This is the pattern recommended for fragile Skia targets.
+  if (kind === 'survivalMode') return <SurvivalModeSafe W={W} H={H} />;
+  if (kind === 'groundBuilding') return <GroundBuildingSafe W={W} H={H} />;
 
   return (
     <Canvas style={{ width: W, height: H }}>
@@ -60,17 +71,10 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'buildingCapacity'     ? <BuildingCapacity W={W} H={H} /> : null}
       {kind === 'twoTracks'            ? <TwoTracks W={W} H={H} /> : null}
       {kind === 'energyMoves'          ? <EnergyMoves W={W} H={H} /> : null}
-      {/* DISABLED PROBE — these three visuals are the most recently-added
-          and the prime suspects for the Healing-tab native crash that
-          the JS error boundary can't catch. Render nothing for them so
-          we can verify whether disabling them stops the crash. If the
-          tab now opens cleanly the offender is one of these three; we
-          re-enable them one at a time to identify the exact culprit.
-          The implementations below are intentionally left in place so
-          the revert is a one-line change. */}
-      {kind === 'survivalMode'         ? null /* <SurvivalMode W={W} H={H} /> */ : null}
-      {kind === 'groundBuilding'       ? null /* <GroundBuilding W={W} H={H} /> */ : null}
-      {kind === 'triangleToCircle'     ? null /* <TriangleToCircle W={W} H={H} /> */ : null}
+      {/* survivalMode + groundBuilding handled above (Animated.View
+          wrapper pattern). triangleToCircle still disabled while we
+          stabilize — render an empty Skia tree for it. */}
+      {kind === 'triangleToCircle'     ? null : null}
       {/* 'noVisual' renders nothing inside the canvas. GuideSlide skips
           the Canvas wrapper entirely for this kind so a tiny placeholder
           spacer is shown instead — see GuideSlide.tsx. */}
@@ -1397,6 +1401,146 @@ function BuildingCapacityDot({
 // activated state, then dims and settles for ~2s, then re-activates. The
 // felt sense is "alert and protective, then standing down once it feels
 // safer." Loops continuously.
+// =============================================================================
+// SAFE re-implementations of survivalMode + groundBuilding. The previous
+// versions crashed on iOS Skia with no JS exception (so the React error
+// boundary couldn't catch them). The pattern that works:
+//   - Animate the wrapping Animated.View opacity, NOT internal Skia props
+//   - Build any Skia.Path objects inside useMemo, never inline at render
+//   - Static strokeWidth on all <Path> elements
+//   - All node geometry computed from W/H once via plain const, not
+//     SharedValue-derived
+// =============================================================================
+function SurvivalModeSafe({ W, H }: { W: number; H: number }) {
+  const cx = W / 2;
+  const triH = H * 0.45;
+  const triW = W * 0.55;
+  // Triangle node positions (static).
+  const woundX = cx;
+  const woundY = H * 0.20;
+  const fixerX = cx + triW / 2;
+  const fixerY = H * 0.20 + triH;
+  const skepticX = cx - triW / 2;
+  const skepticY = H * 0.20 + triH;
+
+  // Triangle leg path — built once.
+  const triPath = useMemo(() => {
+    const p = Skia.Path.Make();
+    p.moveTo(woundX, woundY);
+    p.lineTo(fixerX, fixerY);
+    p.lineTo(skepticX, skepticY);
+    p.close();
+    return p;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [W, H]);
+
+  // Single shared opacity drive for the whole canvas. 0.6 ↔ 1.0 / 1200ms
+  // — the system pulsing in alarm. Animated.View opacity is the only
+  // moving piece; every Skia element is rendered with static numerics.
+  const pulse = useSharedValue(0.6);
+  useEffect(() => {
+    pulse.value = withRepeat(
+      withTiming(1.0, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
+      -1, true,
+    );
+  }, [pulse]);
+  const animStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
+
+  return (
+    <Animated.View style={[{ width: W, height: H }, animStyle]}>
+      <Canvas style={{ width: W, height: H }}>
+        {/* Triangle perimeter — quiet purple-amber. */}
+        <Path
+          path={triPath}
+          style="stroke"
+          strokeWidth={1.5}
+          color="rgba(138,122,170,0.45)"
+        />
+        {/* Wound node — red, lit. */}
+        <Group>
+          <Circle cx={woundX} cy={woundY} r={28} color="rgba(224,80,80,0.18)" />
+          <Circle cx={woundX} cy={woundY} r={20} style="stroke" strokeWidth={2} color="#E05050" />
+          <Circle cx={woundX} cy={woundY} r={6}  color="#E05050" />
+        </Group>
+        {/* Fixer node — amber, lit. */}
+        <Group>
+          <Circle cx={fixerX} cy={fixerY} r={26} color="rgba(230,180,122,0.18)" />
+          <Circle cx={fixerX} cy={fixerY} r={18} style="stroke" strokeWidth={2} color="#E6B47A" />
+          <Circle cx={fixerX} cy={fixerY} r={5}  color="#E6B47A" />
+        </Group>
+        {/* Skeptic node — blue, lit. */}
+        <Group>
+          <Circle cx={skepticX} cy={skepticY} r={26} color="rgba(134,189,220,0.18)" />
+          <Circle cx={skepticX} cy={skepticY} r={18} style="stroke" strokeWidth={2} color="#86BDDC" />
+          <Circle cx={skepticX} cy={skepticY} r={5}  color="#86BDDC" />
+        </Group>
+      </Canvas>
+    </Animated.View>
+  );
+}
+
+function GroundBuildingSafe({ W, H }: { W: number; H: number }) {
+  // 6 dot positions — bottom upward, slight horizontal scatter. All
+  // numeric, computed once.
+  const dots = useMemo(() => [
+    { x: W * 0.20, y: H * 0.85 },
+    { x: W * 0.50, y: H * 0.80 },
+    { x: W * 0.75, y: H * 0.82 },
+    { x: W * 0.35, y: H * 0.70 },
+    { x: W * 0.62, y: H * 0.68 },
+    { x: W * 0.48, y: H * 0.58 },
+  ], [W, H]);
+
+  // Single shared opacity drive — fades the whole canvas in and out so
+  // the ground reads as 'building'. 0.4 → 1.0 over 5s, restart.
+  const progress = useSharedValue(0.4);
+  useEffect(() => {
+    progress.value = withRepeat(
+      withTiming(1.0, { duration: 5000, easing: Easing.linear }),
+      -1, true,
+    );
+  }, [progress]);
+  const canvasOpacity = useAnimatedStyle(() => ({
+    opacity: 0.4 + progress.value * 0.6,
+  }));
+
+  return (
+    <Animated.View style={[{ width: W, height: H }, canvasOpacity]}>
+      <Canvas style={{ width: W, height: H }}>
+        {/* Soft warm wash anchored at the bottom — the ground itself. */}
+        <Rect x={0} y={0} width={W} height={H}>
+          <LinearGradient
+            start={vec(W / 2, H)}
+            end={vec(W / 2, H * 0.25)}
+            colors={['rgba(230,180,122,0.18)', 'rgba(230,180,122,0)']}
+          />
+        </Rect>
+        {/* Ground dots — warm amber, static. */}
+        {dots.map((d, i) => (
+          <React.Fragment key={i}>
+            <Circle cx={d.x} cy={d.y} r={9} color="rgba(230,180,122,0.35)" />
+            <Circle cx={d.x} cy={d.y} r={5} color="#E6B47A" />
+          </React.Fragment>
+        ))}
+        {/* Upward current — a faint vertical band suggesting energy
+            rising once there's enough ground beneath it. */}
+        <Rect x={W * 0.30} y={H * 0.30} width={W * 0.40} height={H * 0.50}>
+          <LinearGradient
+            start={vec(W * 0.5, H * 0.80)}
+            end={vec(W * 0.5, H * 0.30)}
+            colors={['rgba(230,180,122,0)', 'rgba(230,180,122,0.22)']}
+          />
+        </Rect>
+      </Canvas>
+    </Animated.View>
+  );
+}
+
+// =============================================================================
+// LEGACY (DISABLED) — the original SurvivalMode lives below and is no longer
+// referenced from the dispatcher. Kept so the previous animation choreography
+// can be diffed against if we want to revisit the iOS Skia crash later.
+// =============================================================================
 function SurvivalMode({ W, H }: { W: number; H: number }) {
   // 0 = settled, 1 = full activation. Cycle: ramp up 600ms → hold 2400ms →
   // settle 800ms → rest 1200ms → repeat.
