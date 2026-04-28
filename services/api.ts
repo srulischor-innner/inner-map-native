@@ -410,6 +410,31 @@ export const api = {
   },
 
 
+  /** POST /api/realtime-token — mints an ephemeral session token for the
+   *  OpenAI Realtime WebSocket. Pre-fetched while the user is still
+   *  speaking on the map voice path so the token is ready by the time
+   *  recording stops. Returns null on any failure so the caller can
+   *  fall back to the legacy pipeline. */
+  async realtimeToken(): Promise<string | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/realtime-token', {
+        label: 'realtime-token', method: 'POST', headers,
+        body: JSON.stringify({}),
+        timeoutMs: 8000,
+      });
+      if (!res.ok) {
+        console.warn('[realtime-token] non-OK', res.status);
+        return null;
+      }
+      const j: any = await res.json().catch(() => null);
+      return (j && j.token) || null;
+    } catch (e) {
+      console.warn('[realtime-token] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   async speak(text: string, opts?: { mapVoice?: boolean }): Promise<ArrayBuffer | null> {
     // Defensive empty guard — caller should already filter, but if a
     // whitespace-only or marker-only string slips through we don't even
