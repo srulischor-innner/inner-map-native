@@ -159,43 +159,56 @@ export function AttentionIndicator() {
           </ReanimatedView>
         ) : null}
         <Pressable
-          onPress={() => setPanelOpen(true)}
+          onPress={() => {
+            // Diagnostic — confirms the touch reaches the handler. If this
+            // log fires but the panel doesn't open, the visibility logic is
+            // broken; if the log doesn't fire, something above is intercepting.
+            console.log('[triangle] tapped — opening panel');
+            setPanelOpen(true);
+          }}
           style={styles.tapTarget}
           accessibilityLabel="The map is listening — tap to learn what this indicator means"
-          hitSlop={6}
+          accessibilityRole="button"
+          hitSlop={12}
         >
-          <Canvas style={{ width: SIZE, height: SIZE }}>
-            {/* Outer glow ring — always present, slightly dimmer than the
-                triangle. Communicates "this is interactive". */}
-            <Circle
-              cx={SIZE / 2}
-              cy={SIZE / 2}
-              r={ringR}
-              color="#E6B47A"
-              style="stroke"
-              strokeWidth={0.7}
-              opacity={ringOpacity}
-            />
-            {/* Breathing triangle inside the ring. Stroke 1.8 reads
-                cleanly at 28px; the soft fill makes it look "lit from
-                within" rather than a flat outline. */}
-            <Group opacity={groupOpacity}>
-              <Path path={triPath} color="#E6B47A" style="stroke" strokeWidth={1.8} />
-              <Path path={triPath} color="#E6B47A33" style="fill" />
-            </Group>
-          </Canvas>
-          {/* Small dim part label — ONLY in the noticing state, ONLY when
-              the marker carried a part name. Color-coded to the part so
-              the user reads "what is being noticed" at a glance. */}
-          {state === 'noticing' && noticedPart ? (
-            <Text
-              style={[styles.partLabel, { color: PART_COLOR[noticedPart] || '#E6B47A' }]}
-              numberOfLines={1}
-              allowFontScaling={false}
-            >
-              {(PART_DISPLAY[noticedPart] || noticedPart).toUpperCase()}
-            </Text>
-          ) : null}
+          {/* Visual content sits inside a non-interactive wrapper so the
+              Skia Canvas + label can't capture or steal touches that
+              belong to the Pressable above. The Canvas has been observed
+              swallowing taps on some setups otherwise. */}
+          <View pointerEvents="none" style={styles.visualWrap}>
+            <Canvas style={{ width: SIZE, height: SIZE }}>
+              {/* Outer glow ring — always present, slightly dimmer than the
+                  triangle. Communicates "this is interactive". */}
+              <Circle
+                cx={SIZE / 2}
+                cy={SIZE / 2}
+                r={ringR}
+                color="#E6B47A"
+                style="stroke"
+                strokeWidth={0.7}
+                opacity={ringOpacity}
+              />
+              {/* Breathing triangle inside the ring. Stroke 1.8 reads
+                  cleanly at 28px; the soft fill makes it look "lit from
+                  within" rather than a flat outline. */}
+              <Group opacity={groupOpacity}>
+                <Path path={triPath} color="#E6B47A" style="stroke" strokeWidth={1.8} />
+                <Path path={triPath} color="#E6B47A33" style="fill" />
+              </Group>
+            </Canvas>
+            {/* Small dim part label — ONLY in the noticing state, ONLY when
+                the marker carried a part name. Color-coded to the part so
+                the user reads "what is being noticed" at a glance. */}
+            {state === 'noticing' && noticedPart ? (
+              <Text
+                style={[styles.partLabel, { color: PART_COLOR[noticedPart] || '#E6B47A' }]}
+                numberOfLines={1}
+                allowFontScaling={false}
+              >
+                {(PART_DISPLAY[noticedPart] || noticedPart).toUpperCase()}
+              </Text>
+            ) : null}
+          </View>
         </Pressable>
       </View>
       <ExplanationPanel visible={panelOpen} onClose={() => setPanelOpen(false)} />
@@ -250,6 +263,11 @@ function ExplanationPanel({ visible, onClose }: { visible: boolean; onClose: () 
 const styles = StyleSheet.create({
   tapTarget: {
     width: TAP, height: TAP,
+    alignItems: 'center', justifyContent: 'center',
+    // Lift above any sibling so a stale render z-order can't shadow it.
+    zIndex: 100,
+  },
+  visualWrap: {
     alignItems: 'center', justifyContent: 'center',
   },
   // Part-being-noticed label — sits directly below the triangle. 10px,

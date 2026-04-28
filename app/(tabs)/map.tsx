@@ -389,8 +389,8 @@ export default function MapScreen() {
             invite the user to start a conversation rather than presenting
             an unexplained blank canvas. */}
         {mapIsEmpty ? (
-          <View style={styles.emptyOverlay} pointerEvents="none">
-            <Text style={styles.emptyText}>
+          <View style={styles.emptyHint} pointerEvents="none">
+            <Text style={styles.emptyHintText}>
               Your map will take shape as we talk.{'\n'}
               Start a conversation in the Chat tab.
             </Text>
@@ -616,9 +616,27 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // Centered empty / error overlay — invites the user to start a
-  // conversation when no map data exists yet, OR offers a retry when
-  // the load failed. Sits above the (faint) triangle without blocking it.
+  // Empty-map hint — sits as a quiet whisper near the bottom of the
+  // canvas (just above the YOUR PROGRESS strip), NOT in the middle of
+  // the triangle. Very dim cream so the faint triangle reads as the
+  // primary visual; the hint is a footnote, not a banner.
+  emptyHint: {
+    position: 'absolute',
+    bottom: 120,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyHintText: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    color: 'rgba(240,237,232,0.3)',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  // Error overlay — uses a centered layout because it needs the RETRY
+  // pill to be tappable, so it stays in the middle of the canvas.
   emptyOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

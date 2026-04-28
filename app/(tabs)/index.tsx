@@ -361,6 +361,26 @@ export default function ChatScreen() {
               rawAccum = full || rawAccum;
               target = stripMarkers(rawAccum);
               streamDone = true;
+              // Diagnostic — confirms whether the AI actually emitted any
+              // map / part markers in this turn. If you see "no markers"
+              // here while the chat text says a part was detected, the
+              // model emitted CHAT_META but skipped MAP_UPDATE — that's a
+              // prompt-side issue, not a transport one.
+              const mapUpdateMatches = (rawAccum.match(/\[MAP_UPDATE:[\s\S]*?\]/g) || []);
+              const mapReadyMatches = (rawAccum.match(/\[MAP_READY:[\s\S]*?\]/g) || []);
+              const partUpdateMatches = (rawAccum.match(/PART_UPDATE:[^\n]+/g) || []);
+              if (mapUpdateMatches.length || mapReadyMatches.length || partUpdateMatches.length) {
+                console.log(
+                  '[marker] reply contained markers — MAP_UPDATE×%d MAP_READY×%d PART_UPDATE×%d',
+                  mapUpdateMatches.length, mapReadyMatches.length, partUpdateMatches.length,
+                );
+                // Pulse the map tab — the server has already persisted the
+                // marker into mapData (see persistMarkersForSession on the
+                // server side); the pulse signals the user to look.
+                pulseMapTab();
+              } else {
+                console.log('[marker] reply contained no map/part markers');
+              }
               if (!revealTimer) {
                 // Flush synchronously — no pending reveal loop running.
                 setMessages((prev) =>

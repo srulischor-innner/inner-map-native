@@ -134,30 +134,25 @@ export function PartFolderModal({
           ) : null}
           <Text style={styles.description}>{meta.description}</Text>
 
-          {/* Per-part section rendering. If the node has been sensed but no
-              fields are populated yet, the placeholder communicates "still
-              taking shape" rather than rendering a row of empty sections. */}
-          {isFolderEmpty(partKey, mapData, part) ? (
-            <FormingPlaceholder />
-          ) : (
-            <>
-              {partKey === 'wound'      ? <WoundSections      mapData={mapData} part={part} /> : null}
-              {partKey === 'fixer'      ? <FixerSections      part={part} />                    : null}
-              {partKey === 'skeptic'    ? <SkepticSections    part={part} />                    : null}
-              {partKey === 'self'       ? <SelfSections       part={part} onEnterSelfMode={onEnterSelfMode} onClose={onClose} color={meta.color} /> : null}
-              {partKey === 'self-like'  ? <SelfLikeSections   part={part} mapData={mapData} />  : null}
-              {partKey === 'manager'    ? <ContainerList
-                  items={mapData?.detectedManagers || []}
-                  color={meta.color}
-                  emptyLine="Your managers will appear here as we identify them in conversation."
-                /> : null}
-              {partKey === 'firefighter' ? <ContainerList
-                  items={mapData?.detectedFirefighters || []}
-                  color={meta.color}
-                  emptyLine="Your firefighters will appear here as they surface."
-                /> : null}
-            </>
-          )}
+          {/* Per-part section rendering. Every section is ALWAYS visible —
+              empty fields show a quiet italic placeholder so the user can
+              see what the map is building toward, instead of a missing row.
+              Folders refine over time as the AI files content. */}
+          {partKey === 'wound'       ? <WoundSections      mapData={mapData} part={part} /> : null}
+          {partKey === 'fixer'       ? <FixerSections      part={part} />                    : null}
+          {partKey === 'skeptic'     ? <SkepticSections    part={part} />                    : null}
+          {partKey === 'self'        ? <SelfSections       part={part} onEnterSelfMode={onEnterSelfMode} onClose={onClose} color={meta.color} /> : null}
+          {partKey === 'self-like'   ? <SelfLikeSections   part={part} mapData={mapData} />  : null}
+          {partKey === 'manager'     ? <ManagerList
+              items={mapData?.detectedManagers || []}
+              color={meta.color}
+              emptyLine="The protective strategies that feel like personality traits will be mapped here as they emerge in conversation."
+            /> : null}
+          {partKey === 'firefighter' ? <ManagerList
+              items={mapData?.detectedFirefighters || []}
+              color={meta.color}
+              emptyLine="The reactive parts that show up when pain breaks through will be mapped here. These are never things to stop — they're trying to help."
+            /> : null}
         </ScrollView>
       </View>
     </Modal>
@@ -165,123 +160,106 @@ export function PartFolderModal({
 }
 
 // ============================================================================
-// Empty-folder detection + placeholder
+// Section building block — always visible. Populated content uses the
+// solid cream/sans style; empty content uses a quiet italic Cormorant
+// placeholder so the user can see what each section is building toward
+// without the layout reading as "missing data". A 0.5px divider sits at
+// the bottom of every section.
 // ============================================================================
-//
-// A folder is "empty" when neither the part record nor the relevant mapData
-// fields carry anything substantive. The map is a living document: when the
-// AI has named a node but not yet filed content, we show a quiet placeholder
-// instead of a row of "Not yet explored…" empties — the node is forming, not
-// missing.
-function nonEmpty(v: any): boolean {
-  if (v == null) return false;
-  if (typeof v === 'string') return v.trim().length > 0;
-  if (Array.isArray(v)) return v.length > 0;
-  return true;
-}
-function isFolderEmpty(partKey: NodeKey, mapData: any, part: any): boolean {
-  switch (partKey) {
-    case 'wound':
-      return !nonEmpty(mapData?.wound)
-          && !nonEmpty(part?.corePhrase)
-          && !nonEmpty(mapData?.objectiveStory)
-          && !nonEmpty(mapData?.alternativeStory)
-          && !nonEmpty(part?.sensation)
-          && !nonEmpty(part?.fullDescription)
-          && !nonEmpty(part?.bodyLocation)
-          && !nonEmpty(part?.howItShowsUp)
-          && !nonEmpty(part?.originStory);
-    case 'fixer':
-    case 'skeptic':
-      return !nonEmpty(part?.whatItWants)
-          && !nonEmpty(part?.howItShowsUp)
-          && !nonEmpty(part?.bodyLocation)
-          && !nonEmpty(part?.recurringPhrases)
-          && !nonEmpty(part?.voice)
-          && !nonEmpty(part?.historicalEntries)
-          && !nonEmpty(part?.triggers)
-          && !nonEmpty(part?.whatItsProtecting)
-          && !nonEmpty(partKey === 'fixer' ? mapData?.fixer : mapData?.skeptic);
-    case 'self-like':
-      return !nonEmpty(part?.howItShowsUp)
-          && !nonEmpty(mapData?.compromise)
-          && !nonEmpty(part?.whatItWants)
-          && !nonEmpty(part?.howItSeesTheWorld)
-          && !nonEmpty(part?.bodyLocation);
-    case 'manager':
-      return !nonEmpty(mapData?.detectedManagers);
-    case 'firefighter':
-      return !nonEmpty(mapData?.detectedFirefighters);
-    case 'self':
-      // Self folder always has the "Enter Self mode" CTA — never blank.
-      return false;
-  }
-  return false;
-}
-
-function FormingPlaceholder() {
-  return (
-    <View style={styles.formingWrap}>
-      <Text style={styles.formingText}>
-        The map has sensed something here — still taking shape. Keep talking
-        and it will become clearer.
-      </Text>
-    </View>
-  );
-}
-
-// ============================================================================
-// Section building blocks
-// ============================================================================
-function Section({ label, value }: { label: string; value?: string | null }) {
+function Section({
+  label, value, placeholder,
+}: { label: string; value?: string | null; placeholder: string }) {
   const has = !!(value && value.trim());
   return (
-    <View style={styles.section}>
+    <View>
       <Text style={styles.sectionLabel}>{label.toUpperCase()}</Text>
-      <Text style={has ? styles.sectionValue : styles.sectionEmpty}>
-        {has ? value : 'Not yet explored…'}
+      <Text style={has ? styles.sectionValue : styles.sectionPlaceholder}>
+        {has ? value : placeholder}
       </Text>
+      <View style={styles.sectionDivider} />
     </View>
   );
 }
 
 // ============================================================================
-// Per-part section groups
+// Per-part section groups. Each part has its own canonical structure;
+// fields that haven't surfaced yet still render with a placeholder.
 // ============================================================================
 function WoundSections({ mapData, part }: { mapData: any; part: any }) {
   return (
     <View style={styles.sections}>
-      <Section label="Core belief"            value={mapData?.wound || part?.corePhrase} />
-      <Section label="What happened"          value={mapData?.objectiveStory} />
-      <Section label="Another way to see it"  value={mapData?.alternativeStory} />
-      <Section label="The feeling"            value={part?.sensation || part?.fullDescription} />
-      <Section label="Where you feel it"      value={part?.bodyLocation} />
-      <Section label="Memories"               value={part?.howItShowsUp} />
-      <Section label="Origin story"           value={part?.originStory} />
+      <Section
+        label="The Belief"
+        value={mapData?.wound || part?.corePhrase}
+        placeholder="The core belief is still taking shape..."
+      />
+      <Section
+        label="The Feeling Layer"
+        value={part?.sensation || part?.fullDescription}
+        placeholder="The feeling beneath the story..."
+      />
+      <Section
+        label="Where It Lives"
+        value={part?.bodyLocation}
+        placeholder="Where this lives in the body..."
+      />
+      <Section
+        label="When It Started"
+        value={part?.originStory || mapData?.objectiveStory}
+        placeholder="Still emerging..."
+      />
     </View>
   );
 }
 function FixerSections({ part }: { part: any }) {
   return (
     <View style={styles.sections}>
-      <Section label="What it wants"       value={part?.whatItWants} />
-      <Section label="How it shows up"     value={part?.howItShowsUp} />
-      <Section label="Where you feel it"   value={part?.bodyLocation} />
-      <Section label="Voice"               value={part?.recurringPhrases?.join?.(', ') || part?.voice} />
-      <Section label="Memories"            value={part?.historicalEntries?.length ? `${part.historicalEntries.length} recorded` : undefined} />
-      <Section label="What triggers it"    value={part?.triggers?.join?.(', ') || part?.whatItsProtecting} />
+      <Section
+        label="The Pattern"
+        value={part?.howItShowsUp || part?.fullDescription}
+        placeholder="The proving pattern is still taking shape..."
+      />
+      <Section
+        label="What It's Protecting"
+        value={part?.whatItsProtecting}
+        placeholder="What this part is protecting against..."
+      />
+      <Section
+        label="How It Shows Up"
+        value={part?.triggers?.join?.(', ') || part?.recurringPhrases?.join?.(', ') || part?.voice}
+        placeholder="How this shows up in your life..."
+      />
+      <Section
+        label="What It Needs"
+        value={part?.whatItWants}
+        placeholder="Still getting to know this part..."
+      />
     </View>
   );
 }
 function SkepticSections({ part }: { part: any }) {
   return (
     <View style={styles.sections}>
-      <Section label="What it believes"                value={part?.whatItWants} />
-      <Section label="How it shows up"                 value={part?.howItShowsUp} />
-      <Section label="Where you feel it"               value={part?.bodyLocation} />
-      <Section label="Voice"                           value={part?.recurringPhrases?.join?.(', ') || part?.voice} />
-      <Section label="Memories"                        value={part?.historicalEntries?.length ? `${part.historicalEntries.length} recorded` : undefined} />
-      <Section label="What it's protecting against"    value={part?.whatItsProtecting} />
+      <Section
+        label="The Pattern"
+        value={part?.howItShowsUp || part?.fullDescription}
+        placeholder="The withdrawal pattern is still taking shape..."
+      />
+      <Section
+        label="What It's Protecting"
+        value={part?.whatItsProtecting}
+        placeholder="What this part is protecting against..."
+      />
+      <Section
+        label="Its Evidence"
+        value={part?.recurringPhrases?.join?.(', ') || part?.voice}
+        placeholder="The evidence this part holds..."
+      />
+      <Section
+        label="What It Needs"
+        value={part?.whatItWants}
+        placeholder="Still getting to know this part..."
+      />
     </View>
   );
 }
@@ -290,9 +268,24 @@ function SelfSections({
 }: { part: any; color: string; onEnterSelfMode?: () => void; onClose?: () => void }) {
   return (
     <View style={styles.sections}>
-      <Section label="Moments of Self detected" value={part?.historicalEntries?.length ? `${part.historicalEntries.length} noticed so far` : undefined} />
-      <Section label="Qualities noticed"         value={part?.recurringPhrases?.join?.(', ')} />
-      <Section label="What it feels like"        value={part?.fullDescription || part?.sensation} />
+      {/* Self folder always shows this short explanation at the top — Self
+          is structurally different from the other parts (always complete,
+          never wounded), so it gets its own framing. */}
+      <Text style={styles.selfFramer}>
+        Self is always complete — never wounded. These are the moments it
+        has become visible in your conversations.
+      </Text>
+
+      <Section
+        label="Moments of Presence"
+        value={part?.historicalEntries?.length ? `${part.historicalEntries.length} noticed so far` : undefined}
+        placeholder="Moments of genuine presence will be noted here..."
+      />
+      <Section
+        label="Quality"
+        value={part?.fullDescription || part?.sensation || part?.recurringPhrases?.join?.(', ')}
+        placeholder="The quality of Self energy as it emerges..."
+      />
 
       {/* Warm explanation of what Self mode is — sits above the CTA so the
           user understands what they're opting into before they tap. */}
@@ -324,27 +317,45 @@ function SelfSections({
 function SelfLikeSections({ part, mapData }: { part: any; mapData: any }) {
   return (
     <View style={styles.sections}>
-      <Section label="How it shows up"     value={part?.howItShowsUp || mapData?.compromise} />
-      <Section label="Its agenda"          value={part?.whatItWants} />
-      <Section label="How it mimics Self"  value={part?.howItSeesTheWorld} />
-      <Section label="Where it lives"      value={part?.bodyLocation} />
+      <Section
+        label="What It Built"
+        value={part?.fullDescription || mapData?.compromise}
+        placeholder="What this part has built and holds together..."
+      />
+      <Section
+        label="How It Manages"
+        value={part?.howItShowsUp}
+        placeholder="How this part keeps things stable..."
+      />
+      <Section
+        label="The Agenda"
+        value={part?.whatItWants}
+        placeholder="The underlying agenda..."
+      />
+      <Section
+        label="Opening vs. Clenching"
+        value={part?.howItSeesTheWorld}
+        placeholder="Still reading this part..."
+      />
     </View>
   );
 }
 
-// Managers / Firefighters — shared list layout
-function ContainerList({
+// Managers / Firefighters — shared list layout. When the list is empty,
+// renders the warm placeholder paragraph in italic. Otherwise renders
+// each detected entry as its own card with name + context fields.
+function ManagerList({
   items, color, emptyLine,
 }: { items: any[]; color: string; emptyLine: string }) {
   if (!items || items.length === 0) {
     return (
-      <View style={styles.empty}>
-        <Text style={styles.emptyText}>{emptyLine}</Text>
+      <View style={styles.sections}>
+        <Text style={styles.sectionPlaceholder}>{emptyLine}</Text>
       </View>
     );
   }
   return (
-    <View style={{ marginTop: spacing.sm }}>
+    <View style={styles.sections}>
       {items.map((it, i) => (
         <View key={i} style={[styles.listItem, { borderLeftColor: color }]}>
           <Text style={[styles.listName, { color }]}>{it.label || it.name || 'Unnamed'}</Text>
@@ -398,28 +409,49 @@ const styles = StyleSheet.create({
   },
 
   sections: { marginTop: spacing.lg },
-  section: { marginBottom: spacing.md },
+  // Section label — DM Sans 600, 10px, letter-spacing 2, uppercase amber.
   sectionLabel: {
-    color: colors.amber, fontFamily: fonts.sansBold,
-    fontSize: 11, letterSpacing: 2, marginBottom: 6,
+    color: '#E6B47A',
+    fontFamily: fonts.sansBold,
+    fontSize: 10,
+    letterSpacing: 2,
+    marginTop: 16,
+    marginBottom: 6,
+    textTransform: 'uppercase',
   },
-  sectionValue: { color: colors.cream, fontFamily: fonts.sans, fontSize: 14, lineHeight: 22 },
-  sectionEmpty: { color: colors.creamFaint, fontFamily: fonts.serifItalic, fontSize: 13, opacity: 0.7 },
+  // Populated content — DM Sans 400, 15px, cream, lineHeight 22.
+  sectionValue: {
+    color: '#F0EDE8',
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  // Empty placeholder — Cormorant italic, dim, 14px lineHeight 21. Reads
+  // as "this section will fill in" rather than "this is missing data".
+  sectionPlaceholder: {
+    color: 'rgba(240,237,232,0.35)',
+    fontFamily: fonts.serifItalic,
+    fontSize: 14,
+    lineHeight: 21,
+    fontStyle: 'italic',
+  },
+  // Hairline divider beneath each section so they read as discrete cards
+  // even when most are empty placeholders.
+  sectionDivider: {
+    height: 0.5,
+    backgroundColor: 'rgba(240,237,232,0.08)',
+    marginTop: 12,
+  },
 
-  // Folder-wide "still taking shape" placeholder. Quieter than missing
-  // content — italic dim copy that signals presence without specificity.
-  formingWrap: {
-    marginTop: spacing.xl,
-    paddingHorizontal: spacing.md,
-    alignItems: 'center',
-  },
-  formingText: {
-    color: colors.creamFaint,
+  // Self folder framer — short paragraph at the top of the Self folder
+  // that contextualizes the two sections that follow.
+  selfFramer: {
+    color: colors.creamDim,
     fontFamily: fonts.serifItalic,
     fontSize: 14,
     lineHeight: 22,
+    marginBottom: spacing.sm,
     textAlign: 'center',
-    opacity: 0.75,
   },
 
   selfModeExplain: {
