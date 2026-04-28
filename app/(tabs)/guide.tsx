@@ -6,7 +6,7 @@
 // FlatLists with pagingEnabled give the horizontal swipe with clean snap-to-page.
 // A "Begin your map →" CTA appears at the bottom of each section and jumps to Chat.
 
-import React, { useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,13 +16,16 @@ import {
   StyleSheet,
   useWindowDimensions,
   Platform,
+  Animated,
+  Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { colors, radii, spacing } from '../../constants/theme';
+import { colors, radii, spacing, fonts } from '../../constants/theme';
 import {
   WELCOME_SLIDES,
   MAP_SLIDES,
@@ -33,15 +36,46 @@ import {
 } from '../../utils/guideContent';
 import { GuideSlide } from '../../components/guide/GuideSlide';
 import { GuideDots } from '../../components/guide/GuideDots';
-import { GuideAskSection } from '../../components/guide/GuideAskSection';
+import { GuideAskModal } from '../../components/guide/GuideAskModal';
 
-type SectionId = 'welcome' | 'map' | 'healing' | 'ask' | 'using';
+const ASK_HINT_SEEN_KEY = 'guide_ask_hint_seen';
+
+type SectionId = 'welcome' | 'map' | 'healing' | 'using';
 
 export default function GuideScreen() {
   // Welcome lands first — it's the orientation framework. Users often only
   // start to grok the framing on the second or third pass after they've
   // had real conversations, so it lives here permanently.
   const [section, setSection] = useState<SectionId>('welcome');
+  // Ask modal — opened by the floating chat bubble. Available from any
+  // pill so users never have to leave their slide to ask a question.
+  const [askOpen, setAskOpen] = useState(false);
+
+  // First-visit hint label above the floating bubble. Shown for 4s
+  // then fades out. AsyncStorage flag ensures it never reappears.
+  const [showAskHint, setShowAskHint] = useState(false);
+  const askHintOpacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const seen = await AsyncStorage.getItem(ASK_HINT_SEEN_KEY);
+        if (seen === '1' || cancelled) return;
+        setShowAskHint(true);
+        Animated.timing(askHintOpacity, {
+          toValue: 1, duration: 400, easing: Easing.out(Easing.ease), useNativeDriver: true,
+        }).start();
+        setTimeout(() => {
+          if (cancelled) return;
+          Animated.timing(askHintOpacity, {
+            toValue: 0, duration: 500, easing: Easing.in(Easing.ease), useNativeDriver: true,
+          }).start(() => setShowAskHint(false));
+          AsyncStorage.setItem(ASK_HINT_SEEN_KEY, '1').catch(() => {});
+        }, 4000);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [askHintOpacity]);
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
@@ -58,7 +92,6 @@ export default function GuideScreen() {
           ['welcome', 'Welcome'],
           ['map', 'The Map'],
           ['healing', 'Healing'],
-          ['ask', 'Ask'],
           ['using', 'Using It'],
         ] as const).map(([id, label]) => (
           <Pressable
@@ -82,11 +115,29 @@ export default function GuideScreen() {
         <SlideSection slides={MAP_SLIDES} />
       ) : section === 'healing' ? (
         <SlideSection slides={HEALING_SLIDES} />
-      ) : section === 'ask' ? (
-        <GuideAskSection />
       ) : (
         <UsingSection />
       )}
+
+      {/* Floating Ask bubble — available from every pill. */}
+      {showAskHint ? (
+        <Animated.View style={[styles.askHintWrap, { opacity: askHintOpacity }]} pointerEvents="none">
+          <Text style={styles.askHintText}>Ask anything</Text>
+        </Animated.View>
+      ) : null}
+      <Pressable
+        onPress={() => {
+          Haptics.selectionAsync().catch(() => {});
+          setAskOpen(true);
+        }}
+        accessibilityLabel="Ask anything about the framework"
+        style={styles.askBubble}
+        hitSlop={6}
+      >
+        <Ionicons name="chatbubble-outline" size={22} color="#E6B47A" />
+      </Pressable>
+
+      <GuideAskModal visible={askOpen} onClose={() => setAskOpen(false)} />
     </SafeAreaView>
   );
 }
@@ -215,8 +266,42 @@ const styles = StyleSheet.create({
   header: { alignItems: 'center', paddingVertical: spacing.sm },
   headerTitle: { color: colors.amber, fontSize: 22, fontWeight: '500', letterSpacing: 0.3 },
 
+  // Floating Ask bubble — bottom-right, always visible regardless of pill.
+  askBubble: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(230,180,122,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(230,180,122,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  askHintWrap: {
+    position: 'absolute',
+    bottom: 84,
+    right: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(20,19,26,0.85)',
+    borderRadius: 10,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.3)',
+    zIndex: 100,
+  },
+  askHintText: {
+    color: 'rgba(230,180,122,0.7)',
+    fontFamily: fonts.serifItalic,
+    fontSize: 11,
+    letterSpacing: 0.3,
+  },
+
   // pills
-  // 4 pills now (Welcome / The Map / Healing / Using It) — wrapped in a
+  // 4 pills (Welcome / The Map / Healing / Using It) — wrapped in a
   // horizontal ScrollView so they fit on narrow phones without truncation.
   pillsScroll: {
     flexGrow: 0,
