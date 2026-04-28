@@ -1,13 +1,19 @@
 // Brief landing/welcome screen shown on every cold open AFTER the
 // biometric gate clears, BEFORE the chat tab takes over. The intent is
 // the "arrival moment" — warm, intentional, sets the tone — and gives
-// the returning-greeting fetch a free 1.5s to complete in the
+// the returning-greeting fetch a free window to complete in the
 // background so the chat tab opens with the greeting already loaded.
+//
+// Timing: fade-in 600ms → hold 2500ms → fade-out 800ms. About 3
+// seconds total of visible "Inner Map" before the tabs appear. The
+// hold is intentionally generous so users land on a calm presence
+// instead of a flashed splash.
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { Image, StyleSheet, Text } from 'react-native';
 import Animated, {
   useSharedValue, withTiming, useAnimatedStyle, Easing,
+  runOnJS,
 } from 'react-native-reanimated';
 
 const TAGLINES = [
@@ -22,11 +28,24 @@ type Props = { onReady: () => void };
 export function LandingScreen({ onReady }: Props) {
   const opacity = useSharedValue(0);
 
+  // Stable JS-thread ref to onReady so the worklet completion callback
+  // can call runOnJS(onReady) without capturing a stale closure.
+  const fireReady = useCallback(() => onReady(), [onReady]);
+
   useEffect(() => {
-    // Fade in over 600ms, then signal the parent after a 1500ms hold
-    // so the screen lands as a full breath rather than a flash.
+    // Fade in over 600ms.
     opacity.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.ease) });
-    const t = setTimeout(() => onReady(), 1500);
+    // Hold 2500ms, then fade out over 800ms before signaling the
+    // parent. Total ~3.9s on screen — feels like an arrival, not a
+    // flash. Cleanup cancels the timer so a parent unmount mid-hold
+    // doesn't leave a dangling fade-out + onReady call.
+    const t = setTimeout(() => {
+      opacity.value = withTiming(
+        0,
+        { duration: 800, easing: Easing.in(Easing.ease) },
+        (finished) => { if (finished) runOnJS(fireReady)(); },
+      );
+    }, 2500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

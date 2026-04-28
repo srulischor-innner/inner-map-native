@@ -244,10 +244,14 @@ export default function RootLayout() {
     return () => { responseSubRef.current?.remove(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // While the cold-start biometric check is in flight (or the user is
-  // still locked because they haven't authenticated yet) we render ONLY
-  // a dark backdrop with the triangle icon. This prevents tab content
-  // from flashing behind the Face ID prompt.
+  // INVARIANT: render NOTHING but the dark splash + triangle while
+  // the biometric check is in flight (isCheckingBiometrics) or the
+  // user is locked. isCheckingBiometrics is initialized to TRUE
+  // (line 86) so this gate fires from the very first React render —
+  // no app content can flash behind the Face ID prompt. The flag
+  // only flips to false in the cold-start useEffect's finally block,
+  // which runs after the biometric prompt resolves (or after the
+  // 'lock disabled' early-return).
   if (isCheckingBiometrics || locked) {
     return (
       <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0a0a0f' }}>
