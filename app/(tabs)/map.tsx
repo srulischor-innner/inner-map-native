@@ -109,19 +109,6 @@ export default function MapScreen() {
   }, []);
   useEffect(() => { loadMap(); }, [loadMap]);
 
-  // The map is "empty" when the user has no mapped wound, no protectors,
-  // and no detected managers/firefighters yet — i.e. they have not had a
-  // conversation that produced anything for the canvas to render. We show
-  // a gentle invitation message overlaid on the faint triangle in that case.
-  const mapIsEmpty = (
-    loadStatus === 'loaded'
-    && !mapData?.wound
-    && !mapData?.fixer
-    && !mapData?.skeptic
-    && !(mapData?.detectedManagers && mapData.detectedManagers.length)
-    && !(mapData?.detectedFirefighters && mapData.detectedFirefighters.length)
-    && (!parts || parts.length === 0)
-  );
 
   // The mapData passed to the canvas + folder reflects whichever layer is
   // currently active. We splice the layer's wound/fixer/skeptic/compromise
@@ -388,14 +375,10 @@ export default function MapScreen() {
             wound has been mapped yet or the network call failed. They
             invite the user to start a conversation rather than presenting
             an unexplained blank canvas. */}
-        {mapIsEmpty ? (
-          <View style={styles.emptyHint} pointerEvents="none">
-            <Text style={styles.emptyHintText}>
-              Your map will take shape as we talk.{'\n'}
-              Start a conversation in the Chat tab.
-            </Text>
-          </View>
-        ) : null}
+        {/* Empty-state hint removed — was getting in the way of the
+            (faint) triangle. The empty triangle itself reads as the
+            invitation. The error overlay below is still rendered when
+            the network call fails because it carries the RETRY pill. */}
         {loadStatus === 'error' ? (
           <View style={styles.emptyOverlay}>
             <Text style={styles.emptyText}>
@@ -616,25 +599,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // Empty-map hint — sits as a quiet whisper near the bottom of the
-  // canvas (just above the YOUR PROGRESS strip), NOT in the middle of
-  // the triangle. Very dim cream so the faint triangle reads as the
-  // primary visual; the hint is a footnote, not a banner.
-  emptyHint: {
-    position: 'absolute',
-    bottom: 120,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    paddingHorizontal: 32,
-  },
-  emptyHintText: {
-    fontFamily: fonts.serifItalic,
-    fontSize: 13,
-    color: 'rgba(240,237,232,0.3)',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
   // Error overlay — uses a centered layout because it needs the RETRY
   // pill to be tappable, so it stays in the middle of the canvas.
   emptyOverlay: {
