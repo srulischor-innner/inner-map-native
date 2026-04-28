@@ -348,11 +348,16 @@ export const api = {
   },
 
   /** POST /api/guide-chat — educational chat for the Guide tab Ask
-   *  modal. Server now streams plain text so the user sees the reply
-   *  appear word-by-word. We attempt to read response.body via the
-   *  WHATWG ReadableStream getReader() API; on Hermes builds where
-   *  that's unavailable we fall back to a single-chunk text() delivery
-   *  so the call still completes, just without progressive reveal. */
+   *  modal. Server streams plain text; we want each delta visible to
+   *  the user as it arrives.
+   *
+   *  We use XMLHttpRequest's `progress` event rather than fetch's
+   *  ReadableStream getReader() because RN's fetch polyfill on Hermes
+   *  has a known quirk: response.body.getReader() may collect the
+   *  whole body before allowing reads, defeating the streaming. XHR's
+   *  onprogress fires every time new bytes land on the response and
+   *  exposes the cumulative responseText — reliably progressive on
+   *  every RN version we support. */
   async streamGuide(
     messages: ChatMessage[],
     cb: {
@@ -361,52 +366,71 @@ export const api = {
       onError: (err: string) => void;
     },
   ): Promise<() => void> {
-    const controller = new AbortController();
-    (async () => {
+    const headers = await authHeaders();
+    const url = `${BASE_URL}/api/guide-chat`;
+    const xhr = new XMLHttpRequest();
+    let consumed = 0;          // chars of responseText already passed to onChunk
+    let done = false;
+
+    xhr.open('POST', url, true);
+    Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+
+    // onprogress fires whenever new bytes arrive. responseText is the
+    // cumulative response so far — slice from `consumed` to get the
+    // newly-arrived tail and emit just that as a chunk.
+    xhr.onprogress = () => {
       try {
-        const headers = await authHeaders();
-        const res = await fetch(`${BASE_URL}/api/guide-chat`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ messages }),
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          let preview = '';
-          try { preview = (await res.text()).slice(0, 200); } catch {}
-          cb.onError(`guide-chat ${res.status} ${preview}`);
-          return;
+        if (xhr.status && xhr.status >= 400) return;          // onerror handles it
+        const txt = xhr.responseText || '';
+        if (txt.length > consumed) {
+          const tail = txt.slice(consumed);
+          consumed = txt.length;
+          if (tail) cb.onChunk(tail);
         }
-        // Streaming path. Some RN builds don't expose getReader on POST
-        // response bodies — guard with a try/catch and fall back.
-        const body: any = (res as any).body;
-        const reader = body && typeof body.getReader === 'function'
-          ? body.getReader()
-          : null;
-        if (reader) {
-          // @ts-ignore — TextDecoder is available in Hermes ≥ RN 0.72.
-          const decoder = new TextDecoder();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            if (chunk) cb.onChunk(chunk);
-          }
-          cb.onDone();
-          return;
-        }
-        // Fallback — read the whole body, deliver as one chunk. The
-        // user sees the reply pop in instead of streaming, but the call
-        // still completes correctly.
-        const full = await res.text();
-        if (full) cb.onChunk(full);
-        cb.onDone();
       } catch (e) {
-        if ((e as any)?.name === 'AbortError') return;
-        cb.onError((e as Error)?.message || 'network error');
+        console.warn('[guide-chat] onprogress threw:', (e as Error)?.message);
       }
-    })();
-    return () => controller.abort();
+    };
+
+    xhr.onload = () => {
+      if (done) return;
+      done = true;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        // Final flush in case the last bytes arrived between the last
+        // onprogress and onload.
+        const txt = xhr.responseText || '';
+        if (txt.length > consumed) {
+          cb.onChunk(txt.slice(consumed));
+          consumed = txt.length;
+        }
+        cb.onDone();
+      } else {
+        const preview = (xhr.responseText || '').slice(0, 200);
+        cb.onError(`guide-chat ${xhr.status} ${preview}`);
+      }
+    };
+    xhr.onerror = () => {
+      if (done) return;
+      done = true;
+      cb.onError(xhr.statusText || 'network error');
+    };
+    xhr.ontimeout = () => {
+      if (done) return;
+      done = true;
+      cb.onError('timeout');
+    };
+
+    try {
+      xhr.send(JSON.stringify({ messages }));
+    } catch (e) {
+      cb.onError((e as Error)?.message || 'send failed');
+    }
+
+    return () => {
+      if (done) return;
+      done = true;
+      try { xhr.abort(); } catch {}
+    };
   },
 
 
