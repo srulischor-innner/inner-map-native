@@ -66,13 +66,14 @@ import { RealtimeSession, VoiceState } from './RealtimeSession';
 // ============================================================================
 // FEATURE FLAG: Realtime WebSocket path.
 //
-// Disabled (again) because the dev-build attempt regressed map voice into
-// silent failures — "thinking" → back to "tap to speak" with no audible
-// response. Until the Realtime PCM16 path is validated against an EAS
-// PRODUCTION build, route every map-voice turn through the legacy
-// /api/transcribe → /api/chat → /api/speak pipeline below.
+// Re-enabled for testing on a real EAS development build (native audio
+// modules should work properly here, unlike Expo Go where the previous
+// attempt silently failed). The 3s connect / 8s response watchdogs in
+// onPress() below fall back to the legacy pipeline if anything misses
+// its window — so a Realtime regression now still produces an audible
+// reply via /api/transcribe → /api/chat → /api/speak.
 // ============================================================================
-const USE_REALTIME = false;
+const USE_REALTIME = true;
 // Watchdog windows. The Realtime path opens a WebSocket and waits for the
 // upstream to acknowledge — if either step misses its window we tear down
 // and run the legacy /api/transcribe → /api/chat → /api/speak pipeline so
@@ -157,6 +158,10 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
     // Start a new turn (first tap, or tap after the AI finished speaking).
     if (state === 'idle') {
+      // One-line confirmation in Metro of which path this turn will
+      // attempt. The actual outcome (Realtime success vs fallback to
+      // legacy via watchdog) still shows up in the existing logs below.
+      console.log('[map-voice] using:', USE_REALTIME ? 'Realtime API' : 'Legacy pipeline');
       // If a realtime session is already open from a previous turn, reuse it.
       if (realtimeRef.current) {
         console.log('[map-voice] reusing open realtime session for next turn');
