@@ -343,6 +343,27 @@ export const api = {
     }
   },
 
+  /** POST /api/guide-chat — educational chat (the Guide tab's Ask pill).
+   *  Independent of /api/chat: no markers, no DB writes, no session memory,
+   *  no spectrum updates. Returns the reply text or null on failure. */
+  async askGuide(messages: ChatMessage[]): Promise<string | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/guide-chat', {
+        label: 'guide-chat', method: 'POST', headers,
+        body: JSON.stringify({ messages }),
+        timeoutMs: 60000,
+      });
+      if (!res.ok) return null;
+      const j: any = await res.json().catch(() => null);
+      const reply = (j && (j.reply || j.text)) || '';
+      return reply || null;
+    } catch (e) {
+      console.warn('[guide-chat] failed:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   async speak(text: string, opts?: { mapVoice?: boolean }): Promise<ArrayBuffer | null> {
     try {
       const headers = await authHeaders();

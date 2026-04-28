@@ -33,8 +33,9 @@ import {
 } from '../../utils/guideContent';
 import { GuideSlide } from '../../components/guide/GuideSlide';
 import { GuideDots } from '../../components/guide/GuideDots';
+import { GuideAskSection } from '../../components/guide/GuideAskSection';
 
-type SectionId = 'welcome' | 'map' | 'healing' | 'using';
+type SectionId = 'welcome' | 'map' | 'healing' | 'ask' | 'using';
 
 export default function GuideScreen() {
   // Welcome lands first — it's the orientation framework. Users often only
@@ -57,6 +58,7 @@ export default function GuideScreen() {
           ['welcome', 'Welcome'],
           ['map', 'The Map'],
           ['healing', 'Healing'],
+          ['ask', 'Ask'],
           ['using', 'Using It'],
         ] as const).map(([id, label]) => (
           <Pressable
@@ -80,6 +82,8 @@ export default function GuideScreen() {
         <SlideSection slides={MAP_SLIDES} />
       ) : section === 'healing' ? (
         <SlideSection slides={HEALING_SLIDES} />
+      ) : section === 'ask' ? (
+        <GuideAskSection />
       ) : (
         <UsingSection />
       )}
