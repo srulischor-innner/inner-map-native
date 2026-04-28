@@ -374,7 +374,10 @@ export default function MapScreen() {
           quiet line of italic copy that tells the user the parts are
           tappable. Hidden when the triangle view is active. */}
       {view === 'circle' ? (
-        <Text style={styles.circleHeader}>Tap any part to see its transformation</Text>
+        <View pointerEvents="none">
+          <Text style={styles.circleTitle}>Integrated Map</Text>
+          <Text style={styles.circleHeader}>Tap any part to see its transformation</Text>
+        </View>
       ) : null}
 
       <View
@@ -633,9 +636,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  // Persistent header for circle (integration) view — single quiet line
-  // of italic copy above the map canvas. Faint amber so it reads as a
-  // hint, not a label. Hidden when triangle view is active.
+  // Persistent header for circle (integration) view — Cormorant SemiBold
+  // amber title sits above a single quiet italic line that hints the parts
+  // are tappable. Both lines are hidden when the triangle view is active.
+  circleTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 28,
+    color: '#E6B47A',
+    textAlign: 'center',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+    marginTop: 4,
+  },
   circleHeader: {
     fontFamily: fonts.serifItalic,
     fontSize: 12,
@@ -643,7 +655,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 0.5,
     marginBottom: 8,
-    marginTop: 4,
   },
 
   // Error overlay — uses a centered layout because it needs the RETRY
