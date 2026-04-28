@@ -365,15 +365,36 @@ export const api = {
   },
 
   async speak(text: string, opts?: { mapVoice?: boolean }): Promise<ArrayBuffer | null> {
+    // Defensive empty guard — caller should already filter, but if a
+    // whitespace-only or marker-only string slips through we don't even
+    // bother with the network round-trip; the server would return 400
+    // with "no text provided" / "Empty text after scrubbing markers"
+    // and the user would see a silent failure.
+    const cleanText = (text || '').trim();
+    if (!cleanText) {
+      console.warn('[speak] skipping — empty text after trim');
+      return null;
+    }
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/speak', {
         label: 'speak', method: 'POST', headers,
-        body: JSON.stringify({ text, mapVoice: !!opts?.mapVoice }),
+        body: JSON.stringify({ text: cleanText, mapVoice: !!opts?.mapVoice }),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        // Pull a short preview of the error body so 400s with
+        // 'Empty text after scrubbing markers' are visible in Metro
+        // instead of just 'returned null'.
+        let bodyPreview = '';
+        try { bodyPreview = (await res.text()).slice(0, 200); } catch {}
+        console.warn(`[speak] non-OK ${res.status} — body: ${bodyPreview}`);
+        return null;
+      }
       return await res.arrayBuffer();
-    } catch { return null; }
+    } catch (e) {
+      console.warn('[speak] threw:', (e as Error)?.message);
+      return null;
+    }
   },
 
   async transcribe(uri: string, mime: string): Promise<string | null> {

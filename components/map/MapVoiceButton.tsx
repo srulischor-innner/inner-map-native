@@ -341,8 +341,18 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
       let playChain: Promise<void> = Promise.resolve();
 
       function enqueueSentenceForTTS(sentence: string) {
-        console.log('[map-voice] Step 5: POST /api/speak (' + sentence.length + ' chars) — "' + sentence.slice(0, 40) + '…"');
-        const speakP = api.speak(sentence, { mapVoice: true });
+        // Belt-and-braces guard. The earlier sentenceRegex / 10-char
+        // filter should already prevent blanks, but if a marker-only or
+        // whitespace-only chunk ever reaches here the server would 400
+        // ('Empty text after scrubbing markers') and api.speak would
+        // return null — visible to the user as a silent step-5 failure.
+        const finalText = (sentence || '').trim();
+        if (!finalText) {
+          console.error('[map-voice] Step 5 skipped — sentence is empty after trim');
+          return;
+        }
+        console.log('[map-voice] Step 5: POST /api/speak (' + finalText.length + ' chars) — "' + finalText.slice(0, 40) + '…"');
+        const speakP = api.speak(finalText, { mapVoice: true });
         playChain = playChain.then(async () => {
           try {
             const buf = await speakP;
