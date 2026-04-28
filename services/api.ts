@@ -347,26 +347,68 @@ export const api = {
     }
   },
 
-  /** POST /api/guide-chat — educational chat (the Guide tab's Ask pill).
-   *  Independent of /api/chat: no markers, no DB writes, no session memory,
-   *  no spectrum updates. Returns the reply text or null on failure. */
-  async askGuide(messages: ChatMessage[]): Promise<string | null> {
-    try {
-      const headers = await authHeaders();
-      const res = await apiFetch('/api/guide-chat', {
-        label: 'guide-chat', method: 'POST', headers,
-        body: JSON.stringify({ messages }),
-        timeoutMs: 60000,
-      });
-      if (!res.ok) return null;
-      const j: any = await res.json().catch(() => null);
-      const reply = (j && (j.reply || j.text)) || '';
-      return reply || null;
-    } catch (e) {
-      console.warn('[guide-chat] failed:', (e as Error)?.message);
-      return null;
-    }
+  /** POST /api/guide-chat — educational chat for the Guide tab Ask
+   *  modal. Server now streams plain text so the user sees the reply
+   *  appear word-by-word. We attempt to read response.body via the
+   *  WHATWG ReadableStream getReader() API; on Hermes builds where
+   *  that's unavailable we fall back to a single-chunk text() delivery
+   *  so the call still completes, just without progressive reveal. */
+  async streamGuide(
+    messages: ChatMessage[],
+    cb: {
+      onChunk: (text: string) => void;
+      onDone: () => void;
+      onError: (err: string) => void;
+    },
+  ): Promise<() => void> {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const headers = await authHeaders();
+        const res = await fetch(`${BASE_URL}/api/guide-chat`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ messages }),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          let preview = '';
+          try { preview = (await res.text()).slice(0, 200); } catch {}
+          cb.onError(`guide-chat ${res.status} ${preview}`);
+          return;
+        }
+        // Streaming path. Some RN builds don't expose getReader on POST
+        // response bodies — guard with a try/catch and fall back.
+        const body: any = (res as any).body;
+        const reader = body && typeof body.getReader === 'function'
+          ? body.getReader()
+          : null;
+        if (reader) {
+          // @ts-ignore — TextDecoder is available in Hermes ≥ RN 0.72.
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            if (chunk) cb.onChunk(chunk);
+          }
+          cb.onDone();
+          return;
+        }
+        // Fallback — read the whole body, deliver as one chunk. The
+        // user sees the reply pop in instead of streaming, but the call
+        // still completes correctly.
+        const full = await res.text();
+        if (full) cb.onChunk(full);
+        cb.onDone();
+      } catch (e) {
+        if ((e as any)?.name === 'AbortError') return;
+        cb.onError((e as Error)?.message || 'network error');
+      }
+    })();
+    return () => controller.abort();
   },
+
 
   async speak(text: string, opts?: { mapVoice?: boolean }): Promise<ArrayBuffer | null> {
     // Defensive empty guard — caller should already filter, but if a

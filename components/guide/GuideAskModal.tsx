@@ -16,9 +16,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, ScrollView, StyleSheet,
-  Platform, ActivityIndicator, Animated, Easing,
+  Platform, Animated, Easing,
   PanResponder, Alert, Keyboard,
 } from 'react-native';
+import { TypingIndicator } from '../TypingIndicator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -140,30 +141,75 @@ export function GuideAskModal({ visible, onClose }: Props) {
     if (!trimmed || loading) return;
     Haptics.selectionAsync().catch(() => {});
     const userTurn: Turn = { id: nextId(), role: 'user', text: trimmed };
-    const nextTurns = [...turns, userTurn];
+    // Append user turn + an empty assistant turn we'll stream into.
+    const assistantId = nextId();
+    const nextTurns: Turn[] = [
+      ...turns,
+      userTurn,
+      { id: assistantId, role: 'assistant', text: '' },
+    ];
     setTurns(nextTurns);
     setInput('');
     setLoading(true);
-    const apiMessages: ChatMessage[] = nextTurns.map((t) => ({
+    const apiMessages: ChatMessage[] = [...turns, userTurn].map((t) => ({
       role: t.role,
       content: t.text,
     }));
-    const reply = await api.askGuide(apiMessages);
-    setLoading(false);
-    if (!reply) {
-      const errorTurn: Turn = {
-        id: nextId(),
-        role: 'assistant',
-        text: "I couldn't reach the framework guide just now — try again in a moment?",
-      };
-      setTurns((cur) => [...cur, errorTurn]);
-      return;
-    }
-    const aiTurn: Turn = { id: nextId(), role: 'assistant', text: reply };
-    setTurns((cur) => [...cur, aiTurn]);
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 50);
+    let firstChunk = true;
+    api.streamGuide(apiMessages, {
+      onChunk: (chunk) => {
+        // First chunk has arrived → drop the typing indicator.
+        if (firstChunk) { firstChunk = false; setLoading(false); }
+        setTurns((prev) => {
+          const idx = prev.findIndex((t) => t.id === assistantId);
+          if (idx === -1) return prev;
+          const updated = prev.slice();
+          updated[idx] = { ...updated[idx], text: updated[idx].text + chunk };
+          return updated;
+        });
+        // Scroll to bottom as the bubble grows. Use animated:false so the
+        // scroll itself doesn't fight with rapid chunks.
+        setTimeout(() => {
+          scrollRef.current?.scrollToEnd({ animated: false });
+        }, 30);
+      },
+      onDone: () => {
+        setLoading(false);
+        // If no chunks ever arrived, replace the empty assistant bubble
+        // with a polite error so the UI doesn't sit blank.
+        setTurns((prev) => {
+          const idx = prev.findIndex((t) => t.id === assistantId);
+          if (idx === -1) return prev;
+          const trimmedReply = prev[idx].text.trim();
+          if (trimmedReply) {
+            // Trim leading whitespace from heartbeat keep-alive spaces.
+            const updated = prev.slice();
+            updated[idx] = { ...updated[idx], text: trimmedReply };
+            return updated;
+          }
+          const updated = prev.slice();
+          updated[idx] = {
+            ...updated[idx],
+            text: "I couldn't reach the framework guide just now — try again in a moment?",
+          };
+          return updated;
+        });
+      },
+      onError: (err) => {
+        console.warn('[guide-chat] stream error:', err);
+        setLoading(false);
+        setTurns((prev) => {
+          const idx = prev.findIndex((t) => t.id === assistantId);
+          if (idx === -1) return prev;
+          const updated = prev.slice();
+          updated[idx] = {
+            ...updated[idx],
+            text: 'Something went quiet on my end. Try asking again.',
+          };
+          return updated;
+        });
+      },
+    });
   }, [turns, loading]);
 
   // ---- Voice note: WhatsApp-style press-and-hold ----
@@ -318,10 +364,10 @@ export function GuideAskModal({ visible, onClose }: Props) {
 
               {loading || transcribing ? (
                 <View style={styles.loadingRow}>
-                  <ActivityIndicator color={colors.amber} size="small" />
-                  <Text style={styles.loadingText}>
-                    {transcribing ? 'transcribing…' : 'thinking…'}
-                  </Text>
+                  <TypingIndicator />
+                  {transcribing ? (
+                    <Text style={styles.loadingText}>transcribing…</Text>
+                  ) : null}
                 </View>
               ) : null}
             </ScrollView>

@@ -6,7 +6,7 @@
 // FlatLists with pagingEnabled give the horizontal swipe with clean snap-to-page.
 // A "Begin your map →" CTA appears at the bottom of each section and jumps to Chat.
 
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useMemo, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,14 +16,11 @@ import {
   StyleSheet,
   useWindowDimensions,
   Platform,
-  Animated,
-  Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { colors, radii, spacing, fonts } from '../../constants/theme';
 import {
@@ -38,8 +35,6 @@ import { GuideSlide } from '../../components/guide/GuideSlide';
 import { GuideDots } from '../../components/guide/GuideDots';
 import { GuideAskModal } from '../../components/guide/GuideAskModal';
 
-const ASK_HINT_SEEN_KEY = 'guide_ask_hint_seen';
-
 type SectionId = 'welcome' | 'map' | 'healing' | 'using';
 
 export default function GuideScreen() {
@@ -50,32 +45,6 @@ export default function GuideScreen() {
   // Ask modal — opened by the floating chat bubble. Available from any
   // pill so users never have to leave their slide to ask a question.
   const [askOpen, setAskOpen] = useState(false);
-
-  // First-visit hint label above the floating bubble. Shown for 4s
-  // then fades out. AsyncStorage flag ensures it never reappears.
-  const [showAskHint, setShowAskHint] = useState(false);
-  const askHintOpacity = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const seen = await AsyncStorage.getItem(ASK_HINT_SEEN_KEY);
-        if (seen === '1' || cancelled) return;
-        setShowAskHint(true);
-        Animated.timing(askHintOpacity, {
-          toValue: 1, duration: 400, easing: Easing.out(Easing.ease), useNativeDriver: true,
-        }).start();
-        setTimeout(() => {
-          if (cancelled) return;
-          Animated.timing(askHintOpacity, {
-            toValue: 0, duration: 500, easing: Easing.in(Easing.ease), useNativeDriver: true,
-          }).start(() => setShowAskHint(false));
-          AsyncStorage.setItem(ASK_HINT_SEEN_KEY, '1').catch(() => {});
-        }, 4000);
-      } catch {}
-    })();
-    return () => { cancelled = true; };
-  }, [askHintOpacity]);
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
@@ -119,23 +88,24 @@ export default function GuideScreen() {
         <UsingSection />
       )}
 
-      {/* Floating Ask bubble — available from every pill. */}
-      {showAskHint ? (
-        <Animated.View style={[styles.askHintWrap, { opacity: askHintOpacity }]} pointerEvents="none">
-          <Text style={styles.askHintText}>Ask anything</Text>
-        </Animated.View>
-      ) : null}
-      <Pressable
-        onPress={() => {
-          Haptics.selectionAsync().catch(() => {});
-          setAskOpen(true);
-        }}
-        accessibilityLabel="Ask anything about the framework"
-        style={styles.askBubble}
-        hitSlop={6}
-      >
-        <Ionicons name="chatbubble-outline" size={22} color="#E6B47A" />
-      </Pressable>
+      {/* Floating Ask bubble — available from every pill. The amber
+          italic "Ask" label sits permanently above the button so the
+          affordance is always self-explanatory. Bottom: 80 clears the
+          tab bar + the slide-section dot indicators. */}
+      <View style={styles.askWrap} pointerEvents="box-none">
+        <Text style={styles.askLabel}>Ask</Text>
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            setAskOpen(true);
+          }}
+          accessibilityLabel="Ask anything about the framework"
+          style={styles.askBubble}
+          hitSlop={6}
+        >
+          <Ionicons name="chatbubble-outline" size={22} color="#E6B47A" />
+        </Pressable>
+      </View>
 
       <GuideAskModal visible={askOpen} onClose={() => setAskOpen(false)} />
     </SafeAreaView>
@@ -266,11 +236,25 @@ const styles = StyleSheet.create({
   header: { alignItems: 'center', paddingVertical: spacing.sm },
   headerTitle: { color: colors.amber, fontSize: 22, fontWeight: '500', letterSpacing: 0.3 },
 
-  // Floating Ask bubble — bottom-right, always visible regardless of pill.
-  askBubble: {
+  // Floating Ask container — bottom-right, always visible. Holds a
+  // permanent italic "Ask" label above the circular button so the
+  // affordance is self-explanatory at a glance. bottom: 80 clears
+  // both the tab bar and the per-section dot indicators on slides.
+  askWrap: {
     position: 'absolute',
-    bottom: 24,
+    bottom: 80,
     right: 20,
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  askLabel: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 11,
+    color: 'rgba(230,180,122,0.6)',
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  askBubble: {
     width: 52,
     height: 52,
     borderRadius: 26,
@@ -279,25 +263,6 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(230,180,122,0.4)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 100,
-  },
-  askHintWrap: {
-    position: 'absolute',
-    bottom: 84,
-    right: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: 'rgba(20,19,26,0.85)',
-    borderRadius: 10,
-    borderWidth: 0.5,
-    borderColor: 'rgba(230,180,122,0.3)',
-    zIndex: 100,
-  },
-  askHintText: {
-    color: 'rgba(230,180,122,0.7)',
-    fontFamily: fonts.serifItalic,
-    fontSize: 11,
-    letterSpacing: 0.3,
   },
 
   // pills
