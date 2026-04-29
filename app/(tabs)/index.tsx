@@ -640,9 +640,10 @@ export default function ChatScreen() {
             end-of-session moment (haptic + structured 3-part summary). */}
         {/* Bottom dock — wraps the input bar + end-session pill in a
             single container so we can lift them off the home indicator
-            (insets.bottom + 20). Without this wrapper the dock sat
-            flush with the screen bottom on iPhones with a home bar. */}
-        <View style={{ paddingBottom: insets.bottom + 20 }}>
+            (insets.bottom + 10). The previous +20 read as too high; a
+            smaller gap puts the input visually closer to the bottom
+            without sitting on the home bar. */}
+        <View style={{ paddingBottom: insets.bottom + 10 }}>
         <ChatInput
           disabled={sending}
           onSend={handleSend}
