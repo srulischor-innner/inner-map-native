@@ -1,13 +1,26 @@
 // Streaming TTS controller. When audio mode is ON and a new AI message
 // begins streaming, instead of waiting for the whole reply before fetching
 // audio (the old "play after onDone" path), we fetch and play in chunks
-// of 1-3 sentences as they complete. The user starts hearing audio
-// shortly after the first sentence finishes streaming, while later
-// sentences are being fetched in the background.
+// of 1-3 sentences as they complete.
 //
-// Design constraints:
+// ORDER GUARANTEE — single sequential chain:
+//   Out-of-order playback ("read end first, then beginning") is what
+//   happens when we run multiple api.speak() requests in parallel and
+//   push their buffers into a queue based on which fetch resolved
+//   first. To prevent that, this controller maintains a single
+//   `activeChain` promise. Each enqueued sentence appends to the chain
+//   via `chain = chain.then(...)`, so:
+//     - sentence N+1's fetch waits for sentence N's playback to finish
+//     - the network speak() calls are intentionally serial
+//     - playback order matches enqueue order regardless of which
+//       /api/speak round trip happened to be slow
+//   Tradeoff: a small pause between sentences while the next one
+//   fetches (~0.5–1s on ElevenLabs). Sounds natural — like the
+//   reader breathing between thoughts.
+//
+// Other design constraints:
 //  - Only ONE streaming session active at a time. Starting a new one
-//    cancels the prior one (queue, in-flight fetches, current player).
+//    bumps watchToken so any in-flight chain step short-circuits.
 //  - Coexists with the single-clip ttsPlayer used for tap-to-replay:
 //    when streaming starts, ttsPlayer.stopAll() runs so the two layers
 //    never both produce sound at once.
@@ -23,15 +36,16 @@ import { api } from '../services/api';
 type Player = ReturnType<typeof createAudioPlayer>;
 
 const SOFT_MIN_CHARS = 80;
-type Chunk = { uri: string };
 
 let active = false;
 let currentMessageId: string | null = null;
 let buffer = '';                        // unconsumed text (no complete sentence yet)
 let consumedSoFar = 0;                  // chars handed in via append(), used by caller
-let queue: Chunk[] = [];
 let player: Player | null = null;
 let watchToken = 0;
+// Single sequential chain — every enqueueFetch appends to this so
+// fetch + play happen strictly one-at-a-time in insertion order.
+let activeChain: Promise<void> = Promise.resolve();
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -50,25 +64,30 @@ export function getStreamingMessageId(): string | null { return currentMessageId
 
 /** One-shot playback of an already-complete message. Used when the user
  *  flips the audio toggle ON and we want the most recent AI bubble to
- *  play immediately. Cancels anything currently playing, then queues the
- *  full text as a single TTS fetch. Bypasses the chunking machinery so
- *  the user hears the message from the first sentence — no streaming
- *  partials, no contention with a future streamed turn. */
+ *  play immediately. Cancels anything currently playing, then splits
+ *  the full text into sentences and chains them through the same
+ *  sequential fetch+play pipeline used by the streaming path — so
+ *  order is guaranteed even on a long message. */
 export async function playMessageNow(messageId: string, text: string): Promise<void> {
   const t = (text || '').trim();
   console.log('[tts-stream] playMessageNow id=' + messageId.slice(0, 8) + ' chars=' + t.length);
   if (!t) return;
-  // Reset state via cancelStream + the explicit reassignments. This makes
-  // sure consumedSoFar / buffer / queue from any prior stream are cleared
-  // so a later streamed turn starts from a clean slate.
   cancelStream();
-  active = false;          // we're not appending; mark as one-shot
+  active = false;
   currentMessageId = messageId;
   buffer = '';
   consumedSoFar = 0;
-  queue = [];
   watchToken++;
-  await enqueueFetch(t);
+  // Split into sentences; whitespace AFTER terminal punctuation is the
+  // boundary. Empty entries are filtered out. Each sentence chains
+  // strictly behind the previous one's playback completion.
+  const sentences = t.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  console.log('[tts-stream] playMessageNow split into ' + sentences.length + ' sentences');
+  if (sentences.length === 0) {
+    chainSentence(t);
+    return;
+  }
+  for (const s of sentences) chainSentence(s);
 }
 
 /** Begin a new streaming session for the given AI message id. Cancels
@@ -81,8 +100,8 @@ export async function startStream(messageId: string): Promise<void> {
   currentMessageId = messageId;
   buffer = '';
   consumedSoFar = 0;
-  queue = [];
   watchToken++;
+  activeChain = Promise.resolve();
   console.log('[tts-stream] start id=' + messageId.slice(0, 8));
 }
 
@@ -108,20 +127,24 @@ export function finishStream(): void {
   console.log('[tts-stream] finish — letting queue drain');
 }
 
-/** Stop everything. Cancels pending fetches (best effort), drops the
- *  queue, releases the player. Idempotent. */
+/** Stop everything. Bumps watchToken so any in-flight chain step
+ *  short-circuits, releases the current player, drops the chain.
+ *  Idempotent. */
 export function cancelStream(): void {
-  if (!active && !player && queue.length === 0) return;
+  if (!active && !player) return;
   watchToken++;
   active = false;
   currentMessageId = null;
   buffer = '';
   consumedSoFar = 0;
-  queue = [];
   if (player) {
     try { player.pause(); player.remove(); } catch {}
     player = null;
   }
+  // Replace the chain with a fresh resolved promise — any pending
+  // .then() callbacks already attached will still run on the OLD
+  // chain reference, but each one checks watchToken and bails.
+  activeChain = Promise.resolve();
   console.log('[tts-stream] cancel');
 }
 
@@ -146,7 +169,7 @@ function flushReadyChunks(force: boolean): void {
     if (force && buffer.trim()) {
       const tail = buffer.trim();
       buffer = '';
-      enqueueFetch(tail);
+      chainSentence(tail);
     }
     return;
   }
@@ -169,7 +192,7 @@ function flushReadyChunks(force: boolean): void {
       break;
     }
     const cleanGroup = group.trim();
-    if (cleanGroup) enqueueFetch(cleanGroup);
+    if (cleanGroup) chainSentence(cleanGroup);
     i = j;
   }
 
@@ -183,56 +206,58 @@ function flushReadyChunks(force: boolean): void {
   if (force && buffer.trim()) {
     const tail = buffer.trim();
     buffer = '';
-    enqueueFetch(tail);
+    chainSentence(tail);
   }
 }
 
-async function enqueueFetch(text: string): Promise<void> {
+/** Append a sentence to the sequential fetch+play chain. Each chain
+ *  step waits for the PREVIOUS sentence's playback to fully finish
+ *  before starting its own /api/speak request — so there is exactly
+ *  one fetch in flight and one playback at a time, in insertion
+ *  order. This is what guarantees "read first sentence then second
+ *  then third" instead of "whichever fetch resolved first." */
+function chainSentence(text: string): void {
   const myToken = watchToken;
-  console.log('[tts-stream] fetch chars=' + text.length + ' (queue=' + queue.length + ')');
-  try {
-    const buf = await api.speak(text);
-    if (myToken !== watchToken) return; // cancelled
-    if (!buf) return;
-    const uri = 'data:audio/mpeg;base64,' + bytesToBase64(new Uint8Array(buf));
-    if (myToken !== watchToken) return;
-    queue.push({ uri });
-    if (!player) playNext();
-  } catch (e) {
-    console.warn('[tts-stream] fetch failed:', (e as Error)?.message);
-  }
+  console.log('[tts-stream] chain sentence chars=' + text.length);
+  activeChain = activeChain.then(async () => {
+    if (myToken !== watchToken) return;     // cancelled while we were waiting
+    try {
+      const buf = await api.speak(text);
+      if (myToken !== watchToken) return;
+      if (!buf) {
+        console.warn('[tts-stream] api.speak returned null — skipping');
+        return;
+      }
+      await playOneBuffer(buf, myToken);
+    } catch (e) {
+      console.warn('[tts-stream] chain step failed:', (e as Error)?.message);
+    }
+  }).catch(() => {});
 }
 
-async function playNext(): Promise<void> {
-  if (queue.length === 0) {
-    player = null;
-    return;
-  }
-  const next = queue.shift()!;
-  const myToken = watchToken;
-  // Claim the player slot SYNCHRONOUSLY. Without this, `await
-  // setAudioModeAsync` below is a window where a second enqueueFetch
-  // sees `!player === true` and kicks off a parallel playNext —
-  // producing two simultaneous audio players and the "last sentence
-  // jumps to the beginning" symptom.
-  const p = createAudioPlayer({ uri: next.uri });
-  player = p;
-  console.log('[tts-stream] playNext claim id=' + (currentMessageId?.slice(0, 8) || '?') + ' remaining=' + queue.length);
+/** Play a single MP3 buffer to completion. Resolves only after the
+ *  player reports didJustFinish (or isLoaded becomes false, or the
+ *  watchToken is bumped). The chain.then() above awaits this so the
+ *  next sentence's fetch doesn't start until this one is done. */
+async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
+  if (myToken !== watchToken) return;
+  const uri = 'data:audio/mpeg;base64,' + bytesToBase64(new Uint8Array(buf));
   try {
     await setAudioModeAsync({
       allowsRecording: false, playsInSilentMode: true,
       interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
     });
   } catch {}
-  if (myToken !== watchToken) {
-    // We were cancelled during the audio-mode setup. Drop the player
-    // we claimed without playing it.
-    try { p.remove(); } catch {}
-    if (player === p) player = null;
-    return;
+  if (myToken !== watchToken) return;
+  // Tear down any prior player BEFORE creating the next — defensive
+  // against the rare case where cancelStream missed a beat.
+  if (player) {
+    try { player.pause(); player.remove(); } catch {}
+    player = null;
   }
+  const p = createAudioPlayer({ uri });
+  player = p;
   try { p.play(); } catch {}
-  // Watch for finish — poll cheaply, then advance.
   while (player === p && myToken === watchToken) {
     try {
       const s = p.currentStatus;
@@ -242,8 +267,5 @@ async function playNext(): Promise<void> {
     await new Promise((r) => setTimeout(r, 100));
   }
   try { p.remove(); } catch {}
-  if (player === p && myToken === watchToken) {
-    player = null;
-    playNext();
-  }
+  if (player === p) player = null;
 }
