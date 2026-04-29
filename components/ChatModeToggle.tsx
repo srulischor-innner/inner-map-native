@@ -118,7 +118,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
+    // Top padding tightened (10 → 3) to nudge the whole toggle up
+    // closer to the attention strip; bottom kept at 10 for breathing
+    // room between the toggle and the message list.
+    paddingTop: 3,
+    paddingBottom: 10,
     paddingHorizontal: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: 'rgba(230,180,122,0.1)',
