@@ -144,6 +144,13 @@ export default function ChatScreen() {
       'target=', targetAI ? `id=${targetAI.id.slice(0, 8)} chars=${targetAI.text.length}` : '(none)',
     );
     if (targetAI) {
+      // Belt-and-braces: hard-stop anything currently playing or
+      // queued before kicking off the toggle-on replay. playTTSNow
+      // already calls cancelStream() internally, but doing it here
+      // too means there's no observable window where two audio
+      // streams could overlap (toggle on vs streamingTTSStarted from
+      // a prior turn).
+      cancelTTSStream();
       playTTSNow(targetAI.id, targetAI.text).catch((e) =>
         console.warn('[audio] playMessageNow threw:', (e as Error)?.message),
       );
@@ -292,11 +299,20 @@ export default function ChatScreen() {
     ]);
     scrollToBottom();
     // Kick transcription. /api/transcribe is Whisper-backed; iOS records
-    // .m4a from expo-audio's HIGH_QUALITY preset.
+    // .m4a from expo-audio's HIGH_QUALITY preset. 30s hard cap so a
+    // backgrounded app or stalled connection never leaves the bubble
+    // stuck on its loading state forever — the bubble flips to an
+    // empty transcript (renders as 'nothing heard') and the user can
+    // long-press to retry.
     const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
     let transcript = '';
     try {
-      const t = await api.transcribe(uri, mime);
+      const t = await Promise.race([
+        api.transcribe(uri, mime),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error('transcribe timeout (30s)')), 30000),
+        ),
+      ]);
       transcript = (t || '').trim();
     } catch (err) {
       console.warn('[chat] voice transcribe failed:', (err as Error)?.message);

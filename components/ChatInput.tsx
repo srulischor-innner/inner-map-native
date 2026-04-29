@@ -41,6 +41,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
 import { colors, fonts, radii, spacing } from '../constants/theme';
+import { cancelStream as cancelTTSStream } from '../utils/ttsStream';
 
 // Swiping the finger this far left during a hold → cancel the recording.
 const CANCEL_SWIPE_PX = 80;
@@ -121,6 +122,10 @@ export function ChatInput({
 
   async function startRecording() {
     console.log('[mic] long-press fired → recording start');
+    // Hard-stop any read-aloud / streaming-TTS playback before the mic
+    // session opens. Otherwise the user hears the AI's reply talking
+    // over their own recording prompt — confusing on iPhone speakers.
+    cancelTTSStream();
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {

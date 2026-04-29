@@ -222,11 +222,20 @@ function chainSentence(text: string): void {
   activeChain = activeChain.then(async () => {
     if (myToken !== watchToken) return;     // cancelled while we were waiting
     try {
-      const buf = await api.speak(text);
+      // One retry on null buffer — ElevenLabs / OpenAI sometimes drops
+      // the connection mid-stream and the second attempt usually
+      // succeeds. Without this, a single transient failure produced
+      // a permanently-cut-off mid-message read-aloud.
+      let buf = await api.speak(text);
       if (myToken !== watchToken) return;
       if (!buf) {
-        console.warn('[tts-stream] api.speak returned null — skipping');
-        return;
+        console.warn('[tts-stream] api.speak returned null — retrying once');
+        buf = await api.speak(text);
+        if (myToken !== watchToken) return;
+        if (!buf) {
+          console.error('[tts-stream] api.speak returned null on retry — dropping sentence');
+          return;
+        }
       }
       await playOneBuffer(buf, myToken);
     } catch (e) {
