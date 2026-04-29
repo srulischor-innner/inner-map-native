@@ -74,15 +74,18 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T, tag: string): Pr
 export default function RootLayout() {
   const router = useRouter();
   const responseSubRef = useRef<Notifications.Subscription | null>(null);
-  // Biometric lock state. `locked` true → render <LockScreen> over the
-  // Stack until the user successfully authenticates. We default to true
-  // when the preference is on, so the unlocked content is never visible
-  // for a frame on cold start. Flips to false after a successful auth.
-  const [locked, setLocked] = useState(false);
-  // True from launch until the cold-start biometric check resolves
-  // (success, failure, or 'lock disabled'). While true we render only
-  // a blank dark+triangle splash so no app content peeks behind the
-  // Face ID prompt — the previous behavior briefly flashed the tabs.
+  // Biometric lock state. Both flags START AS TRUE so the very first
+  // pixel rendered is the dark + triangle splash. Nothing else can
+  // ever flash behind the Face ID prompt:
+  //   - `locked` flips to false on successful auth OR when the lock
+  //     preference is disabled (the runAuthCheck early-return below).
+  //   - `isCheckingBiometrics` flips to false in the cold-start
+  //     useEffect's finally block once the prompt resolves.
+  //   - During cold-start (isCheckingBiometrics is true) we
+  //     deliberately do NOT show the LockScreen overlay — just the
+  //     dark triangle. The LockScreen only appears AFTER the initial
+  //     check completes with a failure (locked && !isCheckingBiometrics).
+  const [locked, setLocked] = useState(true);
   const [isCheckingBiometrics, setIsCheckingBiometrics] = useState(true);
   // True until the LandingScreen completes its 1500ms hold. Shown after
   // biometrics pass on every cold open so the user lands on a calm
@@ -131,8 +134,16 @@ export default function RootLayout() {
       try {
         await ensureDefaultPreference();
         const enabled = await isLockEnabled();
-        if (!enabled || hasAuthenticatedThisSession) return;
-        setLocked(true);                    // hide content while we prompt
+        // Lock preference is OFF, OR this is a remount within the same
+        // process and we're already authenticated. Either way, no auth
+        // prompt — but `locked` was initialized to TRUE so we must
+        // explicitly flip it false here so the splash gate exits.
+        if (!enabled || hasAuthenticatedThisSession) {
+          setLocked(false);
+          return;
+        }
+        // Lock IS on. Don't bother flipping locked (it's already true).
+        // runAuthCheck handles the success → setLocked(false) path.
         await runAuthCheck('cold-start');
       } finally {
         setIsCheckingBiometrics(false);
@@ -245,14 +256,21 @@ export default function RootLayout() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // INVARIANT: render NOTHING but the dark splash + triangle while
-  // the biometric check is in flight (isCheckingBiometrics) or the
-  // user is locked. isCheckingBiometrics is initialized to TRUE
-  // (line 86) so this gate fires from the very first React render —
-  // no app content can flash behind the Face ID prompt. The flag
-  // only flips to false in the cold-start useEffect's finally block,
-  // which runs after the biometric prompt resolves (or after the
-  // 'lock disabled' early-return).
-  if (isCheckingBiometrics || locked) {
+  // ANY of these are true:
+  //   - isCheckingBiometrics — the cold-start auth check hasn't
+  //     resolved yet (initialized to TRUE on first render).
+  //   - locked — auth has failed, OR we haven't authenticated yet
+  //     this session and the lock is on (initialized to TRUE).
+  //   - !fontsLoaded — RN's font load promise hasn't resolved. Without
+  //     this gate, the very first frame can render before the custom
+  //     font is ready — that one frame would briefly show fallback-
+  //     font content underneath the Face ID prompt.
+  // The LockScreen overlay (with the explicit Unlock pill) ONLY
+  // renders once the initial check has completed. During the
+  // first-prompt window we show the bare dark triangle so Face ID
+  // appears OVER nothing-but-icon.
+  if (isCheckingBiometrics || locked || !fontsLoaded) {
+    const showLockScreen = locked && !isCheckingBiometrics && fontsLoaded;
     return (
       <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0a0a0f' }}>
         <SafeAreaProvider>
@@ -264,10 +282,7 @@ export default function RootLayout() {
               resizeMode="contain"
             />
           </View>
-          {/* Lock screen sits above the splash when the user has failed
-              biometric auth, so they get an explicit Unlock pill rather
-              than just an indefinite triangle. */}
-          {locked ? (
+          {showLockScreen ? (
             <LockScreen onUnlock={() => runAuthCheck('button-tap')} />
           ) : null}
         </SafeAreaProvider>
