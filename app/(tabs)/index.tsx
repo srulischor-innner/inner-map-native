@@ -102,23 +102,48 @@ export default function ChatScreen() {
     // the user sends a message before React's re-render lands.
     audioEnabledRef.current = true;
     setAudioEnabled(true);
-    // Find the most recent assistant bubble that has finished streaming
-    // and play it. Streaming bubbles are skipped — those will be handled
-    // by the live chunked TTS path on their next delta.
+    // SELECTION RULE — play the last AI message that arrived BEFORE
+    // the user's most recent turn. Anything the AI says AFTER the
+    // user's last message is either (a) currently streaming and will
+    // get picked up by the live TTS path on its own, or (b) already
+    // played out as part of a previous turn. We never want to replay
+    // the very latest AI bubble when the user has already moved on
+    // — that would feel like it's lecturing them after the fact.
     const list = messagesRef.current;
-    const lastAI = (() => {
-      for (let i = list.length - 1; i >= 0; i--) {
+
+    // Find the index of the user's most recent message.
+    let lastUserIdx = -1;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].role === 'user') { lastUserIdx = i; break; }
+    }
+
+    // Find the target AI message:
+    //   - If the user has spoken at least once, scan BACKWARD from
+    //     just before the last user message and pick the most recent
+    //     finished assistant bubble before it.
+    //   - If no user message yet (fresh session, only the AI's
+    //     greeting is on screen), play the most recent finished AI
+    //     bubble in the list.
+    const targetAI = (() => {
+      const startIdx = lastUserIdx > 0 ? lastUserIdx - 1 : list.length - 1;
+      for (let i = startIdx; i >= 0; i--) {
         const m = list[i];
         if (m.role === 'assistant' && !m.streaming && m.text && m.text.trim()) return m;
       }
       return null;
     })();
-    console.log('[audio] last AI message:', lastAI ? `id=${lastAI.id.slice(0, 8)} chars=${lastAI.text.length}` : '(none)');
-    if (lastAI) {
-      playTTSNow(lastAI.id, lastAI.text).catch((e) =>
+    console.log(
+      '[audio] enable — lastUserIdx=', lastUserIdx,
+      'target=', targetAI ? `id=${targetAI.id.slice(0, 8)} chars=${targetAI.text.length}` : '(none)',
+    );
+    if (targetAI) {
+      playTTSNow(targetAI.id, targetAI.text).catch((e) =>
         console.warn('[audio] playMessageNow threw:', (e as Error)?.message),
       );
     }
+    // Subsequent AI replies will auto-play through the existing
+    // streamingTTSStarted capture in onSendText / onSendVoice — no
+    // additional wiring needed.
   }
   // Experience level — drives which voice mode the AI uses on the server.
   // Synced from AsyncStorage; updates immediately when changed in settings.
