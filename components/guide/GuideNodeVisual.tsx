@@ -8,6 +8,7 @@
 // paints read them on the UI thread (no React re-renders per frame).
 
 import React, { useEffect, useMemo } from 'react';
+import { View } from 'react-native';
 import {
   Canvas, Circle, Group, Path, RadialGradient, LinearGradient, Skia, Line, Rect, DashPathEffect, vec,
 } from '@shopify/react-native-skia';
@@ -41,6 +42,7 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
   // inside is rendered with static numeric values. No animated
   // strokeWidth, no Skia.Path.Make() in render, no derived Skia paint
   // inputs. This is the pattern recommended for fragile Skia targets.
+  if (kind === 'safetyCapacity') return <SafetyCapacitySafe W={W} H={H} />;
   if (kind === 'survivalMode') return <SurvivalModeSafe W={W} H={H} />;
   if (kind === 'groundBuilding') return <GroundBuildingSafe W={W} H={H} />;
 
@@ -1396,141 +1398,173 @@ function BuildingCapacityDot({
   );
 }
 
-// SURVIVAL MODE — the triangle with all three nodes lit + pulsing in their
-// colors, atmospheric glow heightened, lines pulsing. Holds for ~3s in the
-// activated state, then dims and settles for ~2s, then re-activates. The
-// felt sense is "alert and protective, then standing down once it feels
-// safer." Loops continuously.
 // =============================================================================
-// SAFE re-implementations of survivalMode + groundBuilding. The previous
-// versions crashed on iOS Skia with no JS exception (so the React error
-// boundary couldn't catch them). The pattern that works:
-//   - Animate the wrapping Animated.View opacity, NOT internal Skia props
-//   - Build any Skia.Path objects inside useMemo, never inline at render
-//   - Static strokeWidth on all <Path> elements
-//   - All node geometry computed from W/H once via plain const, not
-//     SharedValue-derived
+// SAFE re-implementations of the three "What Holds You" visuals
+// (safetyCapacity, survivalMode, groundBuilding). Same pattern across
+// all three:
+//   - Animate ONLY the Animated.View wrapper (opacity / scale).
+//   - All Skia elements use static numeric props (no animated
+//     strokeWidth, no SharedValue feeding cx/cy/r/colors).
+//   - Any Skia.Path objects (none here) would go through useMemo.
 // =============================================================================
-function SurvivalModeSafe({ W, H }: { W: number; H: number }) {
+
+// SAFETY CAPACITY — concentric warm circles. The whole canvas
+// breathes via a wrapper scale + opacity drive: scale 0.6 ↔ 1.0 over
+// 3s, with opacity riding the same curve so the bigger state reads
+// as "more capacity available." Replaces the previous buildingCapacity
+// dot-builder visual.
+function SafetyCapacitySafe({ W, H }: { W: number; H: number }) {
+  const scale = useSharedValue(0.6);
+  useEffect(() => {
+    scale.value = withRepeat(
+      withSequence(
+        withTiming(1.0, { duration: 3000, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.6, { duration: 3000, easing: Easing.inOut(Easing.ease) }),
+      ),
+      -1, false,
+    );
+  }, [scale]);
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    // Opacity rides scale: smaller = dimmer, bigger = fuller.
+    opacity: 0.6 + (scale.value - 0.6) * 0.4,
+  }));
+
   const cx = W / 2;
-  const triH = H * 0.45;
-  const triW = W * 0.55;
-  // Triangle node positions (static).
-  const woundX = cx;
-  const woundY = H * 0.20;
-  const fixerX = cx + triW / 2;
-  const fixerY = H * 0.20 + triH;
-  const skepticX = cx - triW / 2;
-  const skepticY = H * 0.20 + triH;
+  const cy = H / 2;
 
-  // Triangle leg path — built once.
-  const triPath = useMemo(() => {
-    const p = Skia.Path.Make();
-    p.moveTo(woundX, woundY);
-    p.lineTo(fixerX, fixerY);
-    p.lineTo(skepticX, skepticY);
-    p.close();
-    return p;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [W, H]);
+  return (
+    <View style={{ width: W, height: H, justifyContent: 'center', alignItems: 'center' }}>
+      <Animated.View style={[{ width: W, height: H, position: 'absolute' }, animStyle]}>
+        <Canvas style={{ width: W, height: H }}>
+          {/* Outer haze */}
+          <Circle cx={cx} cy={cy} r={90} color="rgba(230,180,122,0.08)" />
+          {/* Mid ring fill */}
+          <Circle cx={cx} cy={cy} r={65} color="rgba(230,180,122,0.15)" />
+          {/* Inner glow */}
+          <Circle cx={cx} cy={cy} r={42} color="rgba(230,180,122,0.35)" />
+          {/* Core */}
+          <Circle cx={cx} cy={cy} r={20} color="rgba(230,180,122,0.6)" />
+          {/* Mid stroke ring — gives the breath shape a clear edge */}
+          <Circle
+            cx={cx} cy={cy} r={65}
+            style="stroke" strokeWidth={1}
+            color="rgba(230,180,122,0.3)"
+          />
+        </Canvas>
+      </Animated.View>
+    </View>
+  );
+}
 
-  // Single shared opacity drive for the whole canvas. 0.6 ↔ 1.0 / 1200ms
-  // — the system pulsing in alarm. Animated.View opacity is the only
-  // moving piece; every Skia element is rendered with static numerics.
-  const pulse = useSharedValue(0.6);
+// SURVIVAL MODE — three small colored dots (wound red, fixer amber,
+// skeptic blue) huddled close together in the center, pulsing rapidly
+// as a single canvas-opacity drive. Reads as urgency + contraction.
+function SurvivalModeSafe({ W, H }: { W: number; H: number }) {
+  const pulse = useSharedValue(0.7);
   useEffect(() => {
     pulse.value = withRepeat(
-      withTiming(1.0, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
-      -1, true,
+      withSequence(
+        withTiming(1.0, { duration: 400 }),
+        withTiming(0.7, { duration: 400 }),
+      ),
+      -1, false,
     );
   }, [pulse]);
   const animStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
 
+  const cx = W / 2;
+  const cy = H / 2;
+  const dotRadius = 18;
+  const sep = 48;
+
+  // Three dots close together — wound top, fixer bottom right,
+  // skeptic bottom left.
+  const woundX = cx;
+  const woundY = cy - 30;
+  const fixerX = cx + sep / 2;
+  const fixerY = cy + 20;
+  const skepticX = cx - sep / 2;
+  const skepticY = cy + 20;
+
   return (
     <Animated.View style={[{ width: W, height: H }, animStyle]}>
       <Canvas style={{ width: W, height: H }}>
-        {/* Triangle perimeter — quiet purple-amber. */}
-        <Path
-          path={triPath}
-          style="stroke"
-          strokeWidth={1.5}
-          color="rgba(138,122,170,0.45)"
-        />
-        {/* Wound node — red, lit. */}
-        <Group>
-          <Circle cx={woundX} cy={woundY} r={28} color="rgba(224,80,80,0.18)" />
-          <Circle cx={woundX} cy={woundY} r={20} style="stroke" strokeWidth={2} color="#E05050" />
-          <Circle cx={woundX} cy={woundY} r={6}  color="#E05050" />
-        </Group>
-        {/* Fixer node — amber, lit. */}
-        <Group>
-          <Circle cx={fixerX} cy={fixerY} r={26} color="rgba(230,180,122,0.18)" />
-          <Circle cx={fixerX} cy={fixerY} r={18} style="stroke" strokeWidth={2} color="#E6B47A" />
-          <Circle cx={fixerX} cy={fixerY} r={5}  color="#E6B47A" />
-        </Group>
-        {/* Skeptic node — blue, lit. */}
-        <Group>
-          <Circle cx={skepticX} cy={skepticY} r={26} color="rgba(134,189,220,0.18)" />
-          <Circle cx={skepticX} cy={skepticY} r={18} style="stroke" strokeWidth={2} color="#86BDDC" />
-          <Circle cx={skepticX} cy={skepticY} r={5}  color="#86BDDC" />
-        </Group>
+        {/* Wound — red */}
+        <Circle cx={woundX} cy={woundY} r={dotRadius + 8} color="rgba(224,80,80,0.15)" />
+        <Circle cx={woundX} cy={woundY} r={dotRadius} color="rgba(224,80,80,0.4)" />
+        <Circle cx={woundX} cy={woundY} r={dotRadius} style="stroke" strokeWidth={2} color="#E05050" />
+        {/* Fixer — amber */}
+        <Circle cx={fixerX} cy={fixerY} r={dotRadius + 8} color="rgba(230,180,122,0.15)" />
+        <Circle cx={fixerX} cy={fixerY} r={dotRadius} color="rgba(230,180,122,0.4)" />
+        <Circle cx={fixerX} cy={fixerY} r={dotRadius} style="stroke" strokeWidth={2} color="#E6B47A" />
+        {/* Skeptic — blue */}
+        <Circle cx={skepticX} cy={skepticY} r={dotRadius + 8} color="rgba(134,189,220,0.15)" />
+        <Circle cx={skepticX} cy={skepticY} r={dotRadius} color="rgba(134,189,220,0.4)" />
+        <Circle cx={skepticX} cy={skepticY} r={dotRadius} style="stroke" strokeWidth={2} color="#86BDDC" />
       </Canvas>
     </Animated.View>
   );
 }
 
+// GROUND BUILDING — horizontal "ground" line with warm root-like
+// amber dots clustered below it, plus a soft upward gradient hinting
+// at energy rising once there's foundation. Whole canvas opacity
+// lifts 0.3 → 1.0 / 4s linear so the visual reads as the ground
+// gradually becoming substantial.
 function GroundBuildingSafe({ W, H }: { W: number; H: number }) {
-  // 6 dot positions — bottom upward, slight horizontal scatter. All
-  // numeric, computed once.
-  const dots = useMemo(() => [
-    { x: W * 0.20, y: H * 0.85 },
-    { x: W * 0.50, y: H * 0.80 },
-    { x: W * 0.75, y: H * 0.82 },
-    { x: W * 0.35, y: H * 0.70 },
-    { x: W * 0.62, y: H * 0.68 },
-    { x: W * 0.48, y: H * 0.58 },
-  ], [W, H]);
-
-  // Single shared opacity drive — fades the whole canvas in and out so
-  // the ground reads as 'building'. 0.4 → 1.0 over 5s, restart.
-  const progress = useSharedValue(0.4);
+  const progress = useSharedValue(0);
   useEffect(() => {
     progress.value = withRepeat(
-      withTiming(1.0, { duration: 5000, easing: Easing.linear }),
-      -1, true,
+      withTiming(1, { duration: 4000, easing: Easing.linear }),
+      -1, false,
     );
   }, [progress]);
   const canvasOpacity = useAnimatedStyle(() => ({
-    opacity: 0.4 + progress.value * 0.6,
+    opacity: 0.3 + progress.value * 0.7,
   }));
+
+  const groundY = H * 0.58;
+
+  // Six root dots clustered below the ground line (static positions).
+  const dots = useMemo(() => [
+    { x: W * 0.25, y: H * 0.65 },
+    { x: W * 0.50, y: H * 0.68 },
+    { x: W * 0.75, y: H * 0.65 },
+    { x: W * 0.35, y: H * 0.78 },
+    { x: W * 0.62, y: H * 0.75 },
+    { x: W * 0.50, y: H * 0.85 },
+  ], [W, H]);
 
   return (
     <Animated.View style={[{ width: W, height: H }, canvasOpacity]}>
       <Canvas style={{ width: W, height: H }}>
-        {/* Soft warm wash anchored at the bottom — the ground itself. */}
-        <Rect x={0} y={0} width={W} height={H}>
+        {/* Ground line */}
+        <Line
+          p1={vec(W * 0.1, groundY)}
+          p2={vec(W * 0.9, groundY)}
+          strokeWidth={1.5}
+          color="rgba(230,180,122,0.5)"
+        />
+        {/* Soft glow above the ground line — energy rising. */}
+        <Rect x={W * 0.1} y={groundY - 40} width={W * 0.8} height={40}>
           <LinearGradient
-            start={vec(W / 2, H)}
-            end={vec(W / 2, H * 0.25)}
-            colors={['rgba(230,180,122,0.18)', 'rgba(230,180,122,0)']}
+            start={vec(W * 0.5, groundY)}
+            end={vec(W * 0.5, groundY - 40)}
+            colors={['rgba(230,180,122,0.12)', 'rgba(230,180,122,0)']}
           />
         </Rect>
-        {/* Ground dots — warm amber, static. */}
+        {/* Root dots — clustered below the ground line. */}
         {dots.map((d, i) => (
           <React.Fragment key={i}>
-            <Circle cx={d.x} cy={d.y} r={9} color="rgba(230,180,122,0.35)" />
-            <Circle cx={d.x} cy={d.y} r={5} color="#E6B47A" />
+            <Circle cx={d.x} cy={d.y} r={12} color="rgba(230,180,122,0.15)" />
+            <Circle cx={d.x} cy={d.y} r={7} color="rgba(230,180,122,0.6)" />
           </React.Fragment>
         ))}
-        {/* Upward current — a faint vertical band suggesting energy
-            rising once there's enough ground beneath it. */}
-        <Rect x={W * 0.30} y={H * 0.30} width={W * 0.40} height={H * 0.50}>
-          <LinearGradient
-            start={vec(W * 0.5, H * 0.80)}
-            end={vec(W * 0.5, H * 0.30)}
-            colors={['rgba(230,180,122,0)', 'rgba(230,180,122,0.22)']}
-          />
-        </Rect>
+        {/* Small ascending particles above the ground line. */}
+        <Circle cx={W * 0.3} cy={groundY - 20} r={3} color="rgba(230,180,122,0.2)" />
+        <Circle cx={W * 0.5} cy={groundY - 30} r={2} color="rgba(230,180,122,0.15)" />
+        <Circle cx={W * 0.7} cy={groundY - 15} r={3} color="rgba(230,180,122,0.2)" />
       </Canvas>
     </Animated.View>
   );

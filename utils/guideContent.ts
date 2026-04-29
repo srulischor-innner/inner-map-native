@@ -29,11 +29,12 @@ export type NodeVisualKind =
   | 'privacy'              // breathing amber rings around a small lock glyph
   | 'readyToBegin'         // full map fades in; Self brightens last and holds
   // ----- "what holds you" — opens the HEALING section (3 slides) -----
-  | 'buildingCapacity'     // base of warm dots builds, threshold line rises
-  | 'survivalMode'         // triangle with all three nodes lit + pulsing, then settling
-  | 'groundBuilding'       // dim canvas warms as life elements appear, energy flows up
+  | 'safetyCapacity'       // expanding warm circle = capacity growing
+  | 'survivalMode'         // 3 small colored dots huddled close, pulsing rapidly
+  | 'groundBuilding'       // ground line + warm root dots below + soft glow above
   // ----- legacy visuals (kept so the dispatcher type-checks even if some
   //       older code still references them; not used by current slides) -----
+  | 'buildingCapacity'
   | 'windowOfTolerance'
   | 'twoTracks'
   | 'energyMoves'
@@ -231,7 +232,7 @@ export const MAP_SLIDES: GuideSlide[] = [
 //   3. Ground first — the actual work
 export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
   {
-    visual: 'buildingCapacity',
+    visual: 'safetyCapacity',
     title: 'Safety and capacity are the same thing',
     body: [
       "As you build safety in your life, you also build your capacity to hold painful or heavy emotions without being overwhelmed by them.",
