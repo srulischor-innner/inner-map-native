@@ -598,6 +598,11 @@ export default function ChatScreen() {
         {/* The legacy "Your map has been updated." overlay was replaced
             by the SessionSummaryModal below — it now carries the entire
             end-of-session moment (haptic + structured 3-part summary). */}
+        {/* Bottom dock — wraps the input bar + end-session pill in a
+            single container so we can lift them off the home indicator
+            (insets.bottom + 20). Without this wrapper the dock sat
+            flush with the screen bottom on iPhones with a home bar. */}
+        <View style={{ paddingBottom: insets.bottom + 20 }}>
         <ChatInput
           disabled={sending}
           onSend={handleSend}
@@ -680,6 +685,7 @@ export default function ChatScreen() {
             };
           }}
         />
+        </View>
       </KeyboardAvoidingView>
 
       <SessionSummaryModal
