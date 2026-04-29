@@ -116,6 +116,12 @@ export const api = {
       /** When true, server swaps in MAP_VOICE_PROMPT and caps max_tokens
        *  at 150 for snappy spoken replies. */
       mapVoice?: boolean;
+      /** Chat tab mode toggle — drives which of the two text-chat
+       *  prompts the server uses on /api/chat:
+       *    'process' → HOLDING_SPACE_PROMPT (default, gentle)
+       *    'explore' → MAPPING_PROMPT (active curiosity + mapping)
+       *  Defaults to 'process' on the server when unset. */
+      chatMode?: 'process' | 'explore';
     },
     cb: StreamCallbacks,
   ): Promise<() => void> {
@@ -131,6 +137,7 @@ export const api = {
     if (params.selfMode) bodyObj.selfMode = true;
     if (params.experienceLevel) bodyObj.experienceLevel = params.experienceLevel;
     if (params.mapVoice) bodyObj.mapVoice = true;
+    if (params.chatMode) bodyObj.chatMode = params.chatMode;
     console.log(
       `[chat] sending mode=${bodyObj.mode} msgCount=${params.messages.length} lastRole=${params.messages[params.messages.length - 1]?.role}`,
     );

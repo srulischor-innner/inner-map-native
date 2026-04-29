@@ -33,6 +33,7 @@ import { api, ChatMessage } from '../../services/api';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
 import { clearMapVoiceHistory } from '../../services/mapVoiceHistory';
+import { ChatModeToggle, ChatModeIndicator, ChatMode } from '../../components/ChatModeToggle';
 import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
@@ -83,6 +84,11 @@ export default function ChatScreen() {
   // by tapping the speaker icon in the chat header. When ON, every new AI
   // reply auto-plays via the streaming TTS pipeline. When the user mutes,
   // the in-flight stream cancels immediately. No per-message control.
+  // Chat mode — Process (default, gentle holding) vs Explore
+  // (active map-building). The server uses this to pick between
+  // HOLDING_SPACE_PROMPT and MAPPING_PROMPT. Reset to 'process' on
+  // every new session.
+  const [chatMode, setChatMode] = useState<ChatMode>('process');
   const [audioEnabled, setAudioEnabled] = useState(false);
   const audioEnabledRef = useRef(audioEnabled);
   useEffect(() => { audioEnabledRef.current = audioEnabled; }, [audioEnabled]);
@@ -390,6 +396,7 @@ export default function ChatScreen() {
             sessionId: sessionIdRef.current,
             selfMode,
             experienceLevel,
+            chatMode,
           },
           {
             onDelta: (delta) => {
@@ -588,6 +595,12 @@ export default function ChatScreen() {
         <AudioToggle enabled={audioEnabled} onToggle={toggleAudio} />
         <AttentionIndicator />
       </View>
+      {/* Mode toggle — Process (gentle holding) vs Explore (active
+          map-building). Selection drives which system prompt the
+          server uses on /api/chat. Subtle below-strip placement so
+          it's always available but never competing with the
+          conversation. Reset to 'process' on every new session. */}
+      <ChatModeToggle mode={chatMode} onChange={setChatMode} />
       {/* Keyboard avoidance. `keyboardVerticalOffset` must equal the height of
           anything above this KeyboardAvoidingView on the screen: the iOS safe-
           area top inset + the hamburger row (34) + the tab row (40) + the
@@ -611,6 +624,7 @@ export default function ChatScreen() {
             keyboardShouldPersistTaps="handled"
             onScrollBeginDrag={() => Keyboard.dismiss()}
           >
+            <ChatModeIndicator mode={chatMode} />
             {bubbleList}
             {typing ? <TypingIndicator /> : null}
             {/* Starter chips appear only before the user has said anything. They
@@ -696,6 +710,7 @@ export default function ChatScreen() {
               setAudioEnabled(false);
               resetAttentionState();
               setSelfMode(false);
+              setChatMode('process');           // new session always starts gentle
               clearMapVoiceHistory();           // start map voice fresh next session
               historyRef.current = [];
               setMessages([]);
