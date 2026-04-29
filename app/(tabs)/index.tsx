@@ -607,12 +607,20 @@ export default function ChatScreen() {
           ~22px attention strip. Without this the keyboard covers the input
           bar on iPhone. `behavior: padding` shrinks the KAV by the keyboard
           height, pushing ScrollView + ChatInput up together. */}
+      {/* keyboardVerticalOffset reduced by ~44px to absorb the height
+          of the new ChatModeToggle bar that sits between the
+          attention strip and the KAV. The previous offset assumed the
+          KAV started right under the attention strip; with the toggle
+          in between, the same offset value pushed content too far up
+          and produced a visible gap between the input and the
+          keyboard. Smaller offset → less upward padding → input sits
+          flush above the keyboard. */}
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={
           Platform.OS === 'ios'
-            ? insets.top + 34 /* hamburger row */ + 40 /* tabs */ + 48 /* attention strip */
+            ? insets.top + 34 /* hamburger */ + 40 /* tabs */ + 48 /* attention */ - 44 /* toggle */
             : 0
         }
       >
