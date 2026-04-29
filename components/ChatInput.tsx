@@ -207,29 +207,18 @@ export function ChatInput({
   return (
     <View style={styles.wrap}>
       <View style={styles.bar}>
-        {recording ? (
-          // -----------------------------------------------------------------
-          // RECORDING PILL — replaces the text field while the hold is active.
-          // Red pulsing dot + "Recording" + ticking duration + swipe hint.
-          // When cancelArmed, the pill turns red to confirm a release now
-          // will discard.
-          // -----------------------------------------------------------------
-          <View style={[styles.recordingPill, cancelArmed && styles.recordingPillCancel]}>
-            <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
-            <Text style={styles.recordingLabel}>
-              {cancelArmed ? 'Release to cancel' : 'Recording…'}
-            </Text>
-            <Text style={styles.recordingTime}>{formatSecs(seconds)}</Text>
-            <View style={{ flex: 1 }} />
-            {!cancelArmed ? (
-              <Text style={styles.swipeHint}>Slide to cancel ←</Text>
-            ) : null}
-          </View>
-        ) : (
+        {/* TextInput is ALWAYS mounted — the recording pill is rendered
+            as an absolute overlay on top of it instead of swapping
+            the two views. Reason: swapping unmounts the TextInput,
+            which dismisses the keyboard the user had open. With the
+            input mounted-but-covered, the keyboard stays up so the
+            user can switch back to typing without re-tapping the
+            field. */}
+        <View style={styles.inputWrap}>
           <TextInput
             value={text}
             onChangeText={setText}
-            editable={!disabled}
+            editable={!disabled && !recording}
             multiline
             placeholder={'Share what feels true…'}
             placeholderTextColor={colors.creamFaint}
@@ -237,7 +226,27 @@ export function ChatInput({
             selectionColor={colors.amber}
             onSubmitEditing={handleSend}
           />
-        )}
+          {recording ? (
+            // RECORDING PILL — overlay covering the TextInput.
+            // Red pulsing dot + "Recording" + ticking duration + swipe
+            // hint. When cancelArmed, the pill turns red to confirm a
+            // release now will discard.
+            <View
+              style={[styles.recordingOverlay, cancelArmed && styles.recordingPillCancel]}
+              pointerEvents="none"
+            >
+              <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
+              <Text style={styles.recordingLabel}>
+                {cancelArmed ? 'Release to cancel' : 'Recording…'}
+              </Text>
+              <Text style={styles.recordingTime}>{formatSecs(seconds)}</Text>
+              <View style={{ flex: 1 }} />
+              {!cancelArmed ? (
+                <Text style={styles.swipeHint}>Slide to cancel ←</Text>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
 
         {canSend ? (
           <Pressable onPress={handleSend} style={[styles.btn, styles.sendBtn]} accessibilityLabel="Send">
@@ -319,7 +328,34 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     gap: spacing.sm,
   },
+  inputWrap: {
+    // Container for the TextInput + the recording overlay. Flex so it
+    // expands to fill the bar between the leading area and the trailing
+    // mic/send button; relative-positioned so the overlay can sit on
+    // top of the input without affecting layout.
+    flex: 1,
+    position: 'relative',
+  },
+  recordingOverlay: {
+    // Sits exactly over the TextInput. Same minHeight + paddings as
+    // the recording pill used to have. pointerEvents='none' on the
+    // wrapper above so taps fall through to the underlying TextInput
+    // (the user can dismiss the keyboard by tapping outside, etc.).
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 52,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(212,114,106,0.18)',
+    borderRadius: radii.md,
+    borderWidth: 0.5,
+    borderColor: 'rgba(212,114,106,0.55)',
+  },
   input: {
+    // Fills the inputWrap so the TextInput's tappable area stays full-
+    // width whether or not the recording overlay is on top.
     flex: 1,
     color: colors.cream,
     fontFamily: fonts.sans,

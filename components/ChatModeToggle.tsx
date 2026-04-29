@@ -118,11 +118,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    // Top padding tightened (10 → 3) to nudge the whole toggle up
-    // closer to the attention strip; bottom kept at 10 for breathing
-    // room between the toggle and the message list.
+    // Tightened twice on user feedback. Top was 10 → 3 to lift the
+    // pill closer to the attention strip; bottom now 10 → 4 to lift
+    // the message list up too, closing the dead space below the pill.
     paddingTop: 3,
-    paddingBottom: 10,
+    paddingBottom: 4,
     paddingHorizontal: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: 'rgba(230,180,122,0.1)',

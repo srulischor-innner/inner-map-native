@@ -636,7 +636,7 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={
           Platform.OS === 'ios'
-            ? insets.top + 34 /* hamburger */ + 40 /* tabs */ + 48 /* attention */ - 44 /* toggle */
+            ? insets.top + 34 /* hamburger */ + 40 /* tabs */ + 48 /* attention */ - 44 /* toggle */ - 25 /* gap-close */
             : 0
         }
       >
