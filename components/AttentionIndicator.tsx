@@ -26,7 +26,7 @@ import { colors, fonts, radii, spacing } from '../constants/theme';
 import type { AttentionState } from '../utils/markers';
 import { PART_DISPLAY, PART_COLOR } from '../utils/markers';
 import {
-  useAttentionState, useNoticedPart,
+  useAttentionState, useNoticedPart, setAttentionState,
   hasSeenFirstTransition, markFirstTransitionSeen,
   hasSeenFirstSessionLabel, markFirstSessionLabelSeen,
 } from '../utils/attentionState';
@@ -36,13 +36,29 @@ const SIZE = 28;        // visible triangle size — bumped to 28 so it reads
 const TAP = 48;         // generous touch target — 48x48 wrapper around the visual
 
 // Per-state visual targets. Opacity oscillates between [low, high] over
-// the given duration. Even 'quiet' breathes (subtly) so users can tell
-// the indicator is interactive — a perfectly still pixel reads as decor.
+// the given duration. Each state has a distinctly different rhythm AND
+// brightness so the user can read the indicator at a glance.
+//
+//   idle / quiet      — barely visible, slow gentle breath
+//   userTyping        — slow soft pulse, signals 'receiving'
+//   listening         — AI marker equivalent of streaming-ish
+//   thinking          — fast bright pulse, the most active state
+//   streaming         — bright steady glow with a slow breath
+//   noticing          — AI's pattern-detection equivalent of thinking
+//   detected          — flashes very bright; auto-reverts to streaming
 type StateVisual = { low: number; high: number; duration: number };
 const VISUALS: Record<AttentionState, StateVisual> = {
-  quiet:     { low: 0.45, high: 0.55, duration: 4000 },  // softly lit + gentle breath
-  listening: { low: 0.55, high: 0.75, duration: 3000 },
-  noticing:  { low: 0.70, high: 1.00, duration: 2000 },
+  // User-action-driven states (per the chat tab's action wiring).
+  idle:        { low: 0.15, high: 0.20, duration: 4000 },
+  userTyping:  { low: 0.15, high: 0.35, duration: 1500 },
+  thinking:    { low: 0.30, high: 0.70, duration: 600 },
+  streaming:   { low: 0.70, high: 0.90, duration: 2000 },
+  detected:    { low: 0.85, high: 1.00, duration: 600 },
+  // AI-marker-driven legacy states (kept for back-compat with
+  // ATTENTION_STATE markers; mapped to the closest user-action visual).
+  quiet:       { low: 0.15, high: 0.20, duration: 4000 },
+  listening:   { low: 0.55, high: 0.75, duration: 3000 },
+  noticing:    { low: 0.30, high: 0.70, duration: 600 },
 };
 
 export function AttentionIndicator() {
@@ -61,9 +77,10 @@ export function AttentionIndicator() {
   // attention beacon — multiplies the base opacity briefly.
   const pulse = useSharedValue(1);
 
-  // Re-arm the breathing loop whenever state changes. ALL three states
-  // breathe now — even "quiet" — so the indicator visibly reads as a
-  // living, interactive element. Smooth 350ms cross-fade between states.
+  // Re-arm the breathing loop whenever state changes. Every state
+  // breathes — the contrast between low/high opacity is what makes
+  // each state visibly different at a glance. Smooth 350ms cross-fade
+  // into the new range so transitions read as one warm motion.
   useEffect(() => {
     const v = VISUALS[state];
     opacity.value = withTiming(v.low, { duration: 350, easing: Easing.inOut(Easing.ease) }, () => {
@@ -73,6 +90,22 @@ export function AttentionIndicator() {
       );
     });
   }, [state, opacity]);
+
+  // 'detected' is a 1500ms flash that auto-reverts to 'streaming' so the
+  // chat tab can fire-and-forget on every CHAT_META marker without
+  // managing a timer.
+  useEffect(() => {
+    if (state !== 'detected') return;
+    const t = setTimeout(() => {
+      // Only revert if no later state set has happened — getAttentionState
+      // is checked inside the setter (it's idempotent on equal values), so
+      // a setter call to 'streaming' is a no-op when the user has already
+      // moved on to 'idle' / 'thinking' etc.
+      setAttentionState('streaming');
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
 
   // First-time-discovery pulse. Fires exactly once across the app's
   // lifetime — when the indicator transitions out of 'quiet' for the

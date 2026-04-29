@@ -313,6 +313,10 @@ export default function ChatScreen() {
       if (sending) return;
       setSending(true);
       setTyping(true);
+      // Attention indicator: user just sent → flip to the fast-pulse
+      // 'thinking' state so the user sees the system has received and
+      // is processing.
+      setAttentionState('thinking');
 
       // Create the streaming assistant bubble up front; its `text` grows as deltas arrive.
       const streamId = uuidv4();
@@ -382,6 +386,11 @@ export default function ChatScreen() {
               target = stripMarkers(rawAccum);
               if (typing) setTyping(false);
               if (!revealTimer) revealTimer = setTimeout(tickReveal, PER_WORD_MS);
+              // First delta means the AI has actually started replying;
+              // flip attention indicator from fast 'thinking' pulse to
+              // bright steady 'streaming' breath. setAttentionState is
+              // idempotent on equal values, safe to call every delta.
+              setAttentionState('streaming');
               // Fire part detection ONCE the moment CHAT_META parses successfully.
               if (!partFired) {
                 const meta = parseChatMeta(rawAccum);
@@ -389,6 +398,9 @@ export default function ChatScreen() {
                   partFired = true;
                   detectedPart = meta.detectedPart;
                   partLabel = meta.partLabel ?? null;
+                  // Brief 'detected' flash on the indicator — auto-reverts
+                  // to 'streaming' inside AttentionIndicator after 1500ms.
+                  setAttentionState('detected');
                   Haptics.selectionAsync().catch(() => {});
                   // Signal the top tab bar to pulse the MAP label — a gentle
                   // "your map just updated" cue that doesn't interrupt chat.
@@ -477,10 +489,13 @@ export default function ChatScreen() {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
               setSending(false);
               setTyping(false);
+              // Stream complete — drop attention indicator back to idle.
+              setAttentionState('idle');
             },
             onError: (err) => {
               console.warn('[chat] stream error:', err);
               streamDone = true;
+              setAttentionState('idle');
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === streamId

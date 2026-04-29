@@ -9,10 +9,17 @@ export type ChatMeta = {
   confidence?: number;
 };
 
-/** Three-state ambient awareness indicator emitted by the AI. Drives the
- *  small breathing dot in the chat header. NEVER quantitative — these are
- *  qualitative ambient states only. */
-export type AttentionState = 'quiet' | 'listening' | 'noticing';
+/** Two sets of values, merged at the AttentionIndicator:
+ *    AI-driven (from ATTENTION_STATE markers in assistant replies):
+ *      quiet | listening | noticing
+ *    User-action-driven (from chat tab interactions):
+ *      idle | userTyping | thinking | streaming | detected
+ *  User-action states take precedence over AI markers because they
+ *  reflect the literal current activity. NEVER quantitative — every
+ *  value is a qualitative ambient state. */
+export type AttentionState =
+  | 'quiet' | 'listening' | 'noticing'
+  | 'idle' | 'userTyping' | 'thinking' | 'streaming' | 'detected';
 
 /** A noticing-state marker can carry the part being noticed so the chat
  *  header can render a small label below the triangle. quiet/listening

@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AttentionState, NoticedPart } from './markers';
 
-let current: AttentionState = 'quiet';
+let current: AttentionState = 'idle';
 let currentPart: NoticedPart | null = null;
 const listeners = new Set<(s: AttentionState) => void>();
 const partListeners = new Set<(p: NoticedPart | null) => void>();
@@ -44,7 +44,8 @@ export function setAttentionState(s: AttentionState): void {
   for (const l of listeners) l(s);
   // Leaving the noticing state always clears the noticed part, so the
   // small label below the triangle can't get stuck on a stale name.
-  if (s !== 'noticing') setNoticedPart(null);
+  // 'detected' also keeps the noticed part visible during the flash.
+  if (s !== 'noticing' && s !== 'detected') setNoticedPart(null);
 }
 
 /** Hook + setter for the part currently being noticed. Only meaningful
@@ -65,9 +66,9 @@ export function setNoticedPart(p: NoticedPart | null): void {
   for (const l of partListeners) l(p);
 }
 
-/** Reset to 'quiet' on session end / tab unmount. */
+/** Reset to 'idle' on session end / tab unmount. */
 export function resetAttentionState(): void {
-  setAttentionState('quiet');
+  setAttentionState('idle');
   setNoticedPart(null);
 }
 
