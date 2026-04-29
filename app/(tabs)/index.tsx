@@ -34,6 +34,7 @@ import { parseChatMeta, parseAttentionStatePayload, stripMarkers } from '../../u
 import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
 import { clearMapVoiceHistory } from '../../services/mapVoiceHistory';
 import { ChatModeToggle, ChatModeIndicator, ChatMode } from '../../components/ChatModeToggle';
+import { PartConfidenceIndicator, PartConfidence } from '../../components/PartConfidenceIndicator';
 import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
@@ -89,6 +90,14 @@ export default function ChatScreen() {
   // HOLDING_SPACE_PROMPT and MAPPING_PROMPT. Reset to 'process' on
   // every new session.
   const [chatMode, setChatMode] = useState<ChatMode>('process');
+
+  // Live part-confidence indicator state (Explore mode only). Updated
+  // when MAP_UPDATE markers fire on the assistant stream. Auto-clears
+  // a few seconds after a 'confirmed' fires so the indicator returns
+  // to its hidden state, ready for the next detection.
+  const [livePart, setLivePart] = useState<string | null>(null);
+  const [liveConfidence, setLiveConfidence] = useState<PartConfidence | null>(null);
+  const livePartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const audioEnabledRef = useRef(audioEnabled);
   useEffect(() => { audioEnabledRef.current = audioEnabled; }, [audioEnabled]);
@@ -426,6 +435,40 @@ export default function ChatScreen() {
               // idempotent on equal values, safe to call every delta.
               setAttentionState('streaming');
               // Fire part detection ONCE the moment CHAT_META parses successfully.
+              // Live part-confidence indicator (Explore mode). Parse
+              // MAP_UPDATE markers as they appear in the stream — pick
+              // the LAST one we haven't already shown. Match
+              // confidence: partial → ring 50%; confirmed → ring 100%
+              // + brief pulse + auto-fade. Process mode hides the
+              // indicator entirely so this still runs but the JSX
+              // gating below means the user never sees the change.
+              try {
+                const re = /MAP_UPDATE:\s*(\{[^}]+\})/g;
+                let m: RegExpExecArray | null;
+                let last: { part: string; confidence: PartConfidence } | null = null;
+                while ((m = re.exec(rawAccum)) !== null) {
+                  try {
+                    const data = JSON.parse(m[1]);
+                    const partName = typeof data.part === 'string' ? data.part : null;
+                    const conf = data.confidence === 'partial' || data.confidence === 'confirmed'
+                      ? (data.confidence as PartConfidence) : null;
+                    if (partName && conf) last = { part: partName, confidence: conf };
+                  } catch {}
+                }
+                if (last && (last.part !== livePart || last.confidence !== liveConfidence)) {
+                  setLivePart(last.part);
+                  setLiveConfidence(last.confidence);
+                  // Auto-clear after 'confirmed' so the next detection
+                  // can fade in cleanly.
+                  if (livePartTimerRef.current) clearTimeout(livePartTimerRef.current);
+                  if (last.confidence === 'confirmed') {
+                    livePartTimerRef.current = setTimeout(() => {
+                      setLivePart(null);
+                      setLiveConfidence(null);
+                    }, 2400);
+                  }
+                }
+              } catch {}
               if (!partFired) {
                 const meta = parseChatMeta(rawAccum);
                 if (meta?.detectedPart && meta.detectedPart !== 'unknown') {
@@ -609,7 +652,11 @@ export default function ChatScreen() {
             When OFF, audio is silent and any in-flight playback stops
             immediately. No per-message control. */}
         <AudioToggle enabled={audioEnabled} onToggle={toggleAudio} />
-        <AttentionIndicator />
+        {chatMode === 'explore' ? (
+          <PartConfidenceIndicator part={livePart} confidence={liveConfidence} />
+        ) : (
+          <AttentionIndicator />
+        )}
       </View>
       {/* Mode toggle — Process (gentle holding) vs Explore (active
           map-building). Selection drives which system prompt the
@@ -736,6 +783,8 @@ export default function ChatScreen() {
               resetAttentionState();
               setSelfMode(false);
               setChatMode('process');           // new session always starts gentle
+              setLivePart(null); setLiveConfidence(null);
+              if (livePartTimerRef.current) { clearTimeout(livePartTimerRef.current); livePartTimerRef.current = null; }
               clearMapVoiceHistory();           // start map voice fresh next session
               historyRef.current = [];
               setMessages([]);
