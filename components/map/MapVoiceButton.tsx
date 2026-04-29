@@ -64,6 +64,9 @@ const PCM16_RECORDING: any = {
 // base64 reads of the recorder's WAV file.
 import * as FileSystem from 'expo-file-system/legacy';
 import { api, ChatMessage } from '../../services/api';
+import {
+  appendMapVoiceTurn, getMapVoiceHistory,
+} from '../../services/mapVoiceHistory';
 import { parseChatMeta, stripMarkers } from '../../utils/markers';
 import { colors } from '../../constants/theme';
 import { VoiceState } from './RealtimeSession';
@@ -107,7 +110,11 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   const prefetchedTokenRef = useRef<Promise<string | null> | null>(null);
   // Fallback pipeline state.
   const audioPlayerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
-  const legacyHistory = useRef<ChatMessage[]>([]);
+  // Conversation history is held at MODULE SCOPE in services/mapVoiceHistory.ts
+  // so it survives MapVoiceButton's mount/unmount cycles (tab nav, etc.) for
+  // the duration of the chat session. The chat tab's session-end and
+  // session-start handlers explicitly call clearMapVoiceHistory() — this
+  // component never truncates.
   const legacyActive = useRef(false);
   // Realtime watchdog timers — cleared on successful state transitions or
   // tear-down. If they fire we drop realtime and fall back to legacy.
@@ -160,7 +167,11 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
       // every time the user starts a new recording.
       if (USE_REALTIME) {
         console.log('[realtime] pre-fetching token...');
-        prefetchedTokenRef.current = api.realtimeToken().then((tok) => {
+        // Pass the FULL session history into the token mint so the
+        // server can include it in the Realtime session's instructions.
+        // Therapeutic conversations need continuity — the AI must
+        // remember everything said earlier in the session.
+        prefetchedTokenRef.current = api.realtimeToken(getMapVoiceHistory()).then((tok) => {
           if (tok) console.log('[realtime] token ready');
           else console.warn('[realtime] token fetch returned null — will fall back to legacy');
           return tok;
@@ -338,9 +349,10 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
         console.warn('[map-voice] empty transcript — mic may have captured silence; returning to idle');
         setStateAnd('idle'); legacyActive.current = false; return;
       }
-      legacyHistory.current.push({ role: 'user', content: text });
+      appendMapVoiceTurn('user', text);
+      const history = getMapVoiceHistory();
 
-      console.log('[map-voice] Step 4: POST /api/chat (msgs=' + legacyHistory.current.length + ')');
+      console.log('[map-voice] Step 4: POST /api/chat (msgs=' + history.length + ')');
       // Sentence-streaming TTS pipeline: as Claude streams the reply we
       // detect complete sentences and fire each /api/speak in parallel,
       // playing through a single sequential chain. The previous
@@ -397,7 +409,7 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
 
       await new Promise<void>((resolve) => {
         api.streamChat(
-          { messages: legacyHistory.current, mode: 'ongoing', sessionId, mapVoice: true },
+          { messages: history, mode: 'ongoing', sessionId, mapVoice: true },
           {
             onDelta: (d) => {
               fullReply += d;
@@ -424,7 +436,7 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
             onDone: (full) => {
               const cleaned = stripMarkers(full || fullReply);
               console.log('[map-voice] Step 4 ✓ chat reply:', cleaned.length, 'chars');
-              legacyHistory.current.push({ role: 'assistant', content: cleaned });
+              appendMapVoiceTurn('assistant', cleaned);
               const tail = cleaned.slice(cleanedConsumed).trim();
               if (tail.length >= 3) enqueueSentenceForTTS(tail);
               resolve();
@@ -627,7 +639,7 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
       // The existing playArrayBuffer expects MP3, but Skia's
       // createAudioPlayer happily decodes WAV from a data: URI too.
       await playArrayBuffer(arrayBuf, 'audio/wav');
-      legacyHistory.current.push({ role: 'assistant', content: stripMarkers(assistantText) });
+      appendMapVoiceTurn('assistant', stripMarkers(assistantText));
       setStateAnd('idle');
       return true;
     } catch (e) {

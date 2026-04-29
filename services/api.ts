@@ -443,13 +443,18 @@ export const api = {
    *  OpenAI Realtime WebSocket. Pre-fetched while the user is still
    *  speaking on the map voice path so the token is ready by the time
    *  recording stops. Returns null on any failure so the caller can
-   *  fall back to the legacy pipeline. */
-  async realtimeToken(): Promise<string | null> {
+   *  fall back to the legacy pipeline.
+   *
+   *  `history` is the FULL map-voice conversation so far — never
+   *  truncated client-side. The server includes it in the session's
+   *  `instructions` field so the AI has continuity from turn 1, with
+   *  smart summarization for very long histories. */
+  async realtimeToken(history: ChatMessage[] = []): Promise<string | null> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/realtime-token', {
         label: 'realtime-token', method: 'POST', headers,
-        body: JSON.stringify({}),
+        body: JSON.stringify({ history }),
         timeoutMs: 8000,
       });
       if (!res.ok) {

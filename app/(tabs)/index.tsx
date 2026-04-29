@@ -32,6 +32,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { api, ChatMessage } from '../../services/api';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
+import { clearMapVoiceHistory } from '../../services/mapVoiceHistory';
 import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
@@ -185,6 +186,16 @@ export default function ChatScreen() {
     cancelTTSStream();
     resetAttentionState();
   }, []);
+
+  // Map-voice conversation history is held at module scope so it
+  // persists across tab nav within a session. We clear it whenever the
+  // chat sessionId changes — a fresh chat session means the map voice
+  // should also start clean. Fires on initial mount AND every time
+  // sessionIdRef.current changes after end-session below.
+  const sessionIdSeed = sessionIdRef.current;
+  useEffect(() => {
+    clearMapVoiceHistory();
+  }, [sessionIdSeed]);
 
   useEffect(() => {
     // Consume the one-shot Self-mode flag if the user just tapped "Enter
@@ -685,6 +696,7 @@ export default function ChatScreen() {
               setAudioEnabled(false);
               resetAttentionState();
               setSelfMode(false);
+              clearMapVoiceHistory();           // start map voice fresh next session
               historyRef.current = [];
               setMessages([]);
               sessionIdRef.current = uuidv4();
