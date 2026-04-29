@@ -61,10 +61,68 @@ export function SessionSummaryModal({ visible, summary, failed, messages, onCont
     weekday: 'long', month: 'long', day: 'numeric',
   });
 
-  const isLoading = !failed && !summary;
+  // Word-by-word reveal of the three sections, same cadence as the chat
+  // tab (PER_WORD_MS = 45). The summary endpoint returns structured
+  // JSON in one shot, but the modal animates the text in across the
+  // three fields so the user sees the reflection 'land' rather than
+  // appearing all at once. Triangles + 'reflecting…' indicator stay
+  // visible until the FIRST word of the first section is revealed.
+  const PER_WORD_MS = 45;
+  const [revealed, setRevealed] = useState<{
+    exploredText: string; mapShowingText: string; somethingToTryText: string;
+  }>({ exploredText: '', mapShowingText: '', somethingToTryText: '' });
+  // Reveal cursor: 0..2 (which field), and the char index inside that field.
+  useEffect(() => {
+    if (!summary) {
+      setRevealed({ exploredText: '', mapShowingText: '', somethingToTryText: '' });
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const fields: Array<keyof typeof revealed> = ['exploredText', 'mapShowingText', 'somethingToTryText'];
+    let fieldIdx = 0;
+    let charIdx = 0;
+    const next: typeof revealed = { exploredText: '', mapShowingText: '', somethingToTryText: '' };
+    function step() {
+      if (cancelled) return;
+      // Skip empty fields entirely.
+      while (fieldIdx < fields.length && !(summary![fields[fieldIdx]] || '').trim()) {
+        fieldIdx++; charIdx = 0;
+      }
+      if (fieldIdx >= fields.length) {
+        setRevealed(next);
+        return;
+      }
+      const field = fields[fieldIdx];
+      const target = summary![field];
+      // Advance one word: skip whitespace, run to next whitespace.
+      let i = charIdx;
+      while (i < target.length && /\s/.test(target[i])) i++;
+      while (i < target.length && !/\s/.test(target[i])) i++;
+      charIdx = i;
+      next[field] = target.slice(0, charIdx);
+      setRevealed({ ...next });
+      if (charIdx >= target.length) { fieldIdx++; charIdx = 0; }
+      timer = setTimeout(step, PER_WORD_MS);
+    }
+    timer = setTimeout(step, PER_WORD_MS);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary]);
+
   const hasContent = !!summary && (
     summary.exploredText.trim() || summary.mapShowingText.trim() || summary.somethingToTryText.trim()
   );
+  // Show the breathing-triangle "reflecting…" loader UNTIL either:
+  //   - the network call failed (failed prop), OR
+  //   - the first word of the first non-empty section has been revealed.
+  // This matches the spec's "modal opens immediately → triangle while
+  // waiting → words begin appearing one by one".
+  const firstWordRevealed =
+    revealed.exploredText.length > 0 ||
+    revealed.mapShowingText.length > 0 ||
+    revealed.somethingToTryText.length > 0;
+  const isLoading = !failed && !firstWordRevealed;
 
   return (
     <Modal
@@ -112,9 +170,9 @@ export function SessionSummaryModal({ visible, summary, failed, messages, onCont
 
           {summary && hasContent ? (
             <>
-              <Section label="WHAT WE EXPLORED" text={summary.exploredText} />
-              <Section label="WHAT THE MAP IS SHOWING" text={summary.mapShowingText} />
-              <Section label="SOMETHING TO TRY" text={summary.somethingToTryText} />
+              <Section label="WHAT WE EXPLORED" text={revealed.exploredText} />
+              <Section label="WHAT THE MAP IS SHOWING" text={revealed.mapShowingText} />
+              <Section label="SOMETHING TO TRY" text={revealed.somethingToTryText} />
             </>
           ) : null}
 
