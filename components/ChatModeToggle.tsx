@@ -118,10 +118,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    // Tightened twice on user feedback. Top was 10 → 3 to lift the
-    // pill closer to the attention strip; bottom now 10 → 4 to lift
-    // the message list up too, closing the dead space below the pill.
-    paddingTop: 3,
+    // User asked to remove all top padding so the toggle sits flush
+    // against the headerStrip above it. paddingTop: 0; bottom 4 keeps
+    // the message list close underneath. Any gap above the pill is
+    // now just whatever the headerStrip's natural baseline produces
+    // (~hairline).
+    paddingTop: 0,
     paddingBottom: 4,
     paddingHorizontal: 20,
     borderBottomWidth: 0.5,
