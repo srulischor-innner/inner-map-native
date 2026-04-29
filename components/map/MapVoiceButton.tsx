@@ -565,8 +565,19 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
                 if (responseTimer) { clearTimeout(responseTimer); responseTimer = null; }
                 if (isStale()) { finish(false, 'stale on audio delta'); return; }
                 if (typeof data.delta === 'string') {
-                  audioPcmChunks.push(data.delta);
-                  if (state !== 'speaking') setStateAnd('speaking');
+                  // Validate chunk before queueing. Tiny chunks
+                  // (<100 base64 chars ≈ 75 bytes ≈ 18ms of PCM16
+                  // @24kHz mono) cause audible high-pitch artifacts
+                  // when concatenated — the model occasionally emits
+                  // these as fragmentation between thoughts. Drop
+                  // them on the floor; the surrounding chunks have
+                  // enough overlap that the listener never notices.
+                  if (data.delta.length < 100) {
+                    console.log('[realtime] skipping tiny audio chunk:', data.delta.length);
+                  } else {
+                    audioPcmChunks.push(data.delta);
+                    if (state !== 'speaking') setStateAnd('speaking');
+                  }
                 }
                 break;
               case 'response.text.delta':
