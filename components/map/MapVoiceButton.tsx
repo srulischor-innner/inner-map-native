@@ -1,9 +1,13 @@
-// Map-tab voice FAB. Two pipelines behind the same button:
+// Map-tab voice FAB. Walkie-talkie interaction: press and hold to record,
+// release to send. Matches the chat tab's voice-note input behavior so
+// users learn one gesture for both surfaces.
+//
+// Two pipelines behind the same button:
 //
 //   Pipeline A — OpenAI Realtime via /realtime WebSocket proxy.
-//     Tap to start → opens WS, starts recording; server-side proxy injects
-//     the API key + system prompt. Tap again → commits the utterance,
-//     receives streaming audio back, plays, auto-resumes listening.
+//     Press-in → starts recording locally + pre-fetches the ephemeral
+//     token in parallel. Release → opens WS, sends the buffered audio,
+//     receives streaming audio back, plays.
 //   Pipeline B (fallback) — legacy record → /api/transcribe → /api/chat →
 //     /api/speak used when the WS open times out (Expo Go on a bad network,
 //     server down, etc). No user-visible error on fallback.
@@ -80,9 +84,9 @@ import {
 // Re-enabled for testing on a real EAS development build (native audio
 // modules should work properly here, unlike Expo Go where the previous
 // attempt silently failed). The 3s connect / 8s response watchdogs in
-// onPress() below fall back to the legacy pipeline if anything misses
-// its window — so a Realtime regression now still produces an audible
-// reply via /api/transcribe → /api/chat → /api/speak.
+// the dispatchCommit path below fall back to the legacy pipeline if
+// anything misses its window — so a Realtime regression now still
+// produces an audible reply via /api/transcribe → /api/chat → /api/speak.
 // ============================================================================
 const USE_REALTIME = true;
 // Watchdog windows. The Realtime path opens a WebSocket and waits for the
@@ -128,64 +132,108 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
   function setStateAnd(s: VoiceState) { setState(s); onStateChange?.(s); }
 
   /* =====================================================================
-   * TAP DISPATCH — dead simple, two tap states only:
-   *   idle       → start recording
-   *   listening  → commit + send (NEVER stop the session from a tap)
-   *   anything   → no-op while thinking/speaking/connecting
+   * WALKIE-TALKIE DISPATCH — press to speak, release to send.
    *
-   * The session is only torn down when the user navigates away from the
-   * Map tab (see the unmount cleanup below). There is no cancel button.
+   *   onPressIn  (idle)      → start recording + pre-fetch realtime token
+   *   onPressIn  (other)     → ignored; user is waiting on a reply
+   *   onPressOut (listening) → commit + send if held ≥300ms, else discard
+   *
+   * The 300ms minimum mirrors the chat tab's voice-note input — guards
+   * against accidental taps producing empty audio that the AI would have
+   * to politely puzzle over. Release-during-start is handled by the
+   * `wantRecording` flag so a fast tap-and-release doesn't leave a
+   * dangling recording behind.
+   *
+   * No cancel gesture — release always sends. The session is only torn
+   * down when the user navigates away from the Map tab (see the unmount
+   * cleanup below).
    * ===================================================================== */
-  async function onPress() {
-    console.log('[map-voice] mic tapped — current state:', state);
+  // Guard against the start/release race. Set true at press-in,
+  // cleared at press-out. If legacyStart finishes after the user has
+  // already released, the post-await check tears down cleanly.
+  const wantRecordingRef = useRef(false);
+  // When the press began — used to enforce the 300ms minimum-hold.
+  const pressStartTimeRef = useRef<number>(0);
+
+  async function onPressIn() {
+    console.log('[map-voice] press-in — current state:', state);
+    if (state !== 'idle') {
+      console.log('[map-voice] press-in ignored in state:', state);
+      return;
+    }
+    wantRecordingRef.current = true;
+    pressStartTimeRef.current = Date.now();
     Haptics.selectionAsync().catch(() => {});
 
-    // Commit the current turn (second tap while recording).
-    if (state === 'listening') {
-      // Immediate "received, processing" feedback — fires BEFORE we wait
-      // on recorder.stop() / transcribe so the user feels the system
-      // react the instant they release. Heavy haptic + flip the visible
-      // state to 'thinking' so the spinner appears now, not 800ms later.
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
-      setStateAnd('thinking');
-      if (legacyActive.current) {
-        await dispatchCommit();
-      } else {
-        console.warn('[map-voice] listening but no active session — resetting to idle');
-        setStateAnd('idle');
-      }
+    // Pre-fetch the ephemeral OpenAI Realtime token IN PARALLEL with
+    // recording. By the time the user releases the mic, the token
+    // promise is already resolved — saving ~600ms off the perceived
+    // latency. The token is one-shot per turn; we mint a fresh one
+    // every time the user starts a new recording.
+    if (USE_REALTIME) {
+      console.log('[realtime] pre-fetching token...');
+      // Pass the FULL session history into the token mint so the
+      // server can include it in the Realtime session's instructions.
+      // Therapeutic conversations need continuity — the AI must
+      // remember everything said earlier in the session.
+      prefetchedTokenRef.current = api.realtimeToken(getMapVoiceHistory()).then((tok) => {
+        if (tok) console.log('[realtime] token ready');
+        else console.warn('[realtime] token fetch returned null — will fall back to legacy');
+        return tok;
+      });
+    } else {
+      prefetchedTokenRef.current = null;
+    }
+
+    await legacyStart();   // starts the recorder; sets state → 'listening'
+
+    // Race resolution: if the release fired during legacyStart's async
+    // setup, wantRecordingRef will be false and the recorder is now
+    // running with no pending hand-off. Tear it down.
+    if (!wantRecordingRef.current && legacyActive.current) {
+      console.log('[map-voice] released during start — discarding recording');
+      try { await recorder.stop(); } catch {}
+      legacyActive.current = false;
+      setStateAnd('idle');
+    }
+  }
+
+  async function onPressOut() {
+    console.log('[map-voice] press-out — current state:', state);
+    if (!wantRecordingRef.current) {
+      // Either we never started (press-in was ignored) or this is a
+      // duplicate press-out — nothing to do.
+      return;
+    }
+    wantRecordingRef.current = false;
+
+    if (!legacyActive.current) {
+      // Recorder hasn't actually started yet — onPressIn's
+      // post-legacyStart check will see wantRecordingRef === false
+      // and tear the recorder down once it lands. Nothing for us
+      // to commit.
+      console.log('[map-voice] press-out — recorder not yet active, deferring');
       return;
     }
 
-    // Start a new turn (first tap, or tap after the AI finished speaking).
-    if (state === 'idle') {
-      console.log('[map-voice] using:', USE_REALTIME ? 'Realtime API (ephemeral token)' : 'Legacy pipeline');
-      // Pre-fetch the ephemeral OpenAI Realtime token IN PARALLEL with
-      // recording. By the time the user releases the mic, the token
-      // promise is already resolved — saving ~600ms off the perceived
-      // latency. The token is one-shot per turn; we mint a fresh one
-      // every time the user starts a new recording.
-      if (USE_REALTIME) {
-        console.log('[realtime] pre-fetching token...');
-        // Pass the FULL session history into the token mint so the
-        // server can include it in the Realtime session's instructions.
-        // Therapeutic conversations need continuity — the AI must
-        // remember everything said earlier in the session.
-        prefetchedTokenRef.current = api.realtimeToken(getMapVoiceHistory()).then((tok) => {
-          if (tok) console.log('[realtime] token ready');
-          else console.warn('[realtime] token fetch returned null — will fall back to legacy');
-          return tok;
-        });
-      } else {
-        prefetchedTokenRef.current = null;
-      }
-      legacyStart();   // starts the recorder; sets state → 'listening'
+    // Minimum-hold guard. Mirrors components/ChatInput.tsx — anything
+    // under 300ms is almost certainly an accidental brush of the FAB.
+    const heldMs = Date.now() - pressStartTimeRef.current;
+    if (heldMs < 300) {
+      console.log('[map-voice] press-out — held too short (' + heldMs + 'ms), discarding');
+      try { await recorder.stop(); } catch {}
+      legacyActive.current = false;
+      setStateAnd('idle');
+      Haptics.selectionAsync().catch(() => {});
       return;
     }
 
-    // thinking / speaking / connecting / error → tap is a no-op. The user
-    // just waits for the AI to finish or for the error state to auto-clear.
-    console.log('[map-voice] tap ignored in state:', state);
+    // Walkie-talkie commit. Heavy haptic + flip to 'thinking' BEFORE
+    // we wait on recorder.stop() / transcribe so the user feels the
+    // system react the instant they release.
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    setStateAnd('thinking');
+    await dispatchCommit();
   }
 
   /* =====================================================================
@@ -714,16 +762,16 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
     'mic';
 
   // Explicit, instructive status text — tells the user exactly what to do next.
-  // 'error' state intentionally falls through to 'Tap to speak' so a transient
+  // 'error' state intentionally falls through to 'Hold to speak' so a transient
   // backend hiccup never surfaces as user-visible failure copy. The console
   // logs still capture the diagnostic; the UI just resets silently.
   const label =
-    state === 'listening'  ? 'Recording… tap to send' :
+    state === 'listening'  ? 'Recording… release to send' :
     state === 'thinking'   ? 'Thinking…' :
     state === 'speaking'   ? 'Speaking…' :
     state === 'connecting' ? 'Connecting…' :
     state === 'retrying'   ? 'Retrying…' :
-    'Tap to speak';
+    'Hold to speak';
 
   // Always show the status label. In idle state it's a small dim
   // "Tap to speak" hint sitting directly above the mic; active states
@@ -749,7 +797,13 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
       ) : null}
 
       <Pressable
-        onPress={onPress}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        // Slightly enlarged hit slop so a hold near the FAB edge still
+        // registers as press-in — important for walkie-talkie since a
+        // missed press-in leaves the user confused about why nothing
+        // started recording.
+        hitSlop={10}
         style={[
           styles.btn,
           state === 'listening' && styles.btnListening,
@@ -759,7 +813,7 @@ export function MapVoiceButton({ onDetectedPart, onStateChange, sessionId }: Pro
           state === 'retrying'  && styles.btnThinking,
           state === 'error'     && styles.btnThinking,
         ]}
-        accessibilityLabel={state === 'listening' ? 'Tap to send' : 'Voice conversation'}
+        accessibilityLabel={state === 'listening' ? 'Release to send voice message' : 'Hold to speak'}
       >
         {state === 'thinking' || state === 'connecting' || state === 'retrying' ? (
           <ActivityIndicator color={colors.amber} />
