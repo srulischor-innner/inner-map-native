@@ -25,8 +25,15 @@ import Animated, {
 const SIZE = 44;
 const STROKE = 3;
 const RADIUS = (SIZE - STROKE) / 2;
-const TRACK_COLOR = 'rgba(230,180,122,0.4)';
+// Track is faint by design — the ring should always be visible as a
+// quiet outline in Explore mode, even when nothing is detected. Fill
+// brightens up as confidence grows.
+const TRACK_COLOR = 'rgba(230,180,122,0.15)';
 const FILL_COLOR = 'rgba(230,180,122,0.9)';
+// Baseline opacity for the wrapper when no detection is active. We
+// never go fully invisible — the empty outline stays as a subtle hint
+// so the user knows the indicator exists and can tap it.
+const IDLE_OPACITY = 0.55;
 
 export type PartConfidence = 'partial' | 'confirmed';
 
@@ -40,34 +47,37 @@ export function PartConfidenceIndicator({ part, confidence }: Props) {
   const progress = useSharedValue(0);
   // Pulse + fade on confirmed: scale 1→1.15→1, opacity 1→0.4 over a beat.
   const pulse = useSharedValue(1);
-  const wrapOpacity = useSharedValue(0);
+  // Start at IDLE_OPACITY so the empty outline is always faintly
+  // visible the moment the component mounts in Explore mode.
+  const wrapOpacity = useSharedValue(IDLE_OPACITY);
   const [showInfo, setShowInfo] = useState(false);
 
   useEffect(() => {
     if (!part || !confidence) {
-      // Reset to hidden whenever there's nothing to track.
-      wrapOpacity.value = withTiming(0, { duration: 350 });
+      // No active detection → return to the always-visible idle state.
+      // The empty track outline stays so the user can still see/tap it.
+      wrapOpacity.value = withTiming(IDLE_OPACITY, { duration: 350 });
       progress.value = withTiming(0, { duration: 200 });
       pulse.value = 1;
       return;
     }
-    // Make sure the indicator is visible.
+    // Active detection → bring to full opacity.
     wrapOpacity.value = withTiming(1, { duration: 350 });
     if (confidence === 'partial') {
       progress.value = withTiming(0.5, { duration: 600, easing: Easing.out(Easing.ease) });
       pulse.value = 1;
     } else {
-      // confirmed — fill, pulse, then fade.
+      // confirmed — fill, pulse, then fade BACK TO IDLE (not invisible).
       progress.value = withTiming(1, { duration: 500, easing: Easing.out(Easing.ease) });
       pulse.value = withSequence(
         withTiming(1.15, { duration: 280, easing: Easing.out(Easing.ease) }),
         withTiming(1.0, { duration: 320, easing: Easing.in(Easing.ease) }),
       );
-      // Fade the whole indicator out after ~1.5s and reset progress
-      // so the next detection starts fresh.
+      // After holding the confirmed state, ease back to the faint idle
+      // outline so the next detection has somewhere to grow from.
       wrapOpacity.value = withDelay(
         1500,
-        withTiming(0, { duration: 600, easing: Easing.in(Easing.ease) }),
+        withTiming(IDLE_OPACITY, { duration: 600, easing: Easing.in(Easing.ease) }),
       );
     }
   }, [part, confidence, progress, pulse, wrapOpacity]);

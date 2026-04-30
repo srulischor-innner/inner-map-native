@@ -107,15 +107,25 @@ export function ChatInput({
     const t = text.trim();
     if (!t || disabled) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    // Clear the input IMMEDIATELY — both via state and via the native
-    // TextInput's clear() method. We've seen cases where setText('')
-    // alone doesn't visually empty the field (likely because the parent
-    // re-renders synchronously with `disabled=true` from the new
-    // `sending` state, which can race with the controlled-input state
-    // update). Belt-and-braces: clear native value too, before invoking
-    // onSend so the user sees an empty box the instant they tap send.
-    setText('');
+    // ROOT-CAUSE FIX for "input not clearing" reports:
+    // The previous version called only setText(''). On iOS, when the
+    // predictive/IME keyboard has a candidate in flight at send-time,
+    // it re-fires onChangeText AFTER our state setter resolves —
+    // restoring the typed text. Belt-and-braces clear:
+    //   1. setNativeProps({ text: '' }) — wipes the underlying UITextView
+    //      so the IME has nothing to rehydrate from.
+    //   2. inputRef.current?.clear()   — public RN API doing the same.
+    //   3. setText('')                 — keeps the controlled state in sync.
+    // We also schedule a second clear on the next tick to defeat any
+    // late onChangeText callback that fires after the send button's
+    // press cycle ends.
+    try { (inputRef.current as any)?.setNativeProps?.({ text: '' }); } catch {}
     try { inputRef.current?.clear(); } catch {}
+    setText('');
+    setTimeout(() => {
+      try { (inputRef.current as any)?.setNativeProps?.({ text: '' }); } catch {}
+      setText('');
+    }, 0);
     onSend(t);
   }
 
