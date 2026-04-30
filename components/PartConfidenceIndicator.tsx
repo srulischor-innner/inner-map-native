@@ -9,9 +9,13 @@
 // Below the ring sits the current part name in Cormorant italic
 // amber. Process mode never shows this indicator at all — the
 // triangle attention indicator covers Process.
+//
+// Tapping the indicator (always — even when invisible) opens an
+// info modal explaining what the ring means. Modal style matches
+// the Process/Explore info modal in ChatModeToggle.
 
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, Modal } from 'react-native';
 import { Canvas, Path, Skia } from '@shopify/react-native-skia';
 import Animated, {
   useSharedValue, withTiming, withSequence, withDelay,
@@ -37,6 +41,7 @@ export function PartConfidenceIndicator({ part, confidence }: Props) {
   // Pulse + fade on confirmed: scale 1→1.15→1, opacity 1→0.4 over a beat.
   const pulse = useSharedValue(1);
   const wrapOpacity = useSharedValue(0);
+  const [showInfo, setShowInfo] = useState(false);
 
   useEffect(() => {
     if (!part || !confidence) {
@@ -91,38 +96,101 @@ export function PartConfidenceIndicator({ part, confidence }: Props) {
   }));
 
   return (
-    <Animated.View style={[styles.root, wrapStyle]} pointerEvents="none">
-      <Canvas style={{ width: SIZE, height: SIZE }}>
-        {/* Track — full ring at low alpha. */}
-        <Path
-          path={(() => {
-            const p = Skia.Path.Make();
-            p.addCircle(SIZE / 2, SIZE / 2, RADIUS);
-            return p;
-          })()}
-          color={TRACK_COLOR}
-          style="stroke"
-          strokeWidth={STROKE}
-        />
-        {/* Fill — clockwise arc from top, animated. */}
-        <Path
-          path={arcPath}
-          color={FILL_COLOR}
-          style="stroke"
-          strokeWidth={STROKE}
-          strokeCap="round"
-        />
-      </Canvas>
-      {part ? (
-        <Text style={styles.label} numberOfLines={1}>
-          {part}
-        </Text>
-      ) : null}
-    </Animated.View>
+    <>
+      {/* Tappable wrapper — always tappable, even when the ring itself is
+          invisible, so the user can ask "what is this circle?" at any
+          time. The Animated.View inside carries the visual fade/pulse;
+          pointerEvents on it is "none" so the press lands on the
+          Pressable. */}
+      <Pressable
+        onPress={() => setShowInfo(true)}
+        style={styles.tapTarget}
+        hitSlop={8}
+        accessibilityLabel="What does this confidence ring mean"
+      >
+        <Animated.View style={[styles.root, wrapStyle]} pointerEvents="none">
+          <Canvas style={{ width: SIZE, height: SIZE }}>
+            {/* Track — full ring at low alpha. */}
+            <Path
+              path={(() => {
+                const p = Skia.Path.Make();
+                p.addCircle(SIZE / 2, SIZE / 2, RADIUS);
+                return p;
+              })()}
+              color={TRACK_COLOR}
+              style="stroke"
+              strokeWidth={STROKE}
+            />
+            {/* Fill — clockwise arc from top, animated. */}
+            <Path
+              path={arcPath}
+              color={FILL_COLOR}
+              style="stroke"
+              strokeWidth={STROKE}
+              strokeCap="round"
+            />
+          </Canvas>
+          {part ? (
+            <Text style={styles.label} numberOfLines={1}>
+              {part}
+            </Text>
+          ) : null}
+        </Animated.View>
+      </Pressable>
+
+      <Modal
+        visible={showInfo}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowInfo(false)}
+        statusBarTranslucent
+      >
+        <Pressable style={styles.backdrop} onPress={() => setShowInfo(false)}>
+          {/* Inner Pressable swallows the backdrop press so taps inside
+              the card don't dismiss the modal accidentally. */}
+          <Pressable style={styles.card} onPress={() => {}}>
+            <Text style={styles.title}>Your map is building</Text>
+
+            <Text style={styles.body}>
+              As we talk, I'm noticing patterns and parts that make up your inner world. This circle shows how close a part is to being confirmed on your map.
+            </Text>
+
+            <View style={styles.divider} />
+
+            <View style={{ marginBottom: 4 }}>
+              <Text style={styles.bullet}>
+                <Text style={styles.bulletLabel}>Empty</Text>
+                <Text style={styles.bulletBody}> — something just surfaced</Text>
+              </Text>
+              <Text style={styles.bullet}>
+                <Text style={styles.bulletLabel}>Filling</Text>
+                <Text style={styles.bulletBody}> — getting clearer</Text>
+              </Text>
+              <Text style={styles.bullet}>
+                <Text style={styles.bulletLabel}>Complete</Text>
+                <Text style={styles.bulletBody}> — added to your map</Text>
+              </Text>
+            </View>
+
+            <Pressable onPress={() => setShowInfo(false)} style={styles.gotIt}>
+              <Text style={styles.gotItText}>Got it</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
+  tapTarget: {
+    // Push the indicator down a touch — the headerStrip was clipping
+    // the top of the ring on some devices. 9px clears the clip and
+    // gives the label below a bit more breathing room.
+    marginTop: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   root: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -133,5 +201,65 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: 'rgba(230,180,122,0.6)',
     letterSpacing: 0.3,
+  },
+
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  card: {
+    backgroundColor: '#0e0e1a',
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.2)',
+    width: '100%',
+  },
+  title: {
+    fontFamily: 'CormorantGaramond_600SemiBold',
+    fontSize: 20,
+    color: '#F0EDE8',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  body: {
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 14,
+    color: 'rgba(240,237,232,0.7)',
+    lineHeight: 21,
+    marginBottom: 16,
+  },
+  divider: {
+    height: 0.5,
+    backgroundColor: 'rgba(230,180,122,0.1)',
+    marginBottom: 14,
+  },
+  bullet: {
+    marginBottom: 8,
+  },
+  bulletLabel: {
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 13,
+    color: '#E6B47A',
+    letterSpacing: 0.5,
+  },
+  bulletBody: {
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 14,
+    color: 'rgba(240,237,232,0.7)',
+    lineHeight: 21,
+  },
+  gotIt: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  gotItText: {
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 13,
+    color: 'rgba(230,180,122,0.5)',
   },
 });
