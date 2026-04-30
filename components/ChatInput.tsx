@@ -107,7 +107,15 @@ export function ChatInput({
     const t = text.trim();
     if (!t || disabled) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    // Clear the input IMMEDIATELY — both via state and via the native
+    // TextInput's clear() method. We've seen cases where setText('')
+    // alone doesn't visually empty the field (likely because the parent
+    // re-renders synchronously with `disabled=true` from the new
+    // `sending` state, which can race with the controlled-input state
+    // update). Belt-and-braces: clear native value too, before invoking
+    // onSend so the user sees an empty box the instant they tap send.
     setText('');
+    try { inputRef.current?.clear(); } catch {}
     onSend(t);
   }
 
