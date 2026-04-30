@@ -164,9 +164,17 @@ export function finishStream(): void {
 
 /** Stop everything. Bumps watchToken so any in-flight chain step
  *  short-circuits, releases the current player, drops the chain.
- *  Idempotent. */
+ *  Idempotent — every operation below tolerates being a no-op.
+ *
+ *  No early-return on (!active && !player). That state arises naturally
+ *  in the GAP between sentences while the next /api/speak fetch is in
+ *  flight: the previous sentence's player has been removed, finishStream
+ *  has already set active=false, but a chain step is pending. Returning
+ *  early there meant the audio toggle could fire here, do nothing, and
+ *  the pending step would then play its sentence — audio kept playing
+ *  after the user muted. Always bumping watchToken kills the chain
+ *  cleanly regardless of which phase we caught it in. */
 export function cancelStream(): void {
-  if (!active && !player) return;
   watchToken++;
   active = false;
   currentMessageId = null;
