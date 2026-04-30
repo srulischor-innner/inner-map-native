@@ -3,11 +3,12 @@
 // Modes:
 //   idle        → text field + mic button (press-and-hold to record)
 //   typing      → text field + send (arrow-up) button
-//   recording   → text field collapses into a "Recording… 0:03" pill with
-//                 a red pulsing dot and a "Slide to cancel ←" hint. User
-//                 must keep holding; release to send, drag left to cancel.
+//   recording   → text field is covered by a "Recording… 0:03" pill with
+//                 a red pulsing dot. User must keep holding; release to
+//                 send. Anything held under 300ms is treated as a misfire
+//                 and discarded silently.
 //
-// On release (not cancelled):
+// On release (held ≥300ms):
 //   - recorder.stop() → file URI
 //   - Parent onSendVoice(uri, durationSec, transcript) is called. The
 //     parent (ChatScreen) handles pushing the voice-note bubble into the
@@ -15,9 +16,9 @@
 //   - We transcribe HERE so the parent gets both the file URI and the
 //     text in a single callback.
 //
-// On cancel (dragged left past threshold):
-//   - recorder.stop() is still called (to release the mic hardware) but
-//     the file is discarded and no callback fires.
+// No swipe-to-cancel — Pressable's gesture system can't track a swipe
+// reliably once the finger leaves the press-retention zone. If a real
+// cancel is needed, build it on top of PanResponder.
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -29,7 +30,6 @@ import {
   StyleSheet,
   Alert,
   Easing,
-  GestureResponderEvent,
 } from 'react-native';
 import ReAnimated, {
   useSharedValue,
@@ -42,9 +42,6 @@ import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { cancelStream as cancelTTSStream } from '../utils/ttsStream';
-
-// Swiping the finger this far left during a hold → cancel the recording.
-const CANCEL_SWIPE_PX = 80;
 
 export function ChatInput({
   disabled,
@@ -60,12 +57,14 @@ export function ChatInput({
 }) {
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
-  const [cancelArmed, setCancelArmed] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  // Direct ref to the TextInput. We re-call focus() at recording start
-  // and end so iOS doesn't drop the keyboard when the mic Pressable
-  // briefly grabs touch focus. Without this, tapping the mic could
-  // implicitly blur the TextInput → keyboard slides down.
+  // Direct ref to the TextInput. The previous version called focus()
+  // on press to keep the keyboard up, but that ALSO opened the
+  // keyboard from a closed state — pushing the UI up whenever the
+  // user just wanted to record. We rely on the parent ScrollView's
+  // keyboardShouldPersistTaps="handled" to preserve focus when the
+  // user was already typing, and never open the keyboard from
+  // closed. Ref kept for setNativeProps clear on send.
   const inputRef = useRef<TextInput | null>(null);
   // Short-tap tooltip — anchored above the mic at the bar level so its
   // natural one-line width isn't clipped by the 52px mic wrapper. Driven by
@@ -77,7 +76,6 @@ export function ChatInput({
   const tapHintStyle = useAnimatedStyle(() => ({ opacity: tapHintOpacity.value }));
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-  const startXRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -132,16 +130,8 @@ export function ChatInput({
   // ------------------------------------------------------------------------
   // Press-and-hold voice recording — uses onLongPress (fires after 150ms of
   // hold) so a quick tap can show the teaching tooltip without accidentally
-  // triggering a recording. Swipe-left cancel is tracked via onTouchMove so
-  // we need to keep the pointer events flowing even while the recorder is
-  // running.
+  // triggering a recording.
   // ------------------------------------------------------------------------
-  function beginTouch(e: GestureResponderEvent) {
-    // Remember the initial finger X so handleMove can compute dx for the
-    // swipe-left cancel gesture. Fires on EVERY touch down — recording
-    // itself waits for onLongPress.
-    startXRef.current = e.nativeEvent.pageX;
-  }
 
   async function startRecording() {
     console.log('[mic] long-press fired → recording start');
@@ -149,10 +139,11 @@ export function ChatInput({
     // session opens. Otherwise the user hears the AI's reply talking
     // over their own recording prompt — confusing on iPhone speakers.
     cancelTTSStream();
-    // Re-focus the TextInput synchronously so iOS doesn't drop the
-    // keyboard. The mic Pressable's touch capture would otherwise
-    // implicitly blur whatever was focused.
-    try { inputRef.current?.focus(); } catch {}
+    // No explicit focus() call — the parent ScrollView's
+    // keyboardShouldPersistTaps="handled" preserves focus when the
+    // user was already typing, and we explicitly do NOT want to OPEN
+    // the keyboard if it was closed (which is what calling focus()
+    // unconditionally caused).
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {
@@ -181,18 +172,6 @@ export function ChatInput({
     }
   }
 
-  function handleMove(e: GestureResponderEvent) {
-    if (!recording) return;
-    const startX = startXRef.current;
-    if (startX == null) return;
-    const dx = e.nativeEvent.pageX - startX;
-    const shouldArm = dx < -CANCEL_SWIPE_PX;
-    if (shouldArm !== cancelArmed) {
-      setCancelArmed(shouldArm);
-      if (shouldArm) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-    }
-  }
-
   function handleShortTap() {
     // Fires when the touch ends BEFORE the 150ms long-press timer. Fade
     // the tooltip in, hold 1.5s, then fade it out. Clears prior timers so
@@ -206,23 +185,19 @@ export function ChatInput({
   }
 
   async function endHold() {
-    // If the recorder never started (short tap), bail cleanly. Swipe-cancel
-    // still runs through this path.
+    // If the recorder never started (short tap), bail cleanly.
     if (!recording) return;
-    console.log('[mic] press-out, cancelArmed=', cancelArmed);
-    // Belt-and-braces: re-focus the input so the keyboard remains up
-    // after the recording overlay disappears.
-    try { inputRef.current?.focus(); } catch {}
-    const wasCancel = cancelArmed;
+    console.log('[mic] press-out');
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
     setRecording(false);
-    setCancelArmed(false);
     setSeconds(0);
     try {
       await recorder.stop();
       const uri = recorder.uri;
-      if (wasCancel || !uri || heldSec < 0.3) {
+      // Anything under 300ms is treated as an accidental tap — discard
+      // silently rather than send empty audio for the AI to puzzle over.
+      if (!uri || heldSec < 0.3) {
         Haptics.selectionAsync().catch(() => {});
         return;
       }
@@ -264,22 +239,11 @@ export function ChatInput({
             // RECORDING PILL — overlay covering the TextInput.
             // pointerEvents='auto' so taps on the pill DON'T fall
             // through to the input below (the user can't accidentally
-            // type while recording). The TextInput keeps focus and
-            // the keyboard stays up because nothing has actually
-            // blurred the input.
-            <View
-              style={[styles.recordingOverlay, cancelArmed && styles.recordingPillCancel]}
-              pointerEvents="auto"
-            >
+            // type while recording).
+            <View style={styles.recordingOverlay} pointerEvents="auto">
               <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
-              <Text style={styles.recordingLabel}>
-                {cancelArmed ? 'Release to cancel' : 'Recording…'}
-              </Text>
+              <Text style={styles.recordingLabel}>Recording…</Text>
               <Text style={styles.recordingTime}>{formatSecs(seconds)}</Text>
-              <View style={{ flex: 1 }} />
-              {!cancelArmed ? (
-                <Text style={styles.swipeHint}>Slide to cancel ←</Text>
-              ) : null}
             </View>
           ) : null}
         </View>
@@ -293,9 +257,7 @@ export function ChatInput({
             onLongPress={startRecording}
             delayLongPress={150}
             onPress={handleShortTap}
-            onPressIn={beginTouch}
             onPressOut={endHold}
-            onTouchMove={handleMove}
             // Hit area expanded well beyond the visible 44px so the button
             // reliably catches press-and-hold with imprecise finger
             // placement — previously reports of "mic not tappable" were
@@ -304,16 +266,9 @@ export function ChatInput({
             style={styles.micPressable}
             accessibilityLabel={recording ? 'Release to send voice note' : 'Hold to record voice note'}
           >
-            <View
-              style={[
-                styles.btn,
-                styles.micBtn,
-                recording && styles.micRecording,
-                cancelArmed && styles.micCancel,
-              ]}
-            >
+            <View style={[styles.btn, styles.micBtn, recording && styles.micRecording]}>
               <Ionicons
-                name={recording && cancelArmed ? 'close' : 'mic'}
+                name="mic"
                 size={20}
                 color={recording ? '#fff' : colors.amber}
               />
@@ -433,28 +388,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 0 },
   },
-  micCancel: {
-    backgroundColor: '#6a2a2a',
-    borderColor: '#6a2a2a',
-  },
 
-  // Recording pill — replaces the text field while holding.
-  recordingPill: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    minHeight: 52,
-    paddingHorizontal: 16,
-    backgroundColor: 'rgba(212,114,106,0.12)',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(212,114,106,0.4)',
-  },
-  recordingPillCancel: {
-    backgroundColor: 'rgba(180,60,60,0.25)',
-    borderColor: 'rgba(255,100,100,0.7)',
-  },
   recordingDot: {
     width: 10, height: 10, borderRadius: 5,
     backgroundColor: '#d4726a',
@@ -471,12 +405,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansMedium,
     fontSize: 13,
     minWidth: 36,
-  },
-  swipeHint: {
-    color: colors.creamDim,
-    fontFamily: fonts.sans,
-    fontSize: 11,
-    fontStyle: 'italic',
   },
 
   // Short-tap tooltip — rendered at the bar level so its natural content
