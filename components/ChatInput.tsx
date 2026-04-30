@@ -62,6 +62,11 @@ export function ChatInput({
   const [recording, setRecording] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  // Direct ref to the TextInput. We re-call focus() at recording start
+  // and end so iOS doesn't drop the keyboard when the mic Pressable
+  // briefly grabs touch focus. Without this, tapping the mic could
+  // implicitly blur the TextInput → keyboard slides down.
+  const inputRef = useRef<TextInput | null>(null);
   // Short-tap tooltip — anchored above the mic at the bar level so its
   // natural one-line width isn't clipped by the 52px mic wrapper. Driven by
   // a Reanimated shared value: fades in over 150ms, holds 1.5s, fades out
@@ -126,6 +131,10 @@ export function ChatInput({
     // session opens. Otherwise the user hears the AI's reply talking
     // over their own recording prompt — confusing on iPhone speakers.
     cancelTTSStream();
+    // Re-focus the TextInput synchronously so iOS doesn't drop the
+    // keyboard. The mic Pressable's touch capture would otherwise
+    // implicitly blur whatever was focused.
+    try { inputRef.current?.focus(); } catch {}
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {
@@ -183,6 +192,9 @@ export function ChatInput({
     // still runs through this path.
     if (!recording) return;
     console.log('[mic] press-out, cancelArmed=', cancelArmed);
+    // Belt-and-braces: re-focus the input so the keyboard remains up
+    // after the recording overlay disappears.
+    try { inputRef.current?.focus(); } catch {}
     const wasCancel = cancelArmed;
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
@@ -216,9 +228,13 @@ export function ChatInput({
             field. */}
         <View style={styles.inputWrap}>
           <TextInput
+            ref={inputRef}
             value={text}
             onChangeText={setText}
-            editable={!disabled && !recording}
+            // Always editable. The recording overlay above visually
+            // hides the input during a hold, but keeping editable=true
+            // means iOS preserves focus → keyboard stays up.
+            editable={!disabled}
             multiline
             placeholder={'Share what feels true…'}
             placeholderTextColor={colors.creamFaint}
@@ -228,12 +244,14 @@ export function ChatInput({
           />
           {recording ? (
             // RECORDING PILL — overlay covering the TextInput.
-            // Red pulsing dot + "Recording" + ticking duration + swipe
-            // hint. When cancelArmed, the pill turns red to confirm a
-            // release now will discard.
+            // pointerEvents='auto' so taps on the pill DON'T fall
+            // through to the input below (the user can't accidentally
+            // type while recording). The TextInput keeps focus and
+            // the keyboard stays up because nothing has actually
+            // blurred the input.
             <View
               style={[styles.recordingOverlay, cancelArmed && styles.recordingPillCancel]}
-              pointerEvents="none"
+              pointerEvents="auto"
             >
               <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
               <Text style={styles.recordingLabel}>
