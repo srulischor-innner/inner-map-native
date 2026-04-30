@@ -43,9 +43,23 @@ let buffer = '';                        // unconsumed text (no complete sentence
 let consumedSoFar = 0;                  // chars handed in via append(), used by caller
 let player: Player | null = null;
 let watchToken = 0;
-// Single sequential chain — every enqueueFetch appends to this so
-// fetch + play happen strictly one-at-a-time in insertion order.
-let activeChain: Promise<void> = Promise.resolve();
+
+// Sequential FIFO queue + single worker. Earlier this was a Promise.then()
+// chain — each chainSentence call appended `.then(async () => fetch+play)`.
+// That LOOKS sequential but Metro logs caught the chain firing multiple
+// /api/speak fetches in parallel: by the time the first step hit
+// `await api.speak`, subsequent steps' fetches were already in flight,
+// and when a later sentence's audio arrived faster than the earlier
+// one's playback finished, they overlapped audibly.
+//
+// Replaced with an explicit queue + worker so "fetch then play then
+// fetch then play" is structural, not promise-chain-dependent. Only
+// one worker drains the queue at a time; new chainSentence calls
+// enqueue and kick the worker if it's idle. cancelStream clears the
+// queue immediately so muted/ended sessions can't bleed audio.
+type ChainItem = { text: string; myToken: number };
+const chainQueue: ChainItem[] = [];
+let chainWorkerActive = false;
 // Chain bookkeeping for the [tts] chain complete log + duplication
 // diagnostics. Scheduled increments synchronously when a sentence is
 // queued; completed/played increment in the chain step's finally.
@@ -130,7 +144,6 @@ export async function startStream(messageId: string): Promise<void> {
   buffer = '';
   consumedSoFar = 0;
   watchToken++;
-  activeChain = Promise.resolve();
   resetChainCounters();
   console.log('[tts-stream] start id=' + messageId.slice(0, 8));
 }
@@ -184,10 +197,11 @@ export function cancelStream(): void {
     try { player.pause(); player.remove(); } catch {}
     player = null;
   }
-  // Replace the chain with a fresh resolved promise — any pending
-  // .then() callbacks already attached will still run on the OLD
-  // chain reference, but each one checks watchToken and bails.
-  activeChain = Promise.resolve();
+  // Drop every queued sentence. The worker, if currently mid-step,
+  // sees the watchToken bump on its post-play check and `continue`s;
+  // its next loop iteration finds the queue empty and exits. New
+  // sessions add to the now-empty queue and a fresh worker drains it.
+  chainQueue.length = 0;
   resetChainCounters();
   console.log('[tts-stream] cancel');
 }
@@ -254,57 +268,81 @@ function flushReadyChunks(force: boolean): void {
   }
 }
 
-/** Append a sentence to the sequential fetch+play chain. Each chain
- *  step waits for the PREVIOUS sentence's playback to fully finish
- *  before starting its own /api/speak request — so there is exactly
- *  one fetch in flight and one playback at a time, in insertion
- *  order. This is what guarantees "read first sentence then second
- *  then third" instead of "whichever fetch resolved first." */
+/** Enqueue a sentence for the sequential fetch+play worker. The
+ *  worker (processChainQueue) drains items one at a time, awaiting
+ *  the fetch AND the playback of each before pulling the next item
+ *  off the queue. So there is exactly one /api/speak in flight and
+ *  one player active at a time, in insertion order — guaranteed
+ *  structurally rather than via promise-chain ordering. */
 function chainSentence(text: string): void {
   const myToken = watchToken;
   chainScheduled++;
   console.log('[tts-stream] chain sentence chars=' + text.length);
-  activeChain = activeChain.then(async () => {
-    let stepPlayed = false;
-    try {
-      if (myToken !== watchToken) return;     // cancelled while we were waiting
-      // One retry on null buffer — ElevenLabs / OpenAI sometimes drops
-      // the connection mid-stream and the second attempt usually
-      // succeeds. Without this, a single transient failure produced
-      // a permanently-cut-off mid-message read-aloud.
-      let buf = await api.speak(text);
-      if (myToken !== watchToken) return;
-      if (!buf) {
-        console.warn('[tts-stream] api.speak returned null — retrying once');
-        buf = await api.speak(text);
-        if (myToken !== watchToken) return;
+  chainQueue.push({ text, myToken });
+  // Fire-and-forget kick. The worker self-guards against double-entry
+  // via chainWorkerActive, so concurrent kicks are safe — the second
+  // call returns immediately and the running worker eventually picks
+  // up the new item on its next loop iteration.
+  processChainQueue().catch((e) => {
+    console.warn('[tts-stream] chain worker threw:', (e as Error)?.message);
+  });
+}
+
+/** The single sequential worker. Pulls the head item off chainQueue,
+ *  fetches its audio, plays it, and only THEN pulls the next item.
+ *  Returns when the queue is empty so a later chainSentence call can
+ *  re-kick the worker. */
+async function processChainQueue(): Promise<void> {
+  if (chainWorkerActive) return;
+  chainWorkerActive = true;
+  try {
+    while (chainQueue.length > 0) {
+      const item = chainQueue.shift();
+      if (!item) break;
+      // Stale item from a cancelled session — drop without touching
+      // counters. The cancel already zeroed them.
+      if (item.myToken !== watchToken) continue;
+
+      let stepPlayed = false;
+      try {
+        // One retry on null buffer — ElevenLabs / OpenAI sometimes
+        // drops the connection mid-stream and the second attempt
+        // usually succeeds. Without this, a single transient failure
+        // produced a permanently-cut-off mid-message read-aloud.
+        let buf = await api.speak(item.text);
+        if (item.myToken !== watchToken) continue;
         if (!buf) {
-          console.error('[tts-stream] api.speak returned null on retry — dropping sentence');
-          return;
+          console.warn('[tts-stream] api.speak returned null — retrying once');
+          buf = await api.speak(item.text);
+          if (item.myToken !== watchToken) continue;
+          if (!buf) {
+            console.error('[tts-stream] api.speak returned null on retry — dropping sentence');
+          }
+        }
+        if (buf) {
+          await playOneBuffer(buf, item.myToken);
+          // Post-play re-check — if cancelStream fired during
+          // playback, playOneBuffer's polling loop already broke out
+          // and the audio is silent. Don't count as played.
+          if (item.myToken !== watchToken) continue;
+          stepPlayed = true;
+        }
+      } catch (e) {
+        console.warn('[tts-stream] chain step failed:', (e as Error)?.message);
+      } finally {
+        // Bookkeep completion only if we still belong to the current
+        // chain session. Stale steps from a cancelled session have
+        // already had their counters zeroed.
+        if (item.myToken === watchToken) {
+          chainCompleted++;
+          if (stepPlayed) chainPlayed++;
+          maybeLogChainComplete(item.myToken);
         }
       }
-      await playOneBuffer(buf, myToken);
-      // Post-play re-check — if cancelStream fired during playback,
-      // playOneBuffer's polling loop already broke out and the audio
-      // is silent. We must NOT count this as played, otherwise the
-      // chain-complete log lies and any future "did it play?"
-      // diagnostics are misleading.
-      if (myToken !== watchToken) return;
-      stepPlayed = true;
-    } catch (e) {
-      console.warn('[tts-stream] chain step failed:', (e as Error)?.message);
-    } finally {
-      // Bookkeep completion only if we still belong to the current
-      // chain session. Stale steps from a cancelled session have
-      // already had their counters zeroed — touching them here would
-      // corrupt the next session's count.
-      if (myToken === watchToken) {
-        chainCompleted++;
-        if (stepPlayed) chainPlayed++;
-        maybeLogChainComplete(myToken);
-      }
     }
-  }).catch(() => {});
+  } finally {
+    chainWorkerActive = false;
+  }
 }
 
 /** Play a single MP3 buffer to completion. Resolves only after the
