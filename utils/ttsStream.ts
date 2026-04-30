@@ -46,6 +46,34 @@ let watchToken = 0;
 // Single sequential chain — every enqueueFetch appends to this so
 // fetch + play happen strictly one-at-a-time in insertion order.
 let activeChain: Promise<void> = Promise.resolve();
+// Chain bookkeeping for the [tts] chain complete log + duplication
+// diagnostics. Scheduled increments synchronously when a sentence is
+// queued; completed/played increment in the chain step's finally.
+// Reset at every session boundary so each chain reports its own count
+// cleanly without bleed-through.
+let chainScheduled = 0;
+let chainCompleted = 0;
+let chainPlayed = 0;
+
+function resetChainCounters() {
+  chainScheduled = 0;
+  chainCompleted = 0;
+  chainPlayed = 0;
+}
+
+// Logs `[tts] chain complete — N sentences played` exactly once per
+// chain session. Only fires when (a) we're still the current session,
+// (b) no more text will arrive (active === false), and (c) every
+// scheduled step has reported back. Resets counters after firing so a
+// later cancel/restart doesn't double-log.
+function maybeLogChainComplete(myToken: number) {
+  if (myToken !== watchToken) return;
+  if (active) return;
+  if (chainScheduled === 0) return;
+  if (chainCompleted < chainScheduled) return;
+  console.log(`[tts] chain complete — ${chainPlayed} sentences played`);
+  resetChainCounters();
+}
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -78,6 +106,7 @@ export async function playMessageNow(messageId: string, text: string): Promise<v
   buffer = '';
   consumedSoFar = 0;
   watchToken++;
+  resetChainCounters();
   // Split into sentences; whitespace AFTER terminal punctuation is the
   // boundary. Empty entries are filtered out. Each sentence chains
   // strictly behind the previous one's playback completion.
@@ -102,6 +131,7 @@ export async function startStream(messageId: string): Promise<void> {
   consumedSoFar = 0;
   watchToken++;
   activeChain = Promise.resolve();
+  resetChainCounters();
   console.log('[tts-stream] start id=' + messageId.slice(0, 8));
 }
 
@@ -125,6 +155,11 @@ export function finishStream(): void {
   flushReadyChunks(true);
   active = false;
   console.log('[tts-stream] finish — letting queue drain');
+  // If the audio fetches outpaced the streaming text and every
+  // scheduled step has already played, the chain is drained NOW —
+  // no in-flight step will fire the chain-complete log on its own.
+  // Cover that race by checking here too.
+  maybeLogChainComplete(watchToken);
 }
 
 /** Stop everything. Bumps watchToken so any in-flight chain step
@@ -145,6 +180,7 @@ export function cancelStream(): void {
   // .then() callbacks already attached will still run on the OLD
   // chain reference, but each one checks watchToken and bails.
   activeChain = Promise.resolve();
+  resetChainCounters();
   console.log('[tts-stream] cancel');
 }
 
@@ -218,10 +254,12 @@ function flushReadyChunks(force: boolean): void {
  *  then third" instead of "whichever fetch resolved first." */
 function chainSentence(text: string): void {
   const myToken = watchToken;
+  chainScheduled++;
   console.log('[tts-stream] chain sentence chars=' + text.length);
   activeChain = activeChain.then(async () => {
-    if (myToken !== watchToken) return;     // cancelled while we were waiting
+    let stepPlayed = false;
     try {
+      if (myToken !== watchToken) return;     // cancelled while we were waiting
       // One retry on null buffer — ElevenLabs / OpenAI sometimes drops
       // the connection mid-stream and the second attempt usually
       // succeeds. Without this, a single transient failure produced
@@ -238,8 +276,25 @@ function chainSentence(text: string): void {
         }
       }
       await playOneBuffer(buf, myToken);
+      // Post-play re-check — if cancelStream fired during playback,
+      // playOneBuffer's polling loop already broke out and the audio
+      // is silent. We must NOT count this as played, otherwise the
+      // chain-complete log lies and any future "did it play?"
+      // diagnostics are misleading.
+      if (myToken !== watchToken) return;
+      stepPlayed = true;
     } catch (e) {
       console.warn('[tts-stream] chain step failed:', (e as Error)?.message);
+    } finally {
+      // Bookkeep completion only if we still belong to the current
+      // chain session. Stale steps from a cancelled session have
+      // already had their counters zeroed — touching them here would
+      // corrupt the next session's count.
+      if (myToken === watchToken) {
+        chainCompleted++;
+        if (stepPlayed) chainPlayed++;
+        maybeLogChainComplete(myToken);
+      }
     }
   }).catch(() => {});
 }
@@ -275,6 +330,12 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
     } catch { break; }
     await new Promise((r) => setTimeout(r, 100));
   }
+  // Explicit pause() before remove() — defense against the audio
+  // engine continuing to drain the last buffer briefly after the
+  // player handle is released. Cheap; only matters in the edge
+  // case where the next chain step (or session) starts a new
+  // player before the previous buffer has fully cleared.
+  try { p.pause(); } catch {}
   try { p.remove(); } catch {}
   if (player === p) player = null;
 }
