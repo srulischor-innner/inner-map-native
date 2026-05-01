@@ -27,7 +27,7 @@ import { registerForPushNotifications } from '../services/push';
 import {
   ensureDefaultPreference, authenticate as authenticateBiometric, isLockEnabled,
 } from '../services/biometrics';
-import { LockScreen } from '../components/LockScreen';
+// import { LockScreen } from '../components/LockScreen';  // TEMP: bypassed — see _layout render below
 import { LandingScreen } from '../components/LandingScreen';
 
 // =============================================================================
@@ -407,7 +407,13 @@ export default function RootLayout() {
             />
           </View>
           {showLockScreen ? (
-            <LockScreen onUnlock={() => runAuthCheck('button-tap')} />
+            // TEMP: LockScreen replaced with plain View to isolate
+            // whether @shopify/react-native-skia is the cause of the
+            // standalone-build splash hang. If the app loads past
+            // splash with this change, Skia's native binary inclusion
+            // is the culprit and the real LockScreen needs to be
+            // restored once Skia is fixed.
+            <View style={{ flex: 1, backgroundColor: '#000' }} />
           ) : null}
         </SafeAreaProvider>
       </GestureHandlerRootView>
