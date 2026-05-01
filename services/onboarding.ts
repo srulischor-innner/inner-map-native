@@ -24,30 +24,51 @@ export type OnboardingState = {
 };
 
 async function getBool(key: string): Promise<boolean> {
-  // Per-key 5s timeout. The previous 1.5s was too aggressive for fresh
-  // installs — AsyncStorage's first reads on a cold install can take
-  // 2-3s while the storage backend warms up, and a premature timeout
-  // returned `false` for every flag. Combined with the gate in
-  // app/_layout.tsx that redirects to /onboarding when any flag is
-  // false, that produced an onboarding-loop on fresh install: each
-  // boot read timed out, all three returned false, redirect fired,
-  // remount happened, same race repeated.
-  // The root _layout's outer 3s timeout still acts as the ultimate
-  // safety net if AsyncStorage genuinely hangs (it falls back to
-  // "all true" so the user reaches the tabs rather than spinning).
+  // CRITICAL — timeout default is TRUE, not FALSE.
+  //
+  // The previous version returned `false` on timeout, which combined
+  // with the redirect-on-incomplete gate in app/_layout.tsx produced
+  // a hard onboarding loop on fresh installs: every flag read timed
+  // out → every flag was false → redirect fired → remount → same
+  // race → same redirect → infinite loop, app unusable.
+  //
+  // Defaulting to TRUE on timeout means the worst case is "user
+  // reaches the main app despite not having onboarded" — which is
+  // recoverable (each onboarding screen still writes its own flag
+  // when completed, and the user can just back out and complete it).
+  // The previous default of FALSE made the worst case "user is
+  // permanently trapped in an onboarding loop" — not recoverable.
+  //
+  // We track the timeout firing via a closure flag rather than a
+  // sentinel return value so a genuine null from AsyncStorage (the
+  // expected fresh-install state when keys legitimately don't exist
+  // and the read returns FAST) is still distinguishable from a real
+  // timeout. Genuine fresh installs read null → return false → user
+  // is correctly routed to /onboarding. Only ACTUAL timeouts default
+  // to true.
   try {
+    let timedOut = false;
     const raw = await Promise.race<string | null>([
       AsyncStorage.getItem(key),
       new Promise<null>((resolve) =>
         setTimeout(() => {
-          console.warn(`[onboarding] AsyncStorage.getItem(${key}) timed out @5000ms`);
+          timedOut = true;
+          console.warn(
+            `[onboarding] AsyncStorage.getItem(${key}) timed out @5000ms — defaulting to TRUE to break onboarding loop`,
+          );
           resolve(null);
         }, 5000),
       ),
     ]);
+    if (timedOut) return true;
     return raw === '1';
   } catch (e) {
     console.warn(`[onboarding] AsyncStorage.getItem(${key}) threw:`, (e as Error)?.message);
+    // Throws are different from timeouts — these are typically
+    // structural errors (storage corrupted, etc) where retrying
+    // probably won't help. Default false is fine here; the redirect
+    // guard prevents the loop, and the user lands on /onboarding
+    // once where they can manually proceed.
     return false;
   }
 }

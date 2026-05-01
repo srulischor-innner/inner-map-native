@@ -121,6 +121,18 @@ export default function RootLayout() {
         hasAuthenticatedThisSession = true;
         setLocked(false);
         console.log('[lock] unlocked');
+      } else if (reason === 'cold-start') {
+        // Fresh-install Face ID escape hatch. The first cold-start
+        // prompt on iOS is the OS-level permission grant; if the user
+        // declines or cancels it, the app would otherwise stay locked
+        // forever with no recovery path (the LockScreen's Unlock
+        // button just re-prompts, which they've already declined).
+        // Fall open instead — they can re-enable the lock from the
+        // settings screen if they want it. Better recoverable wrong
+        // than permanently trapped.
+        console.log('[lock] cold-start auth failed/canceled — unlocking to avoid permanent trap');
+        hasAuthenticatedThisSession = true;
+        setLocked(false);
       } else {
         setLocked(true);
         console.log('[lock] failed/canceled — staying locked');
