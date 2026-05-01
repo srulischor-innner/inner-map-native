@@ -30,6 +30,46 @@ import {
 import { LockScreen } from '../components/LockScreen';
 import { LandingScreen } from '../components/LandingScreen';
 
+// =============================================================================
+// COLD-START DIAGNOSTICS — runs at module-evaluation time (after the imports
+// above succeed). If you don't see "[splash] _layout.tsx is executing" in
+// device logs (xcrun simctl log stream / Console.app on macOS, adb logcat
+// on Android) then one of the IMPORT statements above threw and the file
+// never finished evaluating — meaning the splash hangs because no React
+// tree was ever defined. Common offender: a side-effect import in the
+// transitive graph (e.g. react-native-get-random-values polyfill, native
+// module not properly bundled in the standalone build).
+// =============================================================================
+console.log('[splash] _layout.tsx is executing');
+
+// Global uncaught-error logger. Installed once per JS context. Any error
+// thrown after this point — whether in a useEffect, an async IIFE, a
+// timer, or a render — gets logged with stack before whatever default
+// handler runs. We chain to the previous handler so RN's default red-box
+// behavior in dev still fires.
+try {
+  const G = (globalThis as any);
+  if (G.ErrorUtils && typeof G.ErrorUtils.setGlobalHandler === 'function') {
+    const prev = typeof G.ErrorUtils.getGlobalHandler === 'function'
+      ? G.ErrorUtils.getGlobalHandler()
+      : null;
+    G.ErrorUtils.setGlobalHandler((err: Error, isFatal: boolean) => {
+      console.error(
+        '[splash][global error]',
+        isFatal ? 'FATAL' : 'non-fatal',
+        err?.message,
+        err?.stack,
+      );
+      try { prev?.(err, isFatal); } catch {}
+    });
+    console.log('[splash] global error handler installed');
+  } else {
+    console.warn('[splash] ErrorUtils not available — cannot install global handler');
+  }
+} catch (e) {
+  console.error('[splash] failed to install global error handler:', (e as Error)?.message);
+}
+
 // Module-level flags for the biometric lock. These persist for the life of
 // the JS process — i.e. cold-start to cold-start. Two purposes:
 //   1. hasAuthenticatedThisSession — once the user has unlocked, we never

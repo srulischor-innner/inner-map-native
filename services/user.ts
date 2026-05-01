@@ -2,10 +2,20 @@
 // on Android). One anonymous UUID per install. The Railway server scopes every request
 // by the `X-User-Id` header.
 //
-// `react-native-get-random-values` must be imported BEFORE `uuid` so crypto.getRandomValues
-// is polyfilled before uuid touches it. That's why we do it at the top of this module.
-
-import 'react-native-get-random-values';
+// react-native-get-random-values polyfills crypto.getRandomValues so uuid v4
+// has entropy. It MUST run before uuid is called. We use require() inside
+// try/catch instead of `import 'react-native-get-random-values'` because
+// this module is reachable from app/_layout.tsx's transitive import graph
+// (via services/push.ts) — a throw at the bare-import statement kills the
+// entire boot path and the splash hangs forever with no React tree
+// mounted. Wrapping it lets boot continue; if uuid is later called without
+// the polyfill it'll throw at THAT point, which is recoverable.
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('react-native-get-random-values');
+} catch (e) {
+  console.error('[user] react-native-get-random-values polyfill failed to load:', (e as Error)?.message);
+}
 import { v4 as uuidv4 } from 'uuid';
 import * as SecureStore from 'expo-secure-store';
 
