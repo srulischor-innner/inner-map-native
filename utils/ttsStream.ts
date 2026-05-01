@@ -371,6 +371,7 @@ async function processChainQueue(): Promise<void> {
  *  recording, map voice, guide ask, journal, etc); ttsStream.ts was
  *  the lone holdout that allowed mixing. */
 async function configureAudioSessionForPlayback(): Promise<void> {
+  console.log('[tts] configureAudioSession called');
   try {
     await setAudioModeAsync({
       allowsRecording: false,
@@ -378,8 +379,9 @@ async function configureAudioSessionForPlayback(): Promise<void> {
       interruptionMode: 'doNotMix',
       shouldPlayInBackground: false,
     });
+    console.log('[tts] audio session configured — playsInSilentMode=true, interruptionMode=doNotMix');
   } catch (e) {
-    console.warn('[tts-stream] setAudioModeAsync failed:', (e as Error)?.message);
+    console.warn('[tts] setAudioModeAsync failed:', (e as Error)?.message);
   }
 }
 
@@ -390,6 +392,15 @@ async function configureAudioSessionForPlayback(): Promise<void> {
 async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
   if (myToken !== watchToken) return;
   const uri = 'data:audio/mpeg;base64,' + bytesToBase64(new Uint8Array(buf));
+  console.log('[tts] playOneBuffer — bytes=' + buf.byteLength);
+  // Defensive idempotent re-arm of the audio session right before we
+  // create the player. configureAudioSessionForPlayback is also fired
+  // at startStream/playMessageNow time, but on FRESH installs the
+  // first call has been observed to land late or silently fail —
+  // re-running here is cheap and guarantees the session is in
+  // playback mode by the time createAudioPlayer runs.
+  await configureAudioSessionForPlayback();
+  if (myToken !== watchToken) return;
   // Tear down any prior player BEFORE creating the next — defensive
   // against the rare case where cancelStream missed a beat.
   if (player) {
@@ -398,7 +409,18 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
   }
   const p = createAudioPlayer({ uri });
   player = p;
-  try { p.play(); } catch {}
+  // Belt-and-braces volume reset, mirroring map voice's playArrayBuffer.
+  // Without this, fresh-install / first-launch builds were producing
+  // a silent player even though Railway logs showed audio bytes
+  // being returned successfully — the gain was at zero from some
+  // earlier audio-session state and play() ran with no audible
+  // output. Explicit 1.0 here regardless.
+  try { (p as any).volume = 1.0; } catch {}
+  try {
+    p.play();
+  } catch (e) {
+    console.error('[tts] player.play() threw:', (e as Error)?.message);
+  }
   while (player === p && myToken === watchToken) {
     try {
       const s = p.currentStatus;
