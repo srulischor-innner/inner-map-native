@@ -121,6 +121,11 @@ export async function playMessageNow(messageId: string, text: string): Promise<v
   consumedSoFar = 0;
   watchToken++;
   resetChainCounters();
+  // Same one-time session setup as startStream — playMessageNow is
+  // the toggle-on path and doesn't go through startStream, so it has
+  // to configure the session itself. doNotMix is what keeps the
+  // previous player's tail from overlapping with the next one.
+  configureAudioSessionForPlayback();
   // Split into sentences; whitespace AFTER terminal punctuation is the
   // boundary. Empty entries are filtered out. Each sentence chains
   // strictly behind the previous one's playback completion.
@@ -145,6 +150,12 @@ export async function startStream(messageId: string): Promise<void> {
   consumedSoFar = 0;
   watchToken++;
   resetChainCounters();
+  // One-time audio session setup for the whole chain. Configuring
+  // once (here) instead of per-buffer (inside playOneBuffer) avoids
+  // the click/pop iOS produces when the session is reconfigured mid-
+  // stream. Fire-and-forget — by the time the first sentence's fetch
+  // returns (~2s), the session config has long since landed.
+  configureAudioSessionForPlayback();
   console.log('[tts-stream] start id=' + messageId.slice(0, 8));
 }
 
@@ -345,20 +356,40 @@ async function processChainQueue(): Promise<void> {
   }
 }
 
+/** Configure the iOS audio session for sequential playback. Called
+ *  ONCE per playback session (startStream / playMessageNow), not per
+ *  buffer. Per-buffer reconfiguration was producing audible clicks
+ *  at sentence boundaries as iOS torn-down and re-set up the session
+ *  between every fetch+play cycle.
+ *
+ *  interruptionMode='doNotMix' is critical: with the previous
+ *  'mixWithOthers' setting, iOS would let the previous player's
+ *  tail buffer continue draining out of the audio engine WHILE the
+ *  next player started — producing audible overlap at every sentence
+ *  boundary even though the chain itself was strictly sequential.
+ *  Every other audio path in this app already uses 'doNotMix' (chat
+ *  recording, map voice, guide ask, journal, etc); ttsStream.ts was
+ *  the lone holdout that allowed mixing. */
+async function configureAudioSessionForPlayback(): Promise<void> {
+  try {
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      interruptionMode: 'doNotMix',
+      shouldPlayInBackground: false,
+    });
+  } catch (e) {
+    console.warn('[tts-stream] setAudioModeAsync failed:', (e as Error)?.message);
+  }
+}
+
 /** Play a single MP3 buffer to completion. Resolves only after the
  *  player reports didJustFinish (or isLoaded becomes false, or the
- *  watchToken is bumped). The chain.then() above awaits this so the
- *  next sentence's fetch doesn't start until this one is done. */
+ *  watchToken is bumped). The worker awaits this so the next
+ *  sentence's fetch doesn't start until this one is done. */
 async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
   if (myToken !== watchToken) return;
   const uri = 'data:audio/mpeg;base64,' + bytesToBase64(new Uint8Array(buf));
-  try {
-    await setAudioModeAsync({
-      allowsRecording: false, playsInSilentMode: true,
-      interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
-    });
-  } catch {}
-  if (myToken !== watchToken) return;
   // Tear down any prior player BEFORE creating the next — defensive
   // against the rare case where cancelStream missed a beat.
   if (player) {
@@ -374,13 +405,11 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
       if (s?.didJustFinish) break;
       if (s?.isLoaded === false) break;
     } catch { break; }
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 50));
   }
-  // Explicit pause() before remove() — defense against the audio
-  // engine continuing to drain the last buffer briefly after the
-  // player handle is released. Cheap; only matters in the edge
-  // case where the next chain step (or session) starts a new
-  // player before the previous buffer has fully cleared.
+  // Explicit pause() before remove() — paired with the doNotMix
+  // session, this stops the current buffer's output cleanly before
+  // the next createAudioPlayer takes over.
   try { p.pause(); } catch {}
   try { p.remove(); } catch {}
   if (player === p) player = null;
