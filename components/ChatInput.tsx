@@ -40,7 +40,7 @@ import ReAnimated, {
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
-import { colors, fonts, radii, spacing } from '../constants/theme';
+import { colors, fonts, spacing } from '../constants/theme';
 import { cancelStream as cancelTTSStream } from '../utils/ttsStream';
 
 export function ChatInput({
@@ -229,7 +229,13 @@ export function ChatInput({
             // means iOS preserves focus → keyboard stays up.
             editable={!disabled}
             multiline
-            placeholder={'Share what feels true…'}
+            // Placeholder is suppressed while recording — without this,
+            // the "Share what feels true…" copy bled through the
+            // recording pill (the overlay above is tinted-translucent
+            // by design). The TextInput stays mounted so the keyboard
+            // doesn't drop, but its visible text is fully masked by
+            // the now-opaque overlay below.
+            placeholder={recording ? '' : 'Share what feels true…'}
             placeholderTextColor={colors.creamFaint}
             style={styles.input}
             selectionColor={colors.amber}
@@ -328,10 +334,12 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   recordingOverlay: {
-    // Sits exactly over the TextInput. Same minHeight + paddings as
-    // the recording pill used to have. pointerEvents='none' on the
-    // wrapper above so taps fall through to the underlying TextInput
-    // (the user can dismiss the keyboard by tapping outside, etc.).
+    // Sits exactly over the TextInput. Mutually exclusive with the
+    // input visually — when recording is true, ONLY this pill is
+    // shown to the user. Background is opaque (was rgba alpha 0.18,
+    // which let the TextInput's placeholder bleed through). The
+    // borderRadius matches the input's 24 so the overlay covers it
+    // edge-to-edge with no peeking input corners.
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
     flexDirection: 'row',
@@ -339,10 +347,10 @@ const styles = StyleSheet.create({
     gap: 8,
     minHeight: 52,
     paddingHorizontal: 16,
-    backgroundColor: 'rgba(212,114,106,0.18)',
-    borderRadius: radii.md,
-    borderWidth: 0.5,
-    borderColor: 'rgba(212,114,106,0.55)',
+    backgroundColor: 'rgba(70,28,28,0.96)',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(212,114,106,0.7)',
   },
   input: {
     // Fills the inputWrap so the TextInput's tappable area stays full-
