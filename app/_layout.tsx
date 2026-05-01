@@ -100,6 +100,14 @@ export default function RootLayout() {
   // biometrics pass on every cold open so the user lands on a calm
   // arrival moment instead of jumping straight into the chat tab.
   const [showLanding, setShowLanding] = useState(true);
+  // Force-pass for the font-load gate. If useFonts hasn't resolved
+  // within 2.5s — which happens in some preview/standalone builds
+  // where asset bundling races with first render — we proceed with
+  // system fonts rather than stranding the user on the dark splash.
+  // The trade-off is one frame of fallback-font flash; the previous
+  // unconditional gate could permanently brick the app on cold start
+  // if any font asset failed to resolve.
+  const [fontTimeoutElapsed, setFontTimeoutElapsed] = useState(false);
 
   // Run an auth prompt iff the lock preference is on AND the user hasn't
   // already authenticated this session. The session flag is the firewall
@@ -166,6 +174,14 @@ export default function RootLayout() {
         // Lock IS on. Don't bother flipping locked (it's already true).
         // runAuthCheck handles the success → setLocked(false) path.
         await runAuthCheck('cold-start');
+      } catch (e) {
+        // Top-level throw in the auth path. expo-local-authentication can
+        // explode on cold start in standalone/preview builds when the
+        // OS Face ID stack isn't ready yet — never let that strand the
+        // user on splash. Fall open.
+        console.error('[boot] cold-start auth threw — falling open:', (e as Error)?.message);
+        hasAuthenticatedThisSession = true;
+        setLocked(false);
       } finally {
         setIsCheckingBiometrics(false);
       }
@@ -180,27 +196,37 @@ export default function RootLayout() {
   // another app, screen dim) is treated as continuous use — no prompt.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'background' || next === 'inactive') {
-        lastBackgroundedAt = Date.now();
-        return;
+      try {
+        if (next === 'background' || next === 'inactive') {
+          lastBackgroundedAt = Date.now();
+          return;
+        }
+        if (next !== 'active') return;
+        // No previous backgrounding stamp → first activation, handled by
+        // the cold-start effect above. Don't double-prompt.
+        if (lastBackgroundedAt === 0) return;
+        const awayMs = Date.now() - lastBackgroundedAt;
+        if (awayMs < RE_AUTH_AFTER_BACKGROUND_MS) return;
+        // Long enough away to require another auth.
+        console.log(`[lock] grace expired (${Math.round(awayMs / 60000)}m) — re-arming`);
+        hasAuthenticatedThisSession = false;
+        (async () => {
+          try {
+            const enabled = await isLockEnabled();
+            if (!enabled) return;
+            setLocked(true);
+            await runAuthCheck('grace-expired');
+          } catch (e) {
+            console.warn('[lock] grace re-arm threw:', (e as Error)?.message);
+          }
+        })();
+      } catch (e) {
+        console.warn('[lock] AppState handler threw:', (e as Error)?.message);
       }
-      if (next !== 'active') return;
-      // No previous backgrounding stamp → first activation, handled by
-      // the cold-start effect above. Don't double-prompt.
-      if (lastBackgroundedAt === 0) return;
-      const awayMs = Date.now() - lastBackgroundedAt;
-      if (awayMs < RE_AUTH_AFTER_BACKGROUND_MS) return;
-      // Long enough away to require another auth.
-      console.log(`[lock] grace expired (${Math.round(awayMs / 60000)}m) — re-arming`);
-      hasAuthenticatedThisSession = false;
-      (async () => {
-        const enabled = await isLockEnabled();
-        if (!enabled) return;
-        setLocked(true);
-        await runAuthCheck('grace-expired');
-      })();
     });
-    return () => { sub?.remove(); };
+    return () => {
+      try { sub?.remove(); } catch {}
+    };
   }, []);
 
   // Load the custom font pairing (Cormorant Garamond for display, DM Sans
@@ -226,57 +252,89 @@ export default function RootLayout() {
     if (fontsLoaded) console.log('[boot] custom fonts loaded ✓');
   }, [fontsLoaded]);
 
+  // Font-load timeout safety net — see fontTimeoutElapsed comment above.
+  // 2.5s is generous; useFonts normally resolves within a few hundred ms.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!fontsLoaded) {
+        console.warn('[boot] font load did not resolve in 2.5s — proceeding with fallback fonts');
+        setFontTimeoutElapsed(true);
+      }
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [fontsLoaded]);
+
   useEffect(() => {
     console.log('[boot] RootLayout mount — starting boot sequence');
 
+    // ENTIRE boot sequence wrapped in try/catch — this is the critical
+    // path on cold start, and anything thrown here previously bubbled
+    // up as an uncaught promise rejection that could crash the app
+    // before any UI rendered (preview/standalone builds with no Metro
+    // surface this as "stuck on splash"). Throws now log-and-skip; the
+    // app reaches the main tabs regardless.
     (async () => {
-      console.log('[boot] step 1/3 — reading onboarding flags');
-      // If AsyncStorage hangs for any reason, fall through at 3s. The fallback
-      // "everything complete" is safer than stranding the user on a spinner —
-      // if they really haven't onboarded, the intake form still writes its own
-      // flag on exit so next launch will be correct.
-      const fallback: OnboardingState = {
-        hasSeenIntro: true, termsAccepted: true, intakeComplete: true,
-      };
-      const state = await withTimeout(getOnboardingState(), 3000, fallback, 'getOnboardingState');
-      console.log('[boot] step 1/3 done — state:', state);
+      try {
+        console.log('[boot] step 1/3 — reading onboarding flags');
+        // If AsyncStorage hangs, fall through at 3s. Fallback "everything
+        // complete" is safer than spinning forever — per-screen flags
+        // still write themselves as the user touches each onboarding
+        // screen, so next launch corrects itself.
+        const fallback: OnboardingState = {
+          hasSeenIntro: true, termsAccepted: true, intakeComplete: true,
+        };
+        const state = await withTimeout(getOnboardingState(), 3000, fallback, 'getOnboardingState');
+        console.log('[boot] step 1/3 done — state:', state);
 
-      const complete = state.hasSeenIntro && state.termsAccepted && state.intakeComplete;
-      console.log('[boot] step 2/3 — complete?', complete);
+        const complete = state.hasSeenIntro && state.termsAccepted && state.intakeComplete;
+        console.log('[boot] step 2/3 — complete?', complete);
 
-      if (!complete && !hasRedirectedToOnboarding) {
-        hasRedirectedToOnboarding = true;
-        // Defer by one tick so the Stack's layoutEffects have wired up the
-        // route registry before we try to replace.
-        setTimeout(() => {
-          console.log('[boot] → replace(/onboarding)');
-          router.replace('/onboarding');
-        }, 0);
-      } else if (!complete) {
-        console.log('[boot] flags incomplete but already redirected this session — not re-redirecting');
-      } else {
-        console.log('[boot] step 3/3 — registering push notifications (fire-and-forget)');
-        registerForPushNotifications().catch((e) =>
-          console.warn('[boot] push register failed:', (e as Error)?.message),
-        );
+        if (!complete && !hasRedirectedToOnboarding) {
+          hasRedirectedToOnboarding = true;
+          // Defer by one tick so the Stack's layoutEffects have wired up the
+          // route registry before we try to replace.
+          setTimeout(() => {
+            try {
+              console.log('[boot] → replace(/onboarding)');
+              router.replace('/onboarding');
+            } catch (e) {
+              console.warn('[boot] router.replace threw:', (e as Error)?.message);
+            }
+          }, 0);
+        } else if (!complete) {
+          console.log('[boot] flags incomplete but already redirected this session — not re-redirecting');
+        } else {
+          console.log('[boot] step 3/3 — registering push notifications (fire-and-forget)');
+          registerForPushNotifications().catch((e) =>
+            console.warn('[boot] push register failed:', (e as Error)?.message),
+          );
+        }
+        console.log('[boot] boot sequence complete');
+      } catch (e) {
+        console.error('[boot] boot sequence threw — proceeding to main app anyway:', (e as Error)?.message, (e as Error)?.stack);
       }
-      console.log('[boot] boot sequence complete');
     })();
 
     // Tap-to-open handler for pushes that arrive while the app is in the tray.
     try {
       responseSubRef.current = Notifications.addNotificationResponseReceivedListener(
         (resp) => {
-          const data = resp.notification.request.content.data || {};
-          const route = typeof data.route === 'string' ? data.route : '/';
-          console.log('[boot] notification tap → route:', route);
-          router.push(route);
+          try {
+            const data = resp.notification.request.content.data || {};
+            const route = typeof data.route === 'string' ? data.route : '/';
+            console.log('[boot] notification tap → route:', route);
+            router.push(route);
+          } catch (e) {
+            console.warn('[boot] notification tap handler threw:', (e as Error)?.message);
+          }
         },
       );
     } catch (e) {
-      console.warn('[boot] notification listener failed:', (e as Error)?.message);
+      console.warn('[boot] notification listener registration failed:', (e as Error)?.message);
     }
-    return () => { responseSubRef.current?.remove(); };
+    return () => {
+      try { responseSubRef.current?.remove(); } catch {}
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // INVARIANT: render NOTHING but the dark splash + triangle while
@@ -285,16 +343,18 @@ export default function RootLayout() {
   //     resolved yet (initialized to TRUE on first render).
   //   - locked — auth has failed, OR we haven't authenticated yet
   //     this session and the lock is on (initialized to TRUE).
-  //   - !fontsLoaded — RN's font load promise hasn't resolved. Without
-  //     this gate, the very first frame can render before the custom
-  //     font is ready — that one frame would briefly show fallback-
-  //     font content underneath the Face ID prompt.
+  //   - fonts not yet ready — `fontsLoaded` is true OR the 2.5s
+  //     timeout (`fontTimeoutElapsed`) has fired. Either condition
+  //     proceeds; the timeout is the safety net for preview/standalone
+  //     builds where useFonts can fail to resolve and otherwise strand
+  //     the user on splash forever.
   // The LockScreen overlay (with the explicit Unlock pill) ONLY
   // renders once the initial check has completed. During the
   // first-prompt window we show the bare dark triangle so Face ID
   // appears OVER nothing-but-icon.
-  if (isCheckingBiometrics || locked || !fontsLoaded) {
-    const showLockScreen = locked && !isCheckingBiometrics && fontsLoaded;
+  const fontsReady = fontsLoaded || fontTimeoutElapsed;
+  if (isCheckingBiometrics || locked || !fontsReady) {
+    const showLockScreen = locked && !isCheckingBiometrics && fontsReady;
     return (
       <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0a0a0f' }}>
         <SafeAreaProvider>

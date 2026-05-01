@@ -19,14 +19,25 @@ const TOKEN_STORE_KEY = 'push.expoToken';
 
 // Foreground behavior — show banner + play sound if the notification arrives while
 // the app is active. Without this, foreground notifications are silently dropped.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+//
+// Wrapped in try/catch — this runs at module-import time, so if
+// expo-notifications' native module isn't fully initialized yet (which
+// can happen in preview/standalone builds during cold start), an
+// unhandled throw here would prevent app/_layout.tsx (and therefore
+// the entire app) from ever mounting. Foreground banner config is
+// non-critical; better to skip it than crash.
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+} catch (e) {
+  console.warn('[push] setNotificationHandler at import threw:', (e as Error)?.message);
+}
 
 export async function registerForPushNotifications(): Promise<string | null> {
   // Physical device check — push tokens can't be issued on simulators.
