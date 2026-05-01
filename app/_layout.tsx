@@ -27,8 +27,8 @@ import { registerForPushNotifications } from '../services/push';
 import {
   ensureDefaultPreference, authenticate as authenticateBiometric, isLockEnabled,
 } from '../services/biometrics';
-// import { LockScreen } from '../components/LockScreen';     // TEMP: bypassed — see _layout render below
-// import { LandingScreen } from '../components/LandingScreen'; // TEMP: bypassed — replaced with View + 1500ms timeout below
+import { LockScreen } from '../components/LockScreen';
+import { LandingScreen } from '../components/LandingScreen';
 
 // =============================================================================
 // COLD-START DIAGNOSTICS — runs at module-evaluation time (after the imports
@@ -139,14 +139,7 @@ export default function RootLayout() {
   // True until the LandingScreen completes its 1500ms hold. Shown after
   // biometrics pass on every cold open so the user lands on a calm
   // arrival moment instead of jumping straight into the chat tab.
-  // TEMP: while LandingScreen is bypassed for the splash-hang bisect,
-  // a plain useEffect timer fires the same setShowLanding(false) the
-  // real component's onReady callback would have fired.
   const [showLanding, setShowLanding] = useState(true);
-  useEffect(() => {
-    const t = setTimeout(() => setShowLanding(false), 1500);
-    return () => clearTimeout(t);
-  }, []);
   // Force-pass for the font-load gate. If useFonts hasn't resolved
   // within 2.5s — which happens in some preview/standalone builds
   // where asset bundling races with first render — we proceed with
@@ -414,13 +407,7 @@ export default function RootLayout() {
             />
           </View>
           {showLockScreen ? (
-            // TEMP: LockScreen replaced with plain View to isolate
-            // whether @shopify/react-native-skia is the cause of the
-            // standalone-build splash hang. If the app loads past
-            // splash with this change, Skia's native binary inclusion
-            // is the culprit and the real LockScreen needs to be
-            // restored once Skia is fixed.
-            <View style={{ flex: 1, backgroundColor: '#000' }} />
+            <LockScreen onUnlock={() => runAuthCheck('button-tap')} />
           ) : null}
         </SafeAreaProvider>
       </GestureHandlerRootView>
@@ -430,16 +417,12 @@ export default function RootLayout() {
   // After biometrics, before the tabs — show the LandingScreen for ~1500ms.
   // This is the arrival moment + a free window for the returning-greeting
   // fetch on the chat tab to complete in the background.
-  // TEMP: LandingScreen rendered as a plain View while we bisect whether
-  // react-native-reanimated is what's blocking the standalone preview
-  // build's cold-start. The setShowLanding(false) firing is now driven
-  // by the useEffect timer above instead of the component's onReady.
   if (showLanding) {
     return (
       <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0a0a0f' }}>
         <SafeAreaProvider>
           <StatusBar style="light" />
-          <View style={{ flex: 1, backgroundColor: '#0a0a0f' }} />
+          <LandingScreen onReady={() => setShowLanding(false)} />
         </SafeAreaProvider>
       </GestureHandlerRootView>
     );
