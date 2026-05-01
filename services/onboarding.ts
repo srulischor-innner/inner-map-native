@@ -24,19 +24,25 @@ export type OnboardingState = {
 };
 
 async function getBool(key: string): Promise<boolean> {
-  // Per-key 1.5s timeout so one slow AsyncStorage read can't hang boot. The
-  // `?? false` fallback is the safer default — treats an unknown flag as
-  // "not yet completed" for onboarding gating purposes, which the root
-  // _layout's own 3s timeout then overrides in the opposite direction if
-  // the whole read hangs. Either way: never hang.
+  // Per-key 5s timeout. The previous 1.5s was too aggressive for fresh
+  // installs — AsyncStorage's first reads on a cold install can take
+  // 2-3s while the storage backend warms up, and a premature timeout
+  // returned `false` for every flag. Combined with the gate in
+  // app/_layout.tsx that redirects to /onboarding when any flag is
+  // false, that produced an onboarding-loop on fresh install: each
+  // boot read timed out, all three returned false, redirect fired,
+  // remount happened, same race repeated.
+  // The root _layout's outer 3s timeout still acts as the ultimate
+  // safety net if AsyncStorage genuinely hangs (it falls back to
+  // "all true" so the user reaches the tabs rather than spinning).
   try {
     const raw = await Promise.race<string | null>([
       AsyncStorage.getItem(key),
       new Promise<null>((resolve) =>
         setTimeout(() => {
-          console.warn(`[onboarding] AsyncStorage.getItem(${key}) timed out @1500ms`);
+          console.warn(`[onboarding] AsyncStorage.getItem(${key}) timed out @5000ms`);
           resolve(null);
-        }, 1500),
+        }, 5000),
       ),
     ]);
     return raw === '1';

@@ -45,6 +45,15 @@ let hasAuthenticatedThisSession = false;
 let lastBackgroundedAt = 0;
 const RE_AUTH_AFTER_BACKGROUND_MS = 30 * 60 * 1000;   // 30 minutes
 
+// Loop guard. RootLayout's boot effect can run more than once per process
+// (remount on router.replace, hot reload, etc). Without this flag, every
+// remount that read flags-as-false would re-fire router.replace('/onboarding'),
+// producing the onboarding-loop bug observed on fresh installs where the
+// AsyncStorage read raced with a too-tight per-key timeout.
+// Set true on first redirect, never reset for the life of the JS process —
+// a cold launch is the only thing that re-arms it.
+let hasRedirectedToOnboarding = false;
+
 // Race helper — if `p` doesn't settle inside `ms`, resolve with `fallback`. Used
 // to cap how long the boot sequence can spend reading flags from AsyncStorage.
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T, tag: string): Promise<T> {
@@ -223,13 +232,16 @@ export default function RootLayout() {
       const complete = state.hasSeenIntro && state.termsAccepted && state.intakeComplete;
       console.log('[boot] step 2/3 — complete?', complete);
 
-      if (!complete) {
+      if (!complete && !hasRedirectedToOnboarding) {
+        hasRedirectedToOnboarding = true;
         // Defer by one tick so the Stack's layoutEffects have wired up the
         // route registry before we try to replace.
         setTimeout(() => {
           console.log('[boot] → replace(/onboarding)');
           router.replace('/onboarding');
         }, 0);
+      } else if (!complete) {
+        console.log('[boot] flags incomplete but already redirected this session — not re-redirecting');
       } else {
         console.log('[boot] step 3/3 — registering push notifications (fire-and-forget)');
         registerForPushNotifications().catch((e) =>
