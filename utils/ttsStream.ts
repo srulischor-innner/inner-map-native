@@ -523,17 +523,52 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
   }
   let pollIter = 0;
   let exitReason = 'unknown';
+  // wasLoaded — flips true the first time isLoaded reads true. Until
+  // then, isLoaded=false is interpreted as "still loading" rather than
+  // "failed to load." expo-audio createAudioPlayer loads asynchronously
+  // from disk; the very first few polls almost always see isLoaded=false
+  // even on a healthy file. The previous code exited the loop instantly
+  // on poll #1 with reason="isLoaded=false" — that's the bug fixed here.
+  // After wasLoaded flips true, isLoaded=false means the buffer was
+  // unloaded (genuine end-of-file or external teardown), and exit is
+  // correct.
+  let wasLoaded = false;
+  // Safety timeout — if a genuinely broken file never loads (corrupt
+  // bytes, unsupported codec, decoder failure), we'd poll forever
+  // without this. 100 iterations at 50ms = ~5 seconds, generous for
+  // any normal MP3 from /api/speak (typically loads in <500ms).
+  const LOAD_TIMEOUT_POLLS = 100;
   while (player === p && myToken === watchToken) {
     pollIter++;
     let s: any = null;
     try {
       s = p.currentStatus;
+      const loaded = s?.isLoaded === true;
+      if (loaded && !wasLoaded) wasLoaded = true;
       // Log every 10th iteration to avoid log spam, plus the first 3
       if (pollIter <= 3 || pollIter % 10 === 0) {
-        console.log(`[tts] playOneBuffer poll #${pollIter} — isLoaded=${s?.isLoaded} isPlaying=${s?.playing} didJustFinish=${s?.didJustFinish} currentTime=${s?.currentTime} duration=${s?.duration}`);
+        console.log(`[tts] playOneBuffer poll #${pollIter} — isLoaded=${s?.isLoaded} isPlaying=${s?.playing} didJustFinish=${s?.didJustFinish} currentTime=${s?.currentTime} duration=${s?.duration} wasLoaded=${wasLoaded}`);
       }
       if (s?.didJustFinish) { exitReason = 'didJustFinish'; break; }
-      if (s?.isLoaded === false) { exitReason = 'isLoaded=false'; break; }
+      // Only treat isLoaded=false as failure AFTER the player has
+      // previously been loaded — otherwise we'd exit before the file
+      // even has a chance to load. Pre-load polls fall through and
+      // wait another 50ms.
+      if (s?.isLoaded === false) {
+        if (wasLoaded) {
+          exitReason = 'isLoaded=false after load';
+          break;
+        }
+        // Still loading. Log the wait state on early iterations so
+        // the new behavior is visible in Metro logs.
+        if (pollIter <= 5 || pollIter % 5 === 0) {
+          console.log(`[tts] playOneBuffer poll #${pollIter} waiting for load — isLoaded=false wasLoaded=false`);
+        }
+        if (pollIter >= LOAD_TIMEOUT_POLLS) {
+          exitReason = `load timeout (~${LOAD_TIMEOUT_POLLS * 50}ms — file never reported isLoaded=true)`;
+          break;
+        }
+      }
     } catch (e) {
       exitReason = 'currentStatus threw: ' + (e as Error)?.message;
       break;
