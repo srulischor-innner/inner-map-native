@@ -32,8 +32,23 @@
 //    fetches that produce unnatural one-syllable audio.
 
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+// expo-file-system legacy entry — class-based File API is in the
+// new top-level export, but the path-based writeAsStringAsync we
+// need still ships under /legacy and is the simplest call for
+// "write base64 bytes to cache" in standalone builds.
+import * as FileSystem from 'expo-file-system/legacy';
 import { api } from '../services/api';
 type Player = ReturnType<typeof createAudioPlayer>;
+
+// We write each chunk to a single fixed cache file rather than data
+// URIs because expo-audio's data-URI playback was failing silently
+// on iOS standalone preview builds (Console.app showed createAudioPlayer
+// returned a player, play() threw nothing, didJustFinish eventually
+// fired — but no sound came out of the speaker). file:// URIs work
+// reliably. The worker is strictly sequential so reusing the same
+// path is safe — by the time we overwrite for the next sentence,
+// the previous player has been remove()'d.
+const TTS_CACHE_FILE = (FileSystem.cacheDirectory || '') + 'tts_chunk.mp3';
 
 const SOFT_MIN_CHARS = 80;
 
@@ -391,7 +406,6 @@ async function configureAudioSessionForPlayback(): Promise<void> {
  *  sentence's fetch doesn't start until this one is done. */
 async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
   if (myToken !== watchToken) return;
-  const uri = 'data:audio/mpeg;base64,' + bytesToBase64(new Uint8Array(buf));
   console.log('[tts] playOneBuffer — bytes=' + buf.byteLength);
   // Defensive idempotent re-arm of the audio session right before we
   // create the player. configureAudioSessionForPlayback is also fired
@@ -401,13 +415,31 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
   // playback mode by the time createAudioPlayer runs.
   await configureAudioSessionForPlayback();
   if (myToken !== watchToken) return;
+
+  // Write the audio bytes to a temp file, then play from a file://
+  // URI. The previous data:audio/mpeg;base64 path produced silent
+  // playback on iOS standalone builds (the player loaded fine, play()
+  // threw nothing, didJustFinish eventually fired — but no sound).
+  // file:// playback is the standard, reliable path for expo-audio.
+  const b64 = bytesToBase64(new Uint8Array(buf));
+  try {
+    await FileSystem.writeAsStringAsync(TTS_CACHE_FILE, b64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+  } catch (e) {
+    console.error('[tts] failed to write audio chunk to cache file:', (e as Error)?.message);
+    return;
+  }
+  if (myToken !== watchToken) return;
+
   // Tear down any prior player BEFORE creating the next — defensive
   // against the rare case where cancelStream missed a beat.
   if (player) {
     try { player.pause(); player.remove(); } catch {}
     player = null;
   }
-  const p = createAudioPlayer({ uri });
+  console.log('[tts] playing from file URI');
+  const p = createAudioPlayer({ uri: TTS_CACHE_FILE });
   player = p;
   // Belt-and-braces volume reset, mirroring map voice's playArrayBuffer.
   // Without this, fresh-install / first-launch builds were producing
