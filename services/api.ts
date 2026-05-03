@@ -476,6 +476,46 @@ export const api = {
     }
   },
 
+  /** POST /api/self-voice — generate + speak a personalized message FROM
+   *  Self TO the named part. Server pulls the part's markerFields from
+   *  the DB, generates an 80-120 word script via Claude, pipes through
+   *  tts-1-hd voice="echo", returns audio/mpeg bytes. Used by the
+   *  "Hear what Self would say to this part" button in the part folder
+   *  modal. Long timeout because the server-side pipeline is Claude
+   *  (5-10s) → OpenAI TTS (3-8s). */
+  async selfVoice(partId: string): Promise<ArrayBuffer | null> {
+    if (!partId) {
+      console.warn('[self-voice] skipping — no partId');
+      return null;
+    }
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/self-voice', {
+        label: 'self-voice',
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ partId }),
+        timeoutMs: 60000,
+      });
+      if (!res.ok) {
+        let bodyPreview = '';
+        try { bodyPreview = (await res.text()).slice(0, 300); } catch {}
+        console.warn(`[self-voice] non-OK ${res.status} — body: ${bodyPreview}`);
+        return null;
+      }
+      const buf = await res.arrayBuffer();
+      if (!buf || buf.byteLength === 0) {
+        console.warn('[self-voice] empty arrayBuffer despite 200 OK');
+        return null;
+      }
+      console.log('[self-voice] received audio', buf.byteLength, 'bytes');
+      return buf;
+    } catch (e) {
+      console.warn('[self-voice] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   async speak(text: string, opts?: { mapVoice?: boolean }): Promise<ArrayBuffer | null> {
     // Defensive empty guard — caller should already filter, but if a
     // whitespace-only or marker-only string slips through we don't even

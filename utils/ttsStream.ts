@@ -125,6 +125,25 @@ export function getStreamingMessageId(): string | null { return currentMessageId
  *  the full text into sentences and chains them through the same
  *  sequential fetch+play pipeline used by the streaming path — so
  *  order is guaranteed even on a long message. */
+/** One-shot playback of an already-TTS'd audio buffer (e.g. coming back
+ *  from /api/self-voice). The server has already done both the
+ *  Claude-generation and the tts-1-hd round trip, so we just need to
+ *  play the bytes. Uses the same playOneBuffer infrastructure as the
+ *  chat-streaming chain so any fixes to the audio playback layer
+ *  benefit both paths automatically.
+ *
+ *  Cancels any in-flight chat stream first. The supplied messageId is
+ *  for log identification only — the worker bookkeeping doesn't run
+ *  for one-shot playback. */
+export async function playPreFetchedAudio(messageId: string, buf: ArrayBuffer): Promise<void> {
+  console.log(`[tts] playPreFetchedAudio ENTER — messageId=${messageId.slice(0, 8)} bytes=${buf.byteLength}`);
+  cancelStream();
+  // cancelStream already bumped watchToken. Use the post-bump value so
+  // playOneBuffer's stale-token check passes and the play actually runs.
+  await playOneBuffer(buf, watchToken);
+  console.log('[tts] playPreFetchedAudio EXIT');
+}
+
 export async function playMessageNow(messageId: string, text: string): Promise<void> {
   const t = (text || '').trim();
   console.log('[tts] playMessageNow id=' + messageId.slice(0, 8) + ' chars=' + t.length);
