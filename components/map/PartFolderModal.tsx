@@ -179,7 +179,6 @@ const WOUND_DEEPER: DeeperField[] = [
   { label: 'When It Started',    key: 'history',    placeholder: 'When this formed...' },
   { label: 'What Triggers It',   key: 'trigger',    placeholder: 'What activates this...' },
   { label: 'Worldview',          key: 'worldview',  placeholder: 'How this part sees the world...' },
-  { label: 'Bipolarity',         key: 'bipolarity', placeholder: 'Which side it leans...' },
 ];
 
 const PROTECTOR_DEEPER: DeeperField[] = [
@@ -194,6 +193,10 @@ const SELF_LIKE_DEEPER: DeeperField[] = [
   { label: 'Where It Lives', key: 'body',      placeholder: 'Where this lives in the body...' },
   { label: 'History',        key: 'history',   placeholder: 'When this formed...' },
   { label: 'Worldview',      key: 'worldview', placeholder: 'How this part sees the world...' },
+  // The Lean — which pole self-like tilts toward when managing the
+  // tension between fixer and skeptic. Surfaces in the AI's narration
+  // ("leans toward fixer — defaults to doing more under stress" etc).
+  { label: 'The Lean',       key: 'lean',      placeholder: 'Which pole self-like tilts toward under stress...' },
 ];
 
 const MANAGER_FIREFIGHTER_DEEPER: DeeperField[] = [
