@@ -158,6 +158,7 @@ export async function playMessageNow(messageId: string, text: string): Promise<v
  *  Returns immediately — the caller appends text via appendStreamText
  *  as the model produces deltas. */
 export async function startStream(messageId: string): Promise<void> {
+  console.log(`[tts] startStream ENTER — messageId=${messageId.slice(0, 8)} prevWatchToken=${watchToken} prevActive=${active}`);
   cancelStream();
   active = true;
   currentMessageId = messageId;
@@ -171,7 +172,7 @@ export async function startStream(messageId: string): Promise<void> {
   // stream. Fire-and-forget — by the time the first sentence's fetch
   // returns (~2s), the session config has long since landed.
   configureAudioSessionForPlayback();
-  console.log('[tts] start id=' + messageId.slice(0, 8));
+  console.log(`[tts] startStream DONE — id=${messageId.slice(0, 8)} watchToken=${watchToken} active=${active}`);
 }
 
 /** Feed cumulative cleaned text (markers stripped). Internally tracks how
@@ -214,6 +215,20 @@ export function finishStream(): void {
  *  after the user muted. Always bumping watchToken kills the chain
  *  cleanly regardless of which phase we caught it in. */
 export function cancelStream(): void {
+  // Capture the caller's stack so we can see WHO is cancelling. Most
+  // silent-audio bugs trace to a cancelStream firing at the wrong
+  // moment (mute toggle, tab unmount, end-session, route navigation,
+  // a defensive cancel inside startStream/playMessageNow). The first
+  // 3 stack frames are usually enough to identify the path.
+  const stack = (() => {
+    try {
+      const s = (new Error('cancelStream caller')).stack || '';
+      // First line is the message; next 4 are frames. Trim to keep
+      // the log line readable.
+      return s.split('\n').slice(1, 5).map(x => x.trim()).join(' | ');
+    } catch { return '(stack unavailable)'; }
+  })();
+  console.log(`[tts] cancelStream CALLED — prevWatchToken=${watchToken} prevActive=${active} prevPlayer=${player ? 'present' : 'null'} prevQueueLen=${chainQueue.length} prevWorkerActive=${chainWorkerActive} caller=[${stack}]`);
   watchToken++;
   active = false;
   currentMessageId = null;
@@ -229,7 +244,7 @@ export function cancelStream(): void {
   // sessions add to the now-empty queue and a fresh worker drains it.
   chainQueue.length = 0;
   resetChainCounters();
-  console.log('[tts] cancel');
+  console.log(`[tts] cancelStream DONE — newWatchToken=${watchToken}`);
 }
 
 // ----------------------------------------------------------------------
@@ -303,8 +318,9 @@ function flushReadyChunks(force: boolean): void {
 function chainSentence(text: string): void {
   const myToken = watchToken;
   chainScheduled++;
-  console.log('[tts] chain sentence chars=' + text.length);
+  console.log(`[tts] chainSentence ENQUEUE — chars=${text.length} myToken=${myToken} watchToken=${watchToken} queueLenBefore=${chainQueue.length} workerActive=${chainWorkerActive} active=${active}`);
   chainQueue.push({ text, myToken });
+  console.log(`[tts] chainSentence pushed — queueLenAfter=${chainQueue.length} chainScheduled=${chainScheduled}`);
   // Fire-and-forget kick. The worker self-guards against double-entry
   // via chainWorkerActive, so concurrent kicks are safe — the second
   // call returns immediately and the running worker eventually picks
@@ -319,55 +335,75 @@ function chainSentence(text: string): void {
  *  Returns when the queue is empty so a later chainSentence call can
  *  re-kick the worker. */
 async function processChainQueue(): Promise<void> {
-  if (chainWorkerActive) return;
+  console.log(`[tts] processChainQueue called — workerActive=${chainWorkerActive} queueLen=${chainQueue.length}`);
+  if (chainWorkerActive) {
+    console.log('[tts] processChainQueue EARLY RETURN — worker already active, leaving the running worker to pick up new items');
+    return;
+  }
   chainWorkerActive = true;
+  console.log('[tts] worker START — claiming chainWorkerActive=true');
+  let iteration = 0;
   try {
     while (chainQueue.length > 0) {
+      iteration++;
       const item = chainQueue.shift();
+      console.log(`[tts] worker iter ${iteration} SHIFT — remainingQueueLen=${chainQueue.length} item=${item ? `myToken=${item.myToken} chars=${item.text.length}` : 'null'}`);
       if (!item) break;
       // Stale item from a cancelled session — drop without touching
       // counters. The cancel already zeroed them.
-      if (item.myToken !== watchToken) continue;
+      if (item.myToken !== watchToken) {
+        console.log(`[tts] worker iter ${iteration} STALE — item.myToken=${item.myToken} watchToken=${watchToken} — dropping without bookkeeping`);
+        continue;
+      }
 
       let stepPlayed = false;
       try {
-        // One retry on null buffer — ElevenLabs / OpenAI sometimes
-        // drops the connection mid-stream and the second attempt
-        // usually succeeds. Without this, a single transient failure
-        // produced a permanently-cut-off mid-message read-aloud.
+        console.log(`[tts] worker iter ${iteration} → api.speak(chars=${item.text.length})…`);
         let buf = await api.speak(item.text);
-        if (item.myToken !== watchToken) continue;
+        console.log(`[tts] worker iter ${iteration} ← api.speak returned ${buf ? `bytes=${buf.byteLength}` : 'null'} — myToken=${item.myToken} watchToken=${watchToken}`);
+        if (item.myToken !== watchToken) {
+          console.log(`[tts] worker iter ${iteration} STALE post-fetch — dropping`);
+          continue;
+        }
         if (!buf) {
-          console.warn('[tts] api.speak returned null — retrying once');
+          console.warn(`[tts] worker iter ${iteration} api.speak returned null — retrying once`);
           buf = await api.speak(item.text);
-          if (item.myToken !== watchToken) continue;
+          console.log(`[tts] worker iter ${iteration} ← retry returned ${buf ? `bytes=${buf.byteLength}` : 'null'}`);
+          if (item.myToken !== watchToken) {
+            console.log(`[tts] worker iter ${iteration} STALE post-retry — dropping`);
+            continue;
+          }
           if (!buf) {
-            console.error('[tts] api.speak returned null on retry — dropping sentence');
+            console.error(`[tts] worker iter ${iteration} api.speak returned null on retry — dropping sentence`);
           }
         }
         if (buf) {
+          console.log(`[tts] worker iter ${iteration} → playOneBuffer(bytes=${buf.byteLength})…`);
           await playOneBuffer(buf, item.myToken);
-          // Post-play re-check — if cancelStream fired during
-          // playback, playOneBuffer's polling loop already broke out
-          // and the audio is silent. Don't count as played.
-          if (item.myToken !== watchToken) continue;
+          console.log(`[tts] worker iter ${iteration} ← playOneBuffer returned — myToken=${item.myToken} watchToken=${watchToken}`);
+          if (item.myToken !== watchToken) {
+            console.log(`[tts] worker iter ${iteration} STALE post-play — dropping (cancelStream fired during playback)`);
+            continue;
+          }
           stepPlayed = true;
         }
       } catch (e) {
-        console.warn('[tts] chain step failed:', (e as Error)?.message);
+        console.warn(`[tts] worker iter ${iteration} chain step threw:`, (e as Error)?.message);
       } finally {
-        // Bookkeep completion only if we still belong to the current
-        // chain session. Stale steps from a cancelled session have
-        // already had their counters zeroed.
         if (item.myToken === watchToken) {
           chainCompleted++;
           if (stepPlayed) chainPlayed++;
+          console.log(`[tts] worker iter ${iteration} BOOKKEEP — stepPlayed=${stepPlayed} chainCompleted=${chainCompleted} chainPlayed=${chainPlayed} chainScheduled=${chainScheduled} active=${active}`);
           maybeLogChainComplete(item.myToken);
+        } else {
+          console.log(`[tts] worker iter ${iteration} skip-bookkeep — myToken stale`);
         }
       }
     }
+    console.log(`[tts] worker LOOP END — totalIterations=${iteration} queueLenFinal=${chainQueue.length}`);
   } finally {
     chainWorkerActive = false;
+    console.log('[tts] worker END — releasing chainWorkerActive=false');
   }
 }
 
@@ -386,7 +422,8 @@ async function processChainQueue(): Promise<void> {
  *  recording, map voice, guide ask, journal, etc); ttsStream.ts was
  *  the lone holdout that allowed mixing. */
 async function configureAudioSessionForPlayback(): Promise<void> {
-  console.log('[tts] configureAudioSession called');
+  const t0 = Date.now();
+  console.log('[tts] configureAudioSession ENTER → calling setAudioModeAsync');
   try {
     await setAudioModeAsync({
       allowsRecording: false,
@@ -394,9 +431,9 @@ async function configureAudioSessionForPlayback(): Promise<void> {
       interruptionMode: 'doNotMix',
       shouldPlayInBackground: false,
     });
-    console.log('[tts] audio session configured — playsInSilentMode=true, interruptionMode=doNotMix');
+    console.log(`[tts] configureAudioSession DONE — took ${Date.now() - t0}ms (playsInSilentMode=true, interruptionMode=doNotMix)`);
   } catch (e) {
-    console.warn('[tts] setAudioModeAsync failed:', (e as Error)?.message);
+    console.warn(`[tts] configureAudioSession FAILED after ${Date.now() - t0}ms:`, (e as Error)?.message);
   }
 }
 
@@ -405,66 +442,93 @@ async function configureAudioSessionForPlayback(): Promise<void> {
  *  watchToken is bumped). The worker awaits this so the next
  *  sentence's fetch doesn't start until this one is done. */
 async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
-  if (myToken !== watchToken) return;
-  console.log('[tts] playOneBuffer — bytes=' + buf.byteLength);
+  console.log(`[tts] playOneBuffer ENTER — bytes=${buf.byteLength} myToken=${myToken} watchToken=${watchToken} priorPlayer=${player ? 'present' : 'null'}`);
+  if (myToken !== watchToken) {
+    console.log('[tts] playOneBuffer EARLY RETURN — myToken stale at entry');
+    return;
+  }
   // Defensive idempotent re-arm of the audio session right before we
   // create the player. configureAudioSessionForPlayback is also fired
   // at startStream/playMessageNow time, but on FRESH installs the
   // first call has been observed to land late or silently fail —
   // re-running here is cheap and guarantees the session is in
   // playback mode by the time createAudioPlayer runs.
+  console.log('[tts] playOneBuffer → re-arming audio session…');
   await configureAudioSessionForPlayback();
-  if (myToken !== watchToken) return;
+  console.log(`[tts] playOneBuffer ← session re-armed; myToken=${myToken} watchToken=${watchToken}`);
+  if (myToken !== watchToken) {
+    console.log('[tts] playOneBuffer EARLY RETURN — myToken stale after session config');
+    return;
+  }
 
   // Write the audio bytes to a temp file, then play from a file://
   // URI. The previous data:audio/mpeg;base64 path produced silent
   // playback on iOS standalone builds (the player loaded fine, play()
   // threw nothing, didJustFinish eventually fired — but no sound).
   // file:// playback is the standard, reliable path for expo-audio.
+  console.log('[tts] playOneBuffer → encoding to base64 + writing cache file…');
   const b64 = bytesToBase64(new Uint8Array(buf));
   try {
     await FileSystem.writeAsStringAsync(TTS_CACHE_FILE, b64, {
       encoding: FileSystem.EncodingType.Base64,
     });
+    console.log(`[tts] playOneBuffer ← wrote cache file (b64chars=${b64.length}) to ${TTS_CACHE_FILE}`);
   } catch (e) {
-    console.error('[tts] failed to write audio chunk to cache file:', (e as Error)?.message);
+    console.error('[tts] playOneBuffer FAILED to write audio chunk to cache file:', (e as Error)?.message);
     return;
   }
-  if (myToken !== watchToken) return;
+  if (myToken !== watchToken) {
+    console.log('[tts] playOneBuffer EARLY RETURN — myToken stale after file write');
+    return;
+  }
 
   // Tear down any prior player BEFORE creating the next — defensive
   // against the rare case where cancelStream missed a beat.
   if (player) {
+    console.log('[tts] playOneBuffer tearing down prior player before creating new');
     try { player.pause(); player.remove(); } catch {}
     player = null;
   }
-  console.log('[tts] playing from file URI');
+  console.log(`[tts] playOneBuffer creating player from file URI: ${TTS_CACHE_FILE}`);
   const p = createAudioPlayer({ uri: TTS_CACHE_FILE });
   player = p;
+  console.log('[tts] playOneBuffer player created, setting volume=1.0');
   // Belt-and-braces volume reset, mirroring map voice's playArrayBuffer.
-  // Without this, fresh-install / first-launch builds were producing
-  // a silent player even though Railway logs showed audio bytes
-  // being returned successfully — the gain was at zero from some
-  // earlier audio-session state and play() ran with no audible
-  // output. Explicit 1.0 here regardless.
-  try { (p as any).volume = 1.0; } catch {}
+  try { (p as any).volume = 1.0; } catch (e) { console.warn('[tts] could not set volume:', (e as Error)?.message); }
+  console.log('[tts] playOneBuffer calling p.play()…');
   try {
     p.play();
+    console.log('[tts] playOneBuffer p.play() returned without throwing');
   } catch (e) {
-    console.error('[tts] player.play() threw:', (e as Error)?.message);
+    console.error('[tts] p.play() THREW:', (e as Error)?.message);
   }
+  let pollIter = 0;
+  let exitReason = 'unknown';
   while (player === p && myToken === watchToken) {
+    pollIter++;
+    let s: any = null;
     try {
-      const s = p.currentStatus;
-      if (s?.didJustFinish) break;
-      if (s?.isLoaded === false) break;
-    } catch { break; }
+      s = p.currentStatus;
+      // Log every 10th iteration to avoid log spam, plus the first 3
+      if (pollIter <= 3 || pollIter % 10 === 0) {
+        console.log(`[tts] playOneBuffer poll #${pollIter} — isLoaded=${s?.isLoaded} isPlaying=${s?.playing} didJustFinish=${s?.didJustFinish} currentTime=${s?.currentTime} duration=${s?.duration}`);
+      }
+      if (s?.didJustFinish) { exitReason = 'didJustFinish'; break; }
+      if (s?.isLoaded === false) { exitReason = 'isLoaded=false'; break; }
+    } catch (e) {
+      exitReason = 'currentStatus threw: ' + (e as Error)?.message;
+      break;
+    }
     await new Promise((r) => setTimeout(r, 50));
   }
+  if (player !== p) exitReason = 'player swapped (someone else replaced this player)';
+  if (myToken !== watchToken) exitReason = 'watchToken bumped during playback';
+  console.log(`[tts] playOneBuffer LOOP EXIT — pollIter=${pollIter} reason=${exitReason} myToken=${myToken} watchToken=${watchToken}`);
   // Explicit pause() before remove() — paired with the doNotMix
   // session, this stops the current buffer's output cleanly before
   // the next createAudioPlayer takes over.
   try { p.pause(); } catch {}
   try { p.remove(); } catch {}
   if (player === p) player = null;
+  console.log('[tts] playOneBuffer EXIT — player removed');
 }
