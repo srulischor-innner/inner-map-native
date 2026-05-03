@@ -112,7 +112,7 @@ export function getStreamingMessageId(): string | null { return currentMessageId
  *  order is guaranteed even on a long message. */
 export async function playMessageNow(messageId: string, text: string): Promise<void> {
   const t = (text || '').trim();
-  console.log('[tts-stream] playMessageNow id=' + messageId.slice(0, 8) + ' chars=' + t.length);
+  console.log('[tts] playMessageNow id=' + messageId.slice(0, 8) + ' chars=' + t.length);
   if (!t) return;
   cancelStream();
   active = false;
@@ -130,7 +130,7 @@ export async function playMessageNow(messageId: string, text: string): Promise<v
   // boundary. Empty entries are filtered out. Each sentence chains
   // strictly behind the previous one's playback completion.
   const sentences = t.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-  console.log('[tts-stream] playMessageNow split into ' + sentences.length + ' sentences');
+  console.log('[tts] playMessageNow split into ' + sentences.length + ' sentences');
   if (sentences.length === 0) {
     chainSentence(t);
     return;
@@ -156,7 +156,7 @@ export async function startStream(messageId: string): Promise<void> {
   // stream. Fire-and-forget — by the time the first sentence's fetch
   // returns (~2s), the session config has long since landed.
   configureAudioSessionForPlayback();
-  console.log('[tts-stream] start id=' + messageId.slice(0, 8));
+  console.log('[tts] start id=' + messageId.slice(0, 8));
 }
 
 /** Feed cumulative cleaned text (markers stripped). Internally tracks how
@@ -178,7 +178,7 @@ export function finishStream(): void {
   if (!active) return;
   flushReadyChunks(true);
   active = false;
-  console.log('[tts-stream] finish — letting queue drain');
+  console.log('[tts] finish — letting queue drain');
   // If the audio fetches outpaced the streaming text and every
   // scheduled step has already played, the chain is drained NOW —
   // no in-flight step will fire the chain-complete log on its own.
@@ -214,7 +214,7 @@ export function cancelStream(): void {
   // sessions add to the now-empty queue and a fresh worker drains it.
   chainQueue.length = 0;
   resetChainCounters();
-  console.log('[tts-stream] cancel');
+  console.log('[tts] cancel');
 }
 
 // ----------------------------------------------------------------------
@@ -288,14 +288,14 @@ function flushReadyChunks(force: boolean): void {
 function chainSentence(text: string): void {
   const myToken = watchToken;
   chainScheduled++;
-  console.log('[tts-stream] chain sentence chars=' + text.length);
+  console.log('[tts] chain sentence chars=' + text.length);
   chainQueue.push({ text, myToken });
   // Fire-and-forget kick. The worker self-guards against double-entry
   // via chainWorkerActive, so concurrent kicks are safe — the second
   // call returns immediately and the running worker eventually picks
   // up the new item on its next loop iteration.
   processChainQueue().catch((e) => {
-    console.warn('[tts-stream] chain worker threw:', (e as Error)?.message);
+    console.warn('[tts] chain worker threw:', (e as Error)?.message);
   });
 }
 
@@ -323,11 +323,11 @@ async function processChainQueue(): Promise<void> {
         let buf = await api.speak(item.text);
         if (item.myToken !== watchToken) continue;
         if (!buf) {
-          console.warn('[tts-stream] api.speak returned null — retrying once');
+          console.warn('[tts] api.speak returned null — retrying once');
           buf = await api.speak(item.text);
           if (item.myToken !== watchToken) continue;
           if (!buf) {
-            console.error('[tts-stream] api.speak returned null on retry — dropping sentence');
+            console.error('[tts] api.speak returned null on retry — dropping sentence');
           }
         }
         if (buf) {
@@ -339,7 +339,7 @@ async function processChainQueue(): Promise<void> {
           stepPlayed = true;
         }
       } catch (e) {
-        console.warn('[tts-stream] chain step failed:', (e as Error)?.message);
+        console.warn('[tts] chain step failed:', (e as Error)?.message);
       } finally {
         // Bookkeep completion only if we still belong to the current
         // chain session. Stale steps from a cancelled session have

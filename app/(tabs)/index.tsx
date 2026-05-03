@@ -107,10 +107,11 @@ export default function ChatScreen() {
   useEffect(() => { messagesRef.current = messages; });
   function toggleAudio() {
     const wasOn = audioEnabledRef.current;
-    console.log('[audio] toggle:', wasOn ? 'ON→OFF' : 'OFF→ON');
+    console.log('[tts] toggleAudio fired —', wasOn ? 'ON→OFF' : 'OFF→ON', '(prev audioEnabledRef=' + wasOn + ')');
     if (wasOn) {
       cancelTTSStream();
       setAudioEnabled(false);
+      console.log('[tts] toggleAudio done — audioEnabledRef now=false');
       return;
     }
     // Flipping from OFF→ON. Set the ref synchronously so the next AI
@@ -118,6 +119,7 @@ export default function ChatScreen() {
     // the user sends a message before React's re-render lands.
     audioEnabledRef.current = true;
     setAudioEnabled(true);
+    console.log('[tts] toggleAudio done — audioEnabledRef now=true (synchronous)');
     // SELECTION RULE — play the last AI message that arrived BEFORE
     // the user's most recent turn. Anything the AI says AFTER the
     // user's last message is either (a) currently streaming and will
@@ -149,7 +151,7 @@ export default function ChatScreen() {
       return null;
     })();
     console.log(
-      '[audio] enable — lastUserIdx=', lastUserIdx,
+      '[tts] toggleAudio enable — lastUserIdx=', lastUserIdx,
       'target=', targetAI ? `id=${targetAI.id.slice(0, 8)} chars=${targetAI.text.length}` : '(none)',
     );
     if (targetAI) {
@@ -161,7 +163,7 @@ export default function ChatScreen() {
       // a prior turn).
       cancelTTSStream();
       playTTSNow(targetAI.id, targetAI.text).catch((e) =>
-        console.warn('[audio] playMessageNow threw:', (e as Error)?.message),
+        console.warn('[tts] playMessageNow threw:', (e as Error)?.message),
       );
     }
     // Subsequent AI replies will auto-play through the existing
@@ -408,7 +410,7 @@ export default function ChatScreen() {
       // so a mid-stream flip doesn't half-start things — the toggle's
       // own cancelTTSStream call still kills any in-flight playback.
       const streamingTTSStarted = audioEnabledRef.current;
-      console.log('[audio] stream starting, audioEnabledRef:', audioEnabledRef.current, 'streamingTTSStarted:', streamingTTSStarted);
+      console.log('[tts] runAssistantTurn audioCheck — audioEnabledRef=' + audioEnabledRef.current + ' streamingTTSStarted=' + streamingTTSStarted + (streamingTTSStarted ? ' (chain WILL start)' : ' (chain will NOT start — audio toggle is OFF)'));
       if (streamingTTSStarted) {
         startTTSStream(streamId).catch(() => {});
       }
