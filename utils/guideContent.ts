@@ -290,7 +290,8 @@ export const HEALING_SLIDES: GuideSlide[] = [
     body: [
       '"I am this pain" becomes "I notice this part."',
       "When something difficult surfaces — instead of being consumed by it — there is a moment of space. A witness. Something that can observe the fixer without being the fixer.",
-      "This is not detachment. It's the beginning of genuine Self presence.",
+      'This happens in layers. First from the part. Then from what the part believes — "I am not enough" becomes "this is something I carry, not Truth."',
+      "That second layer is where the world starts to shift.",
     ],
   },
   {
@@ -313,20 +314,9 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "This is why the work is worth doing. Not to undo your history. To become what your history was always pointing toward.",
     ],
   },
-  // Closing slide — the last thing a user sees in the entire Guide tab.
-  // No header. The words land on their own; the triangle slowly becomes
-  // a circle behind them, looping continuously. Felt sense over content.
-  {
-    visual: 'triangleToCircle',
-    title: '',
-    body: [
-      'You are not broken.',
-      'You are compressed.',
-      'What you are has always been there —',
-      'waiting for the parts to stop fighting',
-      'long enough to let it through.',
-    ],
-  },
+  // 'Creating something new' is the last slide in the Healing arc. The
+  // BEGIN YOUR MAP button surfaces here automatically because the
+  // carousel's atLast check is computed from slides.length.
 ];
 
 // ===== SECTION 3: USING IT =====
