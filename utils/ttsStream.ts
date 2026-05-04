@@ -564,7 +564,7 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
       if (loaded && !wasLoaded) wasLoaded = true;
       // Log every 10th iteration to avoid log spam, plus the first 3
       if (pollIter <= 3 || pollIter % 10 === 0) {
-        console.log(`[tts] playOneBuffer poll #${pollIter} — isLoaded=${s?.isLoaded} isPlaying=${s?.playing} didJustFinish=${s?.didJustFinish} currentTime=${s?.currentTime} duration=${s?.duration} wasLoaded=${wasLoaded}`);
+        console.log(`[tts] playOneBuffer poll #${pollIter} — isLoaded=${s?.isLoaded} isPlaying=${s?.isPlaying} didJustFinish=${s?.didJustFinish} currentTime=${s?.currentTime} duration=${s?.duration} wasLoaded=${wasLoaded}`);
       }
       if (s?.didJustFinish) { exitReason = 'didJustFinish'; break; }
       // expo-audio sometimes leaves didJustFinish=false even after the
@@ -577,7 +577,7 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
       // (where isPlaying=false, currentTime=0, duration=0 is the
       // normal pre-load state).
       if (wasLoaded
-          && s?.playing === false
+          && s?.isPlaying === false
           && typeof s?.currentTime === 'number' && s.currentTime > 0
           && typeof s?.duration === 'number' && s.duration > 0
           && s.currentTime >= s.duration) {
