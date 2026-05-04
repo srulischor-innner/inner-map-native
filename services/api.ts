@@ -560,6 +560,7 @@ export const api = {
   },
 
   async transcribe(uri: string, mime: string): Promise<string | null> {
+    const t0 = Date.now();
     try {
       const userId = await getUserId();
       // Read the local recording file. RN's fetch supports file:// URIs on both
@@ -567,17 +568,39 @@ export const api = {
       // see the apiFetch log entry for /api/transcribe not firing.
       const fileRes = await fetch(uri);
       const blob = await fileRes.blob();
+      // Diagnostic logging — surface the audio size and MIME so the
+      // empty-transcript bug can be triaged. A near-zero size means the
+      // recorder produced a silent/empty file (mic permission edge,
+      // recorder didn't actually start, etc.); a healthy size with an
+      // empty transcript points to a server-side Whisper issue or a
+      // codec the API can't decode.
+      console.log(`[voice-note] transcribe — uri=${uri.slice(-60)} mime=${mime} blobSize=${blob.size}B`);
       const up = await apiFetch('/api/transcribe', {
         label: 'transcribe', method: 'POST',
         headers: { 'Content-Type': mime, 'X-User-Id': userId },
         body: blob as any,
         timeoutMs: 30000,
       });
-      if (!up.ok) return null;
+      console.log(`[voice-note] transcribe response — status=${up.status} ok=${up.ok} elapsedMs=${Date.now() - t0}`);
+      if (!up.ok) {
+        const errText = await up.text().catch(() => '(no body)');
+        console.warn(`[voice-note] transcribe non-OK body: ${errText.slice(0, 300)}`);
+        return null;
+      }
       const j: any = await up.json();
+      // Log the full response shape — text field state matters for the
+      // "empty transcript" bug. Truncate raw to 300 chars in case
+      // Whisper sometimes returns long text.
+      const textField = j?.text;
+      const transcriptField = j?.transcript;
+      console.log(
+        `[voice-note] transcribe body — keys=[${Object.keys(j || {}).join(',')}]` +
+        ` text=${textField === undefined ? '(missing)' : textField === '' ? '(empty)' : `"${String(textField).slice(0, 200)}"`}` +
+        ` transcript=${transcriptField === undefined ? '(missing)' : transcriptField === '' ? '(empty)' : `"${String(transcriptField).slice(0, 200)}"`}`,
+      );
       return (j && (j.text || j.transcript)) || null;
     } catch (e) {
-      console.warn('[transcribe] failed:', (e as Error)?.message);
+      console.warn(`[voice-note] transcribe threw: ${(e as Error)?.message} (elapsedMs=${Date.now() - t0})`);
       return null;
     }
   },

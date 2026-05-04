@@ -569,19 +569,30 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
       if (s?.didJustFinish) { exitReason = 'didJustFinish'; break; }
       // expo-audio sometimes leaves didJustFinish=false even after the
       // file has played all the way through — playback just stops with
-      // isPlaying=false and currentTime catches up to duration. Without
+      // isPlaying off and currentTime catches up to duration. Without
       // this fallback, the polling loop would spin forever and the
       // queue worker would never advance to the next sentence (the
       // "queue stalls after sentence 1" bug). All four conditions are
       // required so we don't false-positive during the load phase
-      // (where isPlaying=false, currentTime=0, duration=0 is the
+      // (where isPlaying=undefined, currentTime=0, duration=0 is the
       // normal pre-load state).
+      //
+      // DEFENSIVE PROPERTY READ: expo-audio's status object has been
+      // observed shipping `isPlaying` as either false OR undefined once
+      // playback finishes — depends on build / iOS version / iteration.
+      // `=== false` only matches the false flavor; the undefined flavor
+      // left the loop spinning past a fully-played buffer for hundreds
+      // of polls. `!== true` matches both shapes and only excludes the
+      // truly-playing case. The wasLoaded + currentTime>0 + duration>0
+      // + currentTime>=duration guards keep us out of the load phase
+      // (where isPlaying is also not-true), so the broader read can't
+      // fire prematurely.
       if (wasLoaded
-          && s?.isPlaying === false
+          && s?.isPlaying !== true
           && typeof s?.currentTime === 'number' && s.currentTime > 0
           && typeof s?.duration === 'number' && s.duration > 0
           && s.currentTime >= s.duration) {
-        exitReason = `playback complete (currentTime>=duration: ${s.currentTime.toFixed(2)}>=${s.duration.toFixed(2)})`;
+        exitReason = `playback complete (currentTime>=duration: ${s.currentTime.toFixed(2)}>=${s.duration.toFixed(2)}, isPlaying=${s?.isPlaying})`;
         break;
       }
       // Only treat isLoaded=false as failure AFTER the player has

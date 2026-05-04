@@ -140,10 +140,18 @@ export default function ChatScreen() {
     //     just before the last user message and pick the most recent
     //     finished assistant bubble before it.
     //   - If no user message yet (fresh session, only the AI's
-    //     greeting is on screen), play the most recent finished AI
-    //     bubble in the list.
+    //     greeting is on screen), DO NOT auto-play. The opening
+    //     greeting is meant to land as quietly-displayed text — audio
+    //     should only kick in once the user has actually engaged the
+    //     conversation, so the app doesn't talk at them on launch
+    //     before they've decided whether they're ready for it.
     const targetAI = (() => {
-      const startIdx = lastUserIdx > 0 ? lastUserIdx - 1 : list.length - 1;
+      // No user message yet → skip auto-play of the greeting entirely.
+      // Subsequent AI replies will pick up audio through the
+      // streamingTTSStarted capture in runAssistantTurn — the toggle
+      // is now ON, the next turn will hear it.
+      if (lastUserIdx === -1) return null;
+      const startIdx = lastUserIdx - 1;
       for (let i = startIdx; i >= 0; i--) {
         const m = list[i];
         if (m.role === 'assistant' && !m.streaming && m.text && m.text.trim()) return m;

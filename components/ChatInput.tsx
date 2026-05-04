@@ -5,10 +5,11 @@
 //   typing      → text field + send (arrow-up) button
 //   recording   → text field is covered by a "Recording… 0:03" pill with
 //                 a red pulsing dot. User must keep holding; release to
-//                 send. Anything held under 300ms is treated as a misfire
-//                 and discarded silently.
+//                 send. Anything held under MIN_RECORDING_MS is treated
+//                 as a misfire — the user gets a brief "hold longer"
+//                 toast and the audio is discarded.
 //
-// On release (held ≥300ms):
+// On release (held ≥ MIN_RECORDING_MS):
 //   - recorder.stop() → file URI
 //   - Parent onSendVoice(uri, durationSec, transcript) is called. The
 //     parent (ChatScreen) handles pushing the voice-note bubble into the
@@ -19,6 +20,12 @@
 // No swipe-to-cancel — Pressable's gesture system can't track a swipe
 // reliably once the finger leaves the press-retention zone. If a real
 // cancel is needed, build it on top of PanResponder.
+
+// Minimum hold duration in milliseconds. Anything shorter is dropped
+// because Whisper consistently returns empty transcripts for sub-half-
+// second clips (mic warmup + capture latency leave near-silence). Tuned
+// up from 300ms after the empty-transcript bug — see [voice-note] logs.
+const MIN_RECORDING_MS = 500;
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -134,7 +141,7 @@ export function ChatInput({
   // ------------------------------------------------------------------------
 
   async function startRecording() {
-    console.log('[mic] long-press fired → recording start');
+    console.log(`[voice-note] startRecording — minRecordingMs=${MIN_RECORDING_MS} timestamp=${Date.now()}`);
     // Hard-stop any read-aloud / streaming-TTS playback before the mic
     // session opens. Otherwise the user hears the AI's reply talking
     // over their own recording prompt — confusing on iPhone speakers.
@@ -187,25 +194,41 @@ export function ChatInput({
   async function endHold() {
     // If the recorder never started (short tap), bail cleanly.
     if (!recording) return;
-    console.log('[mic] press-out');
+    const stopTs = Date.now();
+    const heldMs = stopTs - startTimeRef.current;
+    const heldSec = Math.max(0.1, heldMs / 1000);
+    console.log(`[voice-note] endHold — stopTimestamp=${stopTs} heldMs=${heldMs} heldSec=${heldSec.toFixed(3)} threshold=${MIN_RECORDING_MS}ms`);
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
-    const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
     setRecording(false);
     setSeconds(0);
     try {
       await recorder.stop();
       const uri = recorder.uri;
-      // Anything under 300ms is treated as an accidental tap — discard
-      // silently rather than send empty audio for the AI to puzzle over.
-      if (!uri || heldSec < 0.3) {
+      console.log(`[voice-note] recorder.stop returned — uri=${uri ? uri.slice(-60) : '(null)'}`);
+      // Minimum-duration guard. Whisper returns empty transcripts for
+      // sub-half-second clips (mic warmup + capture latency leaves
+      // mostly silence). Show the user a quick "hold longer" alert
+      // instead of silently dropping the audio so they understand why
+      // the gesture didn't produce a message.
+      if (!uri) {
+        console.warn('[voice-note] recorder produced no uri — discarding');
         Haptics.selectionAsync().catch(() => {});
+        return;
+      }
+      if (heldMs < MIN_RECORDING_MS) {
+        console.warn(`[voice-note] recording too short (${heldMs}ms < ${MIN_RECORDING_MS}ms) — not sending to /api/transcribe`);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        Alert.alert(
+          'Hold a bit longer',
+          'Voice notes need at least half a second of audio to transcribe. Press and hold the mic, then release when you\'re done.',
+        );
         return;
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       // Parent shows the voice bubble + runs transcription asynchronously.
       onSendVoice?.({ uri, durationSec: heldSec });
     } catch (err) {
-      console.warn('[mic] endHold stop failed:', (err as Error).message);
+      console.warn('[voice-note] endHold stop failed:', (err as Error).message);
     }
   }
 
