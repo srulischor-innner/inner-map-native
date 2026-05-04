@@ -1,17 +1,29 @@
-// "Language patterns" — real user phrases that triggered each part
-// detection during conversation. The server returns
-// languagePatterns: { part: [{ phrase, sessionId, ts }] } from
-// /api/journey; we render up to 3 phrases per detected part as small
-// italic blockquote-style lines under each part header. Falls back to
-// a calm placeholder when no phrases have been captured yet.
+// "Language patterns" — characteristic phrases per part, sourced from
+// the parts.voice column on the server (populated by user-confirmed
+// MAP_UPDATE markers when the AI hears something distinctly part-shaped
+// and the user says "yes, that's a phrase I use a lot in this energy").
+//
+// Server returns languagePatterns as an array of
+// { partId, category, name, phrases: string[] } from /api/journey.
+// Phrases are most-recent-first. We render up to `perPart` phrases per
+// row, each as a soft italic blockquote line under a part header.
+// Falls back to a calm placeholder when no voice phrases have been
+// confirmed yet.
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, spacing } from '../../constants/theme';
 import { PART_COLOR, PART_DISPLAY } from '../../utils/markers';
 
-export type PartPhrase = { phrase: string; sessionId?: string; ts?: string | null };
-export type LanguagePatterns = Record<string, PartPhrase[]>;
+export type PartVoiceEntry = {
+  partId: string;
+  category: string;
+  name: string;
+  phrases: string[];
+};
+
+// Keep the type name so callers don't have to update; it's an array now.
+export type LanguagePatterns = PartVoiceEntry[];
 
 export function PartPhrases({
   patterns,
@@ -20,15 +32,17 @@ export function PartPhrases({
   patterns: LanguagePatterns | null | undefined;
   perPart?: number;
 }) {
-  const entries = Object.entries(patterns || {})
-    .filter(([, arr]) => Array.isArray(arr) && arr.length > 0);
+  const entries = (patterns || []).filter(
+    (e) => e && Array.isArray(e.phrases) && e.phrases.length > 0,
+  );
 
   if (!entries.length) {
     return (
       <View style={styles.empty}>
         <Text style={styles.emptyText}>
-          As parts surface in conversation, the phrases that trigger each
-          one will appear here — your own words, grouped by what they reveal.
+          As parts surface in conversation, characteristic phrases — the
+          actual words each part puts in your mouth — will collect here,
+          grouped under each part.
         </Text>
       </View>
     );
@@ -36,19 +50,27 @@ export function PartPhrases({
 
   return (
     <View>
-      {entries.map(([part, phrases]) => {
-        const color = PART_COLOR[part] || colors.amber;
-        const display = PART_DISPLAY[part] || part.toUpperCase();
-        const top = phrases.slice(0, perPart);
+      {entries.map((entry) => {
+        const cat = (entry.category || '').toLowerCase();
+        const color = PART_COLOR[cat] || colors.amber;
+        // Prefer the part's specific name (e.g. "the achiever"); fall
+        // back to the category display name when the part is unnamed.
+        const heading =
+          (entry.name && entry.name.trim()) ||
+          PART_DISPLAY[cat] ||
+          cat.toUpperCase();
+        const top = entry.phrases.slice(0, perPart);
         return (
-          <View key={part} style={styles.block}>
-            <Text style={[styles.label, { color }]}>{display.toUpperCase()}</Text>
-            {top.map((p, i) => (
+          <View key={entry.partId} style={styles.block}>
+            <Text style={[styles.label, { color }]}>
+              {heading.toUpperCase()}
+            </Text>
+            {top.map((phrase, i) => (
               <View
                 key={i}
                 style={[styles.phraseRow, { borderLeftColor: color }]}
               >
-                <Text style={styles.phraseText}>"{p.phrase}"</Text>
+                <Text style={styles.phraseText}>"{phrase}"</Text>
               </View>
             ))}
           </View>
