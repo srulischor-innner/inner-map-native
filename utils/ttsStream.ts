@@ -172,26 +172,43 @@ export async function playMessageNow(messageId: string, text: string): Promise<v
   for (const s of sentences) chainSentence(s);
 }
 
-/** Begin a new streaming session for the given AI message id. Cancels
- *  any prior streaming session AND stops the single-clip ttsPlayer.
- *  Returns immediately — the caller appends text via appendStreamText
- *  as the model produces deltas. */
+/** Begin a new streaming session for the given AI message id. Returns
+ *  immediately — the caller appends text via appendStreamText as the
+ *  model produces deltas.
+ *
+ *  IMPORTANT: this used to call cancelStream() + bump watchToken at
+ *  the top, which tore down any in-progress playback EVERY TIME a new
+ *  AI turn started — even when the user hadn't done anything to
+ *  interrupt. The "first half only" bug: user listens to message N's
+ *  audio, message N+1 begins streaming, startStream(N+1) cancels N's
+ *  audio mid-sentence. Now startStream is idempotent w.r.t. the
+ *  active chain — new sentences enqueue behind whatever's still
+ *  playing from the prior turn. The user hears N play through, then
+ *  N+1.
+ *
+ *  Cancellation still happens explicitly in the user-driven interrupt
+ *  paths (mute toggle, end-session, tab unmount, playMessageNow), so
+ *  cancelling-on-purpose still works. */
 export async function startStream(messageId: string): Promise<void> {
-  console.log(`[tts] startStream ENTER — messageId=${messageId.slice(0, 8)} prevWatchToken=${watchToken} prevActive=${active}`);
-  cancelStream();
+  console.log(`[tts] startStream ENTER — messageId=${messageId.slice(0, 8)} prevWatchToken=${watchToken} prevActive=${active} pendingQueue=${chainQueue.length} player=${player ? 'present' : 'null'}`);
+  // No cancelStream(), no watchToken++ — see header doc for why.
   active = true;
   currentMessageId = messageId;
+  // Per-turn streaming-text accumulators. appendStreamText feeds in
+  // cumulative text starting from 0 for each new turn, so these MUST
+  // reset even though the chain queue is preserved.
   buffer = '';
   consumedSoFar = 0;
-  watchToken++;
-  resetChainCounters();
-  // One-time audio session setup for the whole chain. Configuring
-  // once (here) instead of per-buffer (inside playOneBuffer) avoids
-  // the click/pop iOS produces when the session is reconfigured mid-
-  // stream. Fire-and-forget — by the time the first sentence's fetch
-  // returns (~2s), the session config has long since landed.
+  // Chain counters are NOT reset here — they accumulate across
+  // overlapping turns and reset only when the worker fires
+  // chain-complete (after active flips false AND completed catches
+  // up to scheduled). Reset-on-cancelStream still applies.
+  // One-time audio session setup. Configuring once here (instead of
+  // per-buffer inside playOneBuffer) avoids the click/pop iOS produces
+  // when the session is reconfigured mid-stream. Idempotent so safe
+  // to re-call across overlapping turns.
   configureAudioSessionForPlayback();
-  console.log(`[tts] startStream DONE — id=${messageId.slice(0, 8)} watchToken=${watchToken} active=${active}`);
+  console.log(`[tts] startStream DONE — id=${messageId.slice(0, 8)} watchToken=${watchToken} active=${active} pendingQueueAfter=${chainQueue.length}`);
 }
 
 /** Feed cumulative cleaned text (markers stripped). Internally tracks how
@@ -550,6 +567,23 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
         console.log(`[tts] playOneBuffer poll #${pollIter} — isLoaded=${s?.isLoaded} isPlaying=${s?.playing} didJustFinish=${s?.didJustFinish} currentTime=${s?.currentTime} duration=${s?.duration} wasLoaded=${wasLoaded}`);
       }
       if (s?.didJustFinish) { exitReason = 'didJustFinish'; break; }
+      // expo-audio sometimes leaves didJustFinish=false even after the
+      // file has played all the way through — playback just stops with
+      // isPlaying=false and currentTime catches up to duration. Without
+      // this fallback, the polling loop would spin forever and the
+      // queue worker would never advance to the next sentence (the
+      // "queue stalls after sentence 1" bug). All four conditions are
+      // required so we don't false-positive during the load phase
+      // (where isPlaying=false, currentTime=0, duration=0 is the
+      // normal pre-load state).
+      if (wasLoaded
+          && s?.playing === false
+          && typeof s?.currentTime === 'number' && s.currentTime > 0
+          && typeof s?.duration === 'number' && s.duration > 0
+          && s.currentTime >= s.duration) {
+        exitReason = `playback complete (currentTime>=duration: ${s.currentTime.toFixed(2)}>=${s.duration.toFixed(2)})`;
+        break;
+      }
       // Only treat isLoaded=false as failure AFTER the player has
       // previously been loaded — otherwise we'd exit before the file
       // even has a chance to load. Pre-load polls fall through and
