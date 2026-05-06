@@ -57,14 +57,14 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     visual: 'intro',
     title: 'Inner Map',
     body: [
-      "Understand what's happening inside you.",
+      "A place to understand what's happening inside you — beneath the surface.",
     ],
   },
   {
     visual: 'everyone',
     title: 'We all have patterns',
     body: [
-      "Ways we react. Things that trigger us. Feelings we can't explain. Most of us don't fully understand why.",
+      "Ways we react. Things that trigger us. Feelings we can't explain. Most of us don't fully understand why — they live just below the surface, shaping our days without us seeing them.",
     ],
   },
   {

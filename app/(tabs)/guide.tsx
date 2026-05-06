@@ -6,7 +6,7 @@
 // FlatLists with pagingEnabled give the horizontal swipe with clean snap-to-page.
 // A "Begin your map →" CTA appears at the bottom of each section and jumps to Chat.
 
-import React, { useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { colors, radii, spacing, fonts } from '../../constants/theme';
 import {
@@ -38,6 +39,11 @@ import { HealingErrorBoundary } from '../../components/guide/HealingErrorBoundar
 
 type SectionId = 'welcome' | 'map' | 'healing' | 'using';
 
+// AsyncStorage key — flips to '1' the first time the user reaches the
+// last Welcome slide, then suppresses the Welcome typewriter animation
+// on every subsequent tab visit and app launch.
+const HAS_SEEN_WELCOME_KEY = 'hasSeenWelcome';
+
 export default function GuideScreen() {
   // Welcome lands first — it's the orientation framework. Users often only
   // start to grok the framing on the second or third pass after they've
@@ -46,6 +52,25 @@ export default function GuideScreen() {
   // Ask modal — opened by the floating chat bubble. Available from any
   // pill so users never have to leave their slide to ask a question.
   const [askOpen, setAskOpen] = useState(false);
+
+  // Three-state animation gate:
+  //   'unknown' — we haven't read AsyncStorage yet; render nothing
+  //               typewriter-related so the first paint isn't a flash
+  //               of plain text immediately replaced by an animation.
+  //   'animate' — first launch, run the typewriter on welcome slides.
+  //   'instant' — flag is set, every welcome slide renders text instantly.
+  const [welcomeAnimGate, setWelcomeAnimGate] = useState<
+    'unknown' | 'animate' | 'instant'
+  >('unknown');
+  useEffect(() => {
+    AsyncStorage.getItem(HAS_SEEN_WELCOME_KEY)
+      .then((v) => setWelcomeAnimGate(v ? 'instant' : 'animate'))
+      .catch(() => setWelcomeAnimGate('instant'));
+  }, []);
+  const markWelcomeSeen = useCallback(() => {
+    setWelcomeAnimGate((prev) => (prev === 'animate' ? 'instant' : prev));
+    AsyncStorage.setItem(HAS_SEEN_WELCOME_KEY, '1').catch(() => {});
+  }, []);
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
@@ -80,7 +105,18 @@ export default function GuideScreen() {
       </ScrollView>
 
       {section === 'welcome' ? (
-        <SlideSection slides={WELCOME_SLIDES} />
+        // Hold the welcome render until the AsyncStorage read resolves —
+        // otherwise a returning user briefly sees the plain-text version
+        // before the typewriter would have started, or vice versa.
+        welcomeAnimGate === 'unknown' ? (
+          <View style={styles.sectionRoot} />
+        ) : (
+          <SlideSection
+            slides={WELCOME_SLIDES}
+            animateBody={welcomeAnimGate === 'animate'}
+            onReachLastSlide={markWelcomeSeen}
+          />
+        )
       ) : section === 'map' ? (
         <SlideSection slides={MAP_SLIDES} />
       ) : section === 'healing' ? (
@@ -121,7 +157,20 @@ export default function GuideScreen() {
 // ====================================================================================
 // SLIDE SECTION — horizontal FlatList with pagingEnabled + progress dots + Begin CTA
 // ====================================================================================
-function SlideSection({ slides }: { slides: typeof MAP_SLIDES }) {
+function SlideSection({
+  slides,
+  animateBody = false,
+  onReachLastSlide,
+}: {
+  slides: typeof MAP_SLIDES;
+  /** Forwarded to GuideSlide — when true (Welcome on first launch),
+   *  body paragraphs animate in via a typewriter as each slide
+   *  becomes the active page. */
+  animateBody?: boolean;
+  /** Called once when the user lands on the last slide. The Welcome
+   *  section uses this to flip its hasSeenWelcome AsyncStorage flag. */
+  onReachLastSlide?: () => void;
+}) {
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const listRef = useRef<FlatList>(null);
@@ -148,6 +197,18 @@ function SlideSection({ slides }: { slides: typeof MAP_SLIDES }) {
 
   const atLast = index === slides.length - 1;
 
+  // Fire onReachLastSlide once when the user first lands on the final
+  // slide. Guarded by a ref so a swipe back-and-forth doesn't re-fire
+  // it; the parent's handler is also idempotent so this is just a
+  // courtesy.
+  const reachedLastRef = useRef(false);
+  useEffect(() => {
+    if (atLast && !reachedLastRef.current) {
+      reachedLastRef.current = true;
+      onReachLastSlide?.();
+    }
+  }, [atLast, onReachLastSlide]);
+
   return (
     <View style={styles.sectionRoot}>
       <FlatList
@@ -159,7 +220,14 @@ function SlideSection({ slides }: { slides: typeof MAP_SLIDES }) {
         showsHorizontalScrollIndicator={false}
         onScroll={onScroll}
         scrollEventThrottle={16}
-        renderItem={({ item }) => <GuideSlide data={item} width={width} />}
+        renderItem={({ item, index: i }) => (
+          <GuideSlide
+            data={item}
+            width={width}
+            animateBody={animateBody}
+            isActive={i === index}
+          />
+        )}
         getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
         initialNumToRender={2}
       />

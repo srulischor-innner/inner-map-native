@@ -1,13 +1,31 @@
 // One Guide slide. Single source of layout so every slide across every section
 // has identical rhythm: centered visual, part-colored title, body paragraphs.
 
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import { colors, fonts, spacing } from '../../constants/theme';
 import { GuideNodeVisual } from './GuideNodeVisual';
+import { TypewriterText } from './TypewriterText';
 import type { GuideSlide as SlideData } from '../../utils/guideContent';
 
-export function GuideSlide({ data, width }: { data: SlideData; width: number }) {
+export function GuideSlide({
+  data,
+  width,
+  animateBody = false,
+  isActive = false,
+}: {
+  data: SlideData;
+  width: number;
+  /** When true, body paragraphs animate in via TypewriterText the first
+   *  time the slide becomes the active page. Used only by the Welcome
+   *  section's first-launch run (gated by hasSeenWelcome in the parent).
+   *  Title always renders instantly regardless. */
+  animateBody?: boolean;
+  /** Whether this slide is currently the foreground page in the
+   *  pager. Triggers the one-shot typewriter when both this and
+   *  animateBody are true. */
+  isActive?: boolean;
+}) {
   const { height } = useWindowDimensions();
   const visualSize = Math.min(width * 0.5, height * 0.32);
   // The Guide closing slide is laid out distinctly: no title, the body
@@ -15,6 +33,41 @@ export function GuideSlide({ data, width }: { data: SlideData; width: number }) 
   // land as their own moment. Detected by visual kind so the slide data
   // remains a plain GuideSlide.
   const isClosing = data.visual === 'triangleToCircle';
+
+  // One-shot trigger — flips true the first time this slide becomes
+  // the active page while animateBody is in effect. Once true it stays
+  // true for this mount, so re-entering the slide during the same
+  // session doesn't restart the animation. The flag itself never gets
+  // un-set; FlatList may unmount the slide and a future mount will
+  // re-animate, which is fine because by then the user has either
+  // hit the last slide (and the parent has set hasSeenWelcome) or is
+  // still legitimately exploring the welcome flow.
+  const [hasTriggered, setHasTriggered] = useState(false);
+  useEffect(() => {
+    if (animateBody && isActive && !hasTriggered) {
+      setHasTriggered(true);
+    }
+  }, [animateBody, isActive, hasTriggered]);
+
+  // Stagger paragraph reveals — second paragraph waits for the first
+  // to roughly finish typing so they land in sequence rather than all
+  // at once. We don't have an exact done callback chain because the
+  // welcome slides ship single-paragraph copy, but the offset keeps
+  // multi-paragraph slides clean if any are added later. Computed once
+  // per body for stability.
+  const startOffsets = useRef<number[]>([]);
+  if (startOffsets.current.length !== data.body.length) {
+    let acc = 0;
+    startOffsets.current = data.body.map((p, i) => {
+      const offset = acc;
+      // 35ms per char + a 250ms breath before the next paragraph.
+      acc += p.length * 35 + 250;
+      return i === 0 ? 0 : offset;
+    });
+  }
+
+  const showTypewriter = animateBody && hasTriggered && !isClosing;
+
   return (
     <ScrollView
       style={{ width }}
@@ -41,11 +94,24 @@ export function GuideSlide({ data, width }: { data: SlideData; width: number }) 
         </Text>
       ) : null}
       <View style={[styles.body, isClosing && styles.closingBody]}>
-        {data.body.map((para, i) => (
-          <Text key={i} style={isClosing ? styles.closingPara : styles.para}>
-            {para}
-          </Text>
-        ))}
+        {data.body.map((para, i) => {
+          const paraStyle = isClosing ? styles.closingPara : styles.para;
+          if (showTypewriter) {
+            return (
+              <TypewriterText
+                key={i}
+                text={para}
+                style={paraStyle}
+                startDelayMs={startOffsets.current[i] || 0}
+              />
+            );
+          }
+          return (
+            <Text key={i} style={paraStyle}>
+              {para}
+            </Text>
+          );
+        })}
       </View>
     </ScrollView>
   );
