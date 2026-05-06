@@ -322,9 +322,15 @@ export const api = {
   /** POST /api/session-summary — returns the structured 3-part summary
    *  used by the native end-of-session screen. The server also persists
    *  it onto the session row so the Journal tab can render the preview
-   *  later. Returns null on transport failure; returns the object with
+   *  later. `chatMode` selects between PROCESS (vessel-building practice)
+   *  and EXPLORE (things-to-notice awareness) closing prompts on the
+   *  server. Returns null on transport failure; returns the object with
    *  blank strings (and `fallback: true`) on a soft server fallback. */
-  async getSessionSummary(messages: ChatMessage[], sessionId: string): Promise<{
+  async getSessionSummary(
+    messages: ChatMessage[],
+    sessionId: string,
+    chatMode?: 'process' | 'explore',
+  ): Promise<{
     exploredText: string;
     mapShowingText: string;
     somethingToTryText: string;
@@ -336,7 +342,7 @@ export const api = {
         label: 'session-summary',
         method: 'POST',
         headers,
-        body: JSON.stringify({ messages, sessionId }),
+        body: JSON.stringify({ messages, sessionId, chatMode }),
         timeoutMs: 60000,
       });
       if (!res.ok) return null;

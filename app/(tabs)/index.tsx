@@ -65,10 +65,26 @@ export default function ChatScreen() {
   const sessionIdRef = useRef<string>(uuidv4());
   const scrollRef = useRef<ScrollView | null>(null);
 
-  // On-screen list (may include a streaming bubble whose text grows word by word).
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
-  // Wire-format history sent in each chat request. We push turns here after they finish.
-  const historyRef = useRef<ChatMessage[]>([]);
+  // ===== PER-MODE CONVERSATION THREADS =====
+  // Process and Explore each maintain an independent thread within
+  // the session. Switching modes pauses one and resumes the other;
+  // both reset at end-of-session. They share map state and session
+  // summaries underneath — those live on the server, keyed by
+  // sessionId, not per-mode.
+  //
+  //   *Messages = on-screen list (may include a streaming bubble
+  //               whose text grows word by word).
+  //   *HistoryRef = wire-format history sent in each chat request.
+  //                 Pushed to as turns finish.
+  //
+  // Helpers below pick the right pair via chatModeRef so callers
+  // never have to remember which thread they're in. Streaming
+  // turns capture the target thread at start so a mid-stream mode
+  // switch never strands a reply in the wrong thread.
+  const [processMessages, setProcessMessages] = useState<ChatMsg[]>([]);
+  const [exploreMessages, setExploreMessages] = useState<ChatMsg[]>([]);
+  const processHistoryRef = useRef<ChatMessage[]>([]);
+  const exploreHistoryRef = useRef<ChatMessage[]>([]);
   const [typing, setTyping] = useState(false);
   // Mode for /api/chat — onboarding for brand-new users, ongoing once any core node is filled.
   const [mode, setMode] = useState<'onboarding' | 'ongoing'>('onboarding');
@@ -90,6 +106,46 @@ export default function ChatScreen() {
   // HOLDING_SPACE_PROMPT and MAPPING_PROMPT. Reset to 'process' on
   // every new session.
   const [chatMode, setChatMode] = useState<ChatMode>('process');
+  // chatModeRef mirrors chatMode so the thread helpers below can
+  // resolve the active thread synchronously from any callback,
+  // without relying on stale closures over the chatMode state.
+  const chatModeRef = useRef<ChatMode>(chatMode);
+  useEffect(() => { chatModeRef.current = chatMode; }, [chatMode]);
+
+  // Most-recent-detected part name. Populated from /api/parts at
+  // boot; used by the Explore opening greeting to reference the
+  // last thing the user explored. null on first-ever-session
+  // (parts table empty for this user).
+  const mostRecentPartRef = useRef<string | null>(null);
+  // Once true, the Explore thread has been seeded with its
+  // opening greeting for this session. Reset on end-session.
+  const exploreGreetedRef = useRef<boolean>(false);
+
+  // ===== THREAD HELPERS =====
+  // Resolve the (messages, setMessages, historyRef) triple for a
+  // specific mode. Used by streaming turns to lock onto a target
+  // thread at start so a mid-stream mode switch can't redirect a
+  // reply to the wrong thread.
+  function threadFor(modeKey: ChatMode) {
+    if (modeKey === 'process') {
+      return {
+        messages: processMessages,
+        setMessages: setProcessMessages,
+        historyRef: processHistoryRef,
+      };
+    }
+    return {
+      messages: exploreMessages,
+      setMessages: setExploreMessages,
+      historyRef: exploreHistoryRef,
+    };
+  }
+  // Active thread shorthands — read by the render layer + by
+  // callbacks that should always target whatever thread the user
+  // is currently looking at (e.g. error retry button cleanup).
+  const activeMessages = chatMode === 'process' ? processMessages : exploreMessages;
+  const setActiveMessages = chatMode === 'process' ? setProcessMessages : setExploreMessages;
+  const activeHistoryRef = chatMode === 'process' ? processHistoryRef : exploreHistoryRef;
 
   // Live part-confidence indicator state (Explore mode only). Updated
   // when MAP_UPDATE markers fire on the assistant stream. Auto-clears
@@ -103,8 +159,10 @@ export default function ChatScreen() {
   useEffect(() => { audioEnabledRef.current = audioEnabled; }, [audioEnabled]);
   // Latest messages snapshot accessible from the toggle handler without
   // hitting React's stale-closure trap. Updated on every render — cheap.
+  // Always points at the ACTIVE thread's messages, since the audio
+  // toggle is a per-active-thread concern.
   const messagesRef = useRef<ChatMsg[]>([]);
-  useEffect(() => { messagesRef.current = messages; });
+  useEffect(() => { messagesRef.current = activeMessages; });
   function toggleAudio() {
     const wasOn = audioEnabledRef.current;
     console.log('[tts] toggleAudio fired —', wasOn ? 'ON→OFF' : 'OFF→ON', '(prev audioEnabledRef=' + wasOn + ')');
@@ -257,15 +315,56 @@ export default function ChatScreen() {
       console.log('[mode]', chosenMode, 'anyCoreFilled:', anyCoreFilled, 'mapData:', JSON.stringify(md).slice(0, 300));
       setMode(chosenMode);
 
+      // Pull the most-recently-detected part name out of the map
+      // payload (parts are sorted lastDetected DESC by the server).
+      // Used later by the Explore opening greeting to reference what
+      // the user explored last time.
+      try {
+        const parts = Array.isArray(map?.parts) ? map.parts : [];
+        const top = parts.find((p: any) => p && (p.name || p.category));
+        const label = top ? (String(top.name || '').trim() || String(top.category || '').trim()) : '';
+        mostRecentPartRef.current = label || null;
+        console.log(`[chat] boot — mostRecentPart=${mostRecentPartRef.current || '(none)'}`);
+      } catch (e) {
+        mostRecentPartRef.current = null;
+      }
+
       if (greetingRes.suggestions.length > 0) setStarters(greetingRes.suggestions);
 
+      // Seed ONLY the Process thread on boot. Process is the default
+      // landing mode; the Explore thread stays empty until the user
+      // first switches to Explore (see the chatMode change effect
+      // below), at which point its own opener is injected.
       const finalGreeting = (greetingRes.greeting && greetingRes.greeting.trim()) || FALLBACK_GREETING;
-      addAssistantMessage(finalGreeting);
-      historyRef.current.push({ role: 'assistant', content: finalGreeting });
+      addAssistantMessageToProcess(finalGreeting);
+      processHistoryRef.current.push({ role: 'assistant', content: finalGreeting });
       setTyping(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ===== EXPLORE OPENING GREETING =====
+  // Seeds the Explore thread the first time the user switches into it
+  // during this session. First-ever session (no parts detected yet) →
+  // generic opener; otherwise reference the most recently explored
+  // part by name. Only runs when chatMode flips TO explore AND the
+  // explore thread is empty AND we haven't already greeted this session.
+  useEffect(() => {
+    if (chatMode !== 'explore') return;
+    if (exploreGreetedRef.current) return;
+    if (exploreMessages.length > 0) return;
+    exploreGreetedRef.current = true;
+    const recent = mostRecentPartRef.current;
+    const opener = recent
+      ? `Last time we explored ${recent}. What would you like to understand better today?`
+      : "I'm here to help you explore what's happening inside. What would you like to understand better about yourself today?";
+    console.log(`[chat] seeding Explore thread — ${recent ? 'subsequent' : 'first'} session opener`);
+    const id = uuidv4();
+    setExploreMessages((prev) => [...prev, { id, role: 'assistant', text: opener }]);
+    exploreHistoryRef.current.push({ role: 'assistant', content: opener });
+    scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatMode]);
 
   // When the keyboard opens, snap the scroll to the latest message so the user
   // sees what they're responding to. iOS emits keyboardWillShow before it's
@@ -279,9 +378,14 @@ export default function ChatScreen() {
   }, []);
 
   // ===== MESSAGE HELPERS =====
+  // Both helpers target the ACTIVE thread via chatModeRef. Callers
+  // that need to target a specific thread (e.g. boot seeding the
+  // Process thread before any chatMode state has settled) should use
+  // the mode-suffixed variants (addAssistantMessageToProcess, etc.).
   function addAssistantMessage(text: string, meta?: { detectedPart?: string; partLabel?: string | null }): string {
     const id = uuidv4();
-    setMessages((prev) => [
+    const t = threadFor(chatModeRef.current);
+    t.setMessages((prev) => [
       ...prev,
       {
         id,
@@ -295,8 +399,23 @@ export default function ChatScreen() {
     return id;
   }
 
+  // Mode-targeted variant — guarantees the message lands in the
+  // Process thread regardless of current state. Used by boot, where
+  // we always seed Process even though we haven't computed chatMode
+  // changes yet, and by the end-session reset path.
+  function addAssistantMessageToProcess(text: string): string {
+    const id = uuidv4();
+    setProcessMessages((prev) => [
+      ...prev,
+      { id, role: 'assistant', text },
+    ]);
+    scrollToBottom();
+    return id;
+  }
+
   function addUserMessage(text: string) {
-    setMessages((prev) => [...prev, { id: uuidv4(), role: 'user', text }]);
+    const t = threadFor(chatModeRef.current);
+    t.setMessages((prev) => [...prev, { id: uuidv4(), role: 'user', text }]);
     scrollToBottom();
   }
 
@@ -306,8 +425,12 @@ export default function ChatScreen() {
    *  into the chat history so the AI can reply. Empty transcript → bubble
    *  remains in the list but no AI turn is triggered. */
   async function handleSendVoice({ uri, durationSec }: { uri: string; durationSec: number }) {
+    // Lock the voice note to the thread the user is currently in —
+    // a mid-transcribe mode switch shouldn't relocate the bubble.
+    const turnMode = chatModeRef.current;
+    const turnThread = threadFor(turnMode);
     const bubbleId = uuidv4();
-    setMessages((prev) => [
+    turnThread.setMessages((prev) => [
       ...prev,
       {
         id: bubbleId,
@@ -338,7 +461,9 @@ export default function ChatScreen() {
     }
     // Update the bubble in place — transcript becomes a real string (possibly
     // empty-string, which the bubble renders as "(nothing heard)").
-    setMessages((prev) =>
+    // Update IN the captured turnMode's thread so a mode switch
+    // mid-transcribe doesn't redirect the bubble.
+    turnThread.setMessages((prev) =>
       prev.map((m) =>
         m.id === bubbleId && m.voice
           ? { ...m, text: transcript, voice: { ...m.voice, transcript } }
@@ -346,8 +471,8 @@ export default function ChatScreen() {
       ),
     );
     if (transcript) {
-      historyRef.current.push({ role: 'user', content: transcript });
-      runAssistantTurn();
+      turnThread.historyRef.current.push({ role: 'user', content: transcript });
+      runAssistantTurn(turnMode);
     }
   }
 
@@ -360,11 +485,19 @@ export default function ChatScreen() {
   // responsible for having already added the user's bubble and pushed their
   // message to historyRef. This split lets the voice-note path share the
   // exact same streaming + reveal logic without duplicating it.
+  //
+  // turnMode arg locks the streaming reply to the thread the turn was
+  // started in. A mid-stream mode switch can no longer redirect the
+  // bubble or push the assistant turn into the wrong history.
   const runAssistantTurn = useCallback(
-    async () => {
+    async (turnMode: ChatMode) => {
       if (sending) return;
       setSending(true);
       setTyping(true);
+      // Lock the target thread for this whole turn — every setMessages
+      // and history push below targets THIS thread, regardless of what
+      // chatMode the user is on by the time deltas arrive.
+      const turnThread = threadFor(turnMode);
       // Attention indicator: user just sent → flip to the fast-pulse
       // 'thinking' state so the user sees the system has received and
       // is processing.
@@ -387,7 +520,7 @@ export default function ChatScreen() {
         while (i < target.length && /\s/.test(target[i])) i++;
         while (i < target.length && !/\s/.test(target[i])) i++;
         revealed = i;
-        setMessages((prev) =>
+        turnThread.setMessages((prev) =>
           prev.map((m) =>
             m.id === streamId
               ? {
@@ -407,7 +540,7 @@ export default function ChatScreen() {
       let streamDone = false;
 
       // Push an empty streaming bubble into the list now.
-      setMessages((prev) => [
+      turnThread.setMessages((prev) => [
         ...prev,
         { id: streamId, role: 'assistant', text: '', streaming: true },
       ]);
@@ -426,12 +559,12 @@ export default function ChatScreen() {
       try {
         await api.streamChat(
           {
-            messages: historyRef.current,
+            messages: turnThread.historyRef.current,
             mode,
             sessionId: sessionIdRef.current,
             selfMode,
             experienceLevel,
-            chatMode,
+            chatMode: turnMode,
           },
           {
             onDelta: (delta) => {
@@ -551,7 +684,7 @@ export default function ChatScreen() {
               }
               if (!revealTimer) {
                 // Flush synchronously — no pending reveal loop running.
-                setMessages((prev) =>
+                turnThread.setMessages((prev) =>
                   prev.map((m) =>
                     m.id === streamId
                       ? { ...m, text: target, streaming: false, detectedPart: detectedPart || m.detectedPart, partLabel: partLabel ?? m.partLabel }
@@ -559,11 +692,13 @@ export default function ChatScreen() {
                   ),
                 );
               }
-              historyRef.current.push({ role: 'assistant', content: target });
+              turnThread.historyRef.current.push({ role: 'assistant', content: target });
               // Persist the growing transcript so the web app's session list stays in sync.
+              // Sends THIS thread's history; the other thread is saved
+              // independently when its own turns complete.
               api.saveSession({
                 id: sessionIdRef.current,
-                messages: historyRef.current,
+                messages: turnThread.historyRef.current,
               });
               // If we started a streaming TTS for this reply, flush the
               // tail of the buffer so the final partial sentence is also
@@ -583,7 +718,7 @@ export default function ChatScreen() {
               console.warn('[chat] stream error:', err);
               streamDone = true;
               setAttentionState('idle');
-              setMessages((prev) =>
+              turnThread.setMessages((prev) =>
                 prev.map((m) =>
                   m.id === streamId
                     ? {
@@ -592,12 +727,12 @@ export default function ChatScreen() {
                         streaming: false,
                         // Carries the original user input so the bubble's RETRY
                         // pill can re-submit without the user retyping. We
-                        // pull the most recent user turn out of history.
+                        // pull the most recent user turn out of THIS thread's
+                        // history.
                         errorRetryText: (() => {
-                          for (let i = historyRef.current.length - 1; i >= 0; i--) {
-                            if (historyRef.current[i].role === 'user') {
-                              return historyRef.current[i].content;
-                            }
+                          const h = turnThread.historyRef.current;
+                          for (let i = h.length - 1; i >= 0; i--) {
+                            if (h[i].role === 'user') return h[i].content;
                           }
                           return null;
                         })(),
@@ -605,9 +740,9 @@ export default function ChatScreen() {
                     : m,
                 ),
               );
-              // Roll the failed assistant turn out of history so a retry
-              // doesn't include a stale empty assistant message in context.
-              historyRef.current = historyRef.current.filter(
+              // Roll the failed assistant turn out of THIS thread's history
+              // so a retry doesn't include a stale empty assistant message.
+              turnThread.historyRef.current = turnThread.historyRef.current.filter(
                 (h) => !(h.role === 'assistant' && h.content === ''),
               );
               setSending(false);
@@ -630,24 +765,30 @@ export default function ChatScreen() {
   const handleSend = useCallback(
     async (text: string) => {
       if (sending || !text.trim()) return;
-      addUserMessage(text);
-      historyRef.current.push({ role: 'user', content: text });
-      runAssistantTurn();
+      const turnMode = chatModeRef.current;
+      const t = threadFor(turnMode);
+      const id = uuidv4();
+      t.setMessages((prev) => [...prev, { id, role: 'user', text }]);
+      scrollToBottom();
+      t.historyRef.current.push({ role: 'user', content: text });
+      runAssistantTurn(turnMode);
     },
     [sending, runAssistantTurn],
   );
 
   // ===== RENDER =====
-  // Retry handler — removes the failed assistant bubble, then re-submits
-  // the original user text. Wired into MessageBubble's onRetry prop.
+  // Retry handler — removes the failed assistant bubble (in the active
+  // thread, since that's what the user is looking at when they tap
+  // RETRY), then re-submits the original user text. Wired into
+  // MessageBubble's onRetry prop.
   const handleRetry = useCallback((text: string) => {
-    setMessages((prev) => prev.filter((m) => !(m.role === 'assistant' && m.errorRetryText)));
+    setActiveMessages((prev) => prev.filter((m) => !(m.role === 'assistant' && m.errorRetryText)));
     handleSend(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
-    () => messages.map((m) => <MessageBubble key={m.id} msg={m} onRetry={handleRetry} />),
-    [messages],
+    () => activeMessages.map((m) => <MessageBubble key={m.id} msg={m} onRetry={handleRetry} />),
+    [activeMessages],
   );
 
   return (
@@ -708,9 +849,12 @@ export default function ChatScreen() {
             <ChatModeIndicator mode={chatMode} />
             {bubbleList}
             {typing ? <TypingIndicator /> : null}
-            {/* Starter chips appear only before the user has said anything. They
-                disappear the moment the first user turn is added. */}
-            {messages.length > 0 && historyRef.current.every((m) => m.role !== 'user') ? (
+            {/* Starter chips appear only before the user has said anything in
+                the active thread. They disappear the moment the first user
+                turn is added. Each thread tracks its own user-turn count, so
+                switching modes shows the chips again on the new thread until
+                the user has spoken there too. */}
+            {activeMessages.length > 0 && activeHistoryRef.current.every((m) => m.role !== 'user') ? (
               <ConversationStarters onPick={handleSend} starters={starters} />
             ) : null}
           </ScrollView>
@@ -735,10 +879,11 @@ export default function ChatScreen() {
             the reflection + title land in the Journal tab immediately. */}
         <EndSessionButton
           // Visible once the session has actually started — i.e. the user
-          // has sent at least one message and the AI is responding/has
-          // responded. Before that first turn there's nothing to save, and
-          // forcing a 3-message threshold was arbitrary.
-          visible={historyRef.current.filter((m) => m.role === 'user').length >= 1 && !endingTransition}
+          // has sent at least one message in EITHER thread. Either thread
+          // counts because the End Session pill is global; we don't want
+          // a long Process conversation to be hidden just because the
+          // user happens to be looking at an empty Explore thread.
+          visible={(processHistoryRef.current.some((m) => m.role === 'user') || exploreHistoryRef.current.some((m) => m.role === 'user')) && !endingTransition}
           onEnd={async () => {
             // === END SESSION TRANSITION ===
             // 1) Fade messages out (400ms — per latest spec, slightly faster
@@ -750,8 +895,16 @@ export default function ChatScreen() {
             //    on the save itself.
             // 4) The "Begin New Session" button on the modal triggers the
             //    actual reset (continueAfterSummaryRef.current).
+            //
+            // Whichever thread the user is currently in is the one
+            // summarized + saved. The other thread's messages reset
+            // unsaved at session-end (per spec: "Both reset at end of
+            // session"). The map state and parts data persist on the
+            // server underneath both threads regardless.
             setEndingTransition(true);
-            const transcriptForSave = historyRef.current.slice();
+            const turnMode = chatModeRef.current;
+            const turnThread = threadFor(turnMode);
+            const transcriptForSave = turnThread.historyRef.current.slice();
             const sessionIdForSave = sessionIdRef.current;
             Animated.timing(messagesOpacity, {
               toValue: 0, duration: 400,
@@ -763,11 +916,12 @@ export default function ChatScreen() {
             setSummaryFailed(false);
             setSummaryVisible(true);
 
-            // Fire the structured-summary call. The server persists the
-            // result onto the session row; we still call saveSession so
-            // the messages array is stored.
+            // Fire the structured-summary call. The server picks the
+            // PROCESS or EXPLORE summary prompt based on turnMode.
+            // Persists the result onto the session row; we still call
+            // saveSession so the messages array is stored.
             (async () => {
-              const sum = await api.getSessionSummary(transcriptForSave, sessionIdForSave);
+              const sum = await api.getSessionSummary(transcriptForSave, sessionIdForSave, turnMode);
               if (sum) {
                 setSummary({
                   exploredText: sum.exploredText,
@@ -796,14 +950,18 @@ export default function ChatScreen() {
               setLivePart(null); setLiveConfidence(null);
               if (livePartTimerRef.current) { clearTimeout(livePartTimerRef.current); livePartTimerRef.current = null; }
               clearMapVoiceHistory();           // start map voice fresh next session
-              historyRef.current = [];
-              setMessages([]);
+              // Reset BOTH threads — both arrays + both refs cleared.
+              processHistoryRef.current = [];
+              exploreHistoryRef.current = [];
+              setProcessMessages([]);
+              setExploreMessages([]);
+              exploreGreetedRef.current = false; // re-arm Explore opener for next session
               sessionIdRef.current = uuidv4();
               const next = await api.getReturningGreeting();
               const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;
               if (next.suggestions.length) setStarters(next.suggestions);
-              addAssistantMessage(greeting);
-              historyRef.current.push({ role: 'assistant', content: greeting });
+              addAssistantMessageToProcess(greeting);
+              processHistoryRef.current.push({ role: 'assistant', content: greeting });
               // Reveal messages again behind the dismissing summary modal.
               Animated.timing(messagesOpacity, {
                 toValue: 1, duration: 500, useNativeDriver: true,
@@ -818,7 +976,7 @@ export default function ChatScreen() {
         visible={summaryVisible}
         summary={summary}
         failed={summaryFailed}
-        messages={messages.map((m) => ({ role: m.role, text: m.text }))}
+        messages={activeMessages.map((m) => ({ role: m.role, text: m.text }))}
         onContinue={async () => {
           // Hide the modal first so the dismiss animation overlaps with
           // the messages-fade-back-in. Then run the captured continuation

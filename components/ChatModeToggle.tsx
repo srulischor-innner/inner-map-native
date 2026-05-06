@@ -1,21 +1,28 @@
-// Chat tab mode toggle — Process vs Explore. Sits below the tab bar,
-// above the messages. Decides which system prompt the server uses on
-// /api/chat:
-//   process  → HOLDING_SPACE_PROMPT (presence-first, gentle holding)
-//   explore  → MAPPING_PROMPT       (active curiosity + map-building)
+// Chat tab mode toggle — Process vs Explore.
 //
-// Process is the default because it's the gentler entry point. The
-// user can switch to Explore whenever they want; new sessions reset
-// to Process.
+// Two separate pill-shaped buttons, one on each side of the bar.
+// Process on the left, Explore on the right. Each pill carries a small
+// circular i button on the right side of its label that opens a per-
+// mode info modal. Tapping the pill body switches modes (no-op when
+// already active). Active pill: gold border, gold text, subtle dark
+// gold background. Inactive pill: dim border + dim text.
+//
+// The pills drive which conversation thread is rendered and which
+// system prompt the server uses on /api/chat — the parent (ChatScreen)
+// owns the conversation-thread split.
 
 import React, { useState } from 'react';
 import {
   View, Text, Pressable, Modal, StyleSheet,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 
 export type ChatMode = 'process' | 'explore';
+
+const PROCESS_INFO_TEXT =
+  "I'll follow your lead and be with what you bring. You talk, I hold. Mapping happens quietly in the background.";
+const EXPLORE_INFO_TEXT =
+  "I'll ask questions, notice patterns, and help you understand what's happening inside. Active and curious.";
 
 type Props = {
   mode: ChatMode;
@@ -23,7 +30,8 @@ type Props = {
 };
 
 export function ChatModeToggle({ mode, onChange }: Props) {
-  const [showInfo, setShowInfo] = useState(false);
+  // Per-pill info modal target. Null = closed.
+  const [infoFor, setInfoFor] = useState<ChatMode | null>(null);
 
   function pick(next: ChatMode) {
     if (next === mode) return;
@@ -31,75 +39,111 @@ export function ChatModeToggle({ mode, onChange }: Props) {
     onChange(next);
   }
 
+  function openInfo(target: ChatMode) {
+    Haptics.selectionAsync().catch(() => {});
+    setInfoFor(target);
+  }
+
   return (
     <>
       <View style={styles.bar}>
-        <View style={styles.pill}>
-          <Pressable
-            onPress={() => pick('process')}
-            style={[styles.segment, mode === 'process' && styles.segmentActive]}
-            accessibilityLabel="Switch to Process mode"
-          >
-            <Text style={[styles.segmentText, mode === 'process' && styles.segmentTextActive]}>
-              Process
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => pick('explore')}
-            style={[styles.segment, mode === 'explore' && styles.segmentActive]}
-            accessibilityLabel="Switch to Explore mode"
-          >
-            <Text style={[styles.segmentText, mode === 'explore' && styles.segmentTextActive]}>
-              Explore
-            </Text>
-          </Pressable>
-        </View>
-        <Pressable
-          onPress={() => setShowInfo(true)}
-          style={styles.infoBtn}
-          hitSlop={10}
-          accessibilityLabel="What do these modes mean"
-        >
-          <Ionicons name="information-circle-outline" size={16} color="rgba(230,180,122,0.4)" />
-        </Pressable>
+        <ModePill
+          label="Process"
+          active={mode === 'process'}
+          onPress={() => pick('process')}
+          onInfoPress={() => openInfo('process')}
+        />
+        <ModePill
+          label="Explore"
+          active={mode === 'explore'}
+          onPress={() => pick('explore')}
+          onInfoPress={() => openInfo('explore')}
+        />
       </View>
 
       <Modal
-        visible={showInfo}
+        visible={infoFor !== null}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowInfo(false)}
+        onRequestClose={() => setInfoFor(null)}
         statusBarTranslucent
       >
-        <Pressable style={styles.backdrop} onPress={() => setShowInfo(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setInfoFor(null)}>
           {/* Inner Pressable swallows the backdrop press so taps inside
               the card don't dismiss the modal accidentally. */}
           <Pressable style={styles.card} onPress={() => {}}>
-            <Text style={styles.title}>Two ways to talk</Text>
-
-            <View style={{ marginBottom: 16 }}>
-              <Text style={styles.label}>PROCESS</Text>
-              <Text style={styles.body}>
-                I'll follow your lead and be with what you bring. You talk, I hold. Mapping happens quietly in the background.
-              </Text>
-            </View>
-
-            <View style={styles.divider} />
-
-            <View style={{ marginBottom: 20 }}>
-              <Text style={styles.label}>EXPLORE</Text>
-              <Text style={styles.body}>
-                I'll ask questions, notice patterns, and help you understand what's happening inside. Active and curious.
-              </Text>
-            </View>
-
-            <Pressable onPress={() => setShowInfo(false)} style={styles.gotIt}>
+            <Text style={styles.modalLabel}>
+              {infoFor === 'process' ? 'PROCESS' : 'EXPLORE'}
+            </Text>
+            <Text style={styles.modalBody}>
+              {infoFor === 'process' ? PROCESS_INFO_TEXT : EXPLORE_INFO_TEXT}
+            </Text>
+            <Pressable onPress={() => setInfoFor(null)} style={styles.gotIt}>
               <Text style={styles.gotItText}>Got it</Text>
             </Pressable>
           </Pressable>
         </Pressable>
       </Modal>
     </>
+  );
+}
+
+function ModePill({
+  label,
+  active,
+  onPress,
+  onInfoPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  onInfoPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.pill, active ? styles.pillActive : styles.pillInactive]}
+      accessibilityLabel={`Switch to ${label} mode`}
+    >
+      <Text
+        style={[
+          styles.pillText,
+          active ? styles.pillTextActive : styles.pillTextInactive,
+        ]}
+      >
+        {label}
+      </Text>
+      {/* Inline i button — its own Pressable so the parent pill press
+          doesn't fire when the user taps the icon specifically.
+          accessibilityRole=button keeps it discoverable as its own
+          control. */}
+      <Pressable
+        onPress={(e) => {
+          e.stopPropagation();
+          onInfoPress();
+        }}
+        hitSlop={8}
+        style={styles.infoBtn}
+        accessibilityRole="button"
+        accessibilityLabel={`What does ${label} mode do`}
+      >
+        <View
+          style={[
+            styles.infoCircle,
+            active ? styles.infoCircleActive : styles.infoCircleInactive,
+          ]}
+        >
+          <Text
+            style={[
+              styles.infoChar,
+              active ? styles.infoCharActive : styles.infoCharInactive,
+            ]}
+          >
+            i
+          </Text>
+        </View>
+      </Pressable>
+    </Pressable>
   );
 }
 
@@ -117,48 +161,77 @@ const styles = StyleSheet.create({
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    // User asked to remove all top padding so the toggle sits flush
-    // against the headerStrip above it. paddingTop: 0; bottom 4 keeps
-    // the message list close underneath. Any gap above the pill is
-    // now just whatever the headerStrip's natural baseline produces
-    // (~hairline).
+    justifyContent: 'space-between',
     paddingTop: 0,
     paddingBottom: 4,
     paddingHorizontal: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: 'rgba(230,180,122,0.1)',
   },
+
+  // Pill — wraps label + inline info icon. flexDirection row so the
+  // i sits to the right of the label inside the same gold border.
   pill: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 20,
-    borderWidth: 0.5,
-    borderColor: 'rgba(230,180,122,0.2)',
-    padding: 3,
-  },
-  segment: {
-    paddingHorizontal: 16,
+    alignItems: 'center',
+    paddingLeft: 14,
+    paddingRight: 8,
     paddingVertical: 6,
-    borderRadius: 16,
+    borderRadius: 18,
+    borderWidth: 0.5,
+  },
+  pillActive: {
+    borderColor: 'rgba(230,180,122,0.65)',
+    backgroundColor: 'rgba(230,180,122,0.12)',
+  },
+  pillInactive: {
+    borderColor: 'rgba(230,180,122,0.18)',
     backgroundColor: 'transparent',
   },
-  segmentActive: {
-    backgroundColor: 'rgba(230,180,122,0.15)',
-  },
-  segmentText: {
-    fontFamily: 'DMSans_400Regular',
+  pillText: {
+    fontFamily: 'DMSans_500Medium',
     fontSize: 13,
-    color: 'rgba(240,237,232,0.35)',
     letterSpacing: 0.3,
+    marginRight: 8,
   },
-  segmentTextActive: {
+  pillTextActive: {
     color: '#E6B47A',
   },
-  infoBtn: {
-    marginLeft: 8,
-    padding: 4,
+  pillTextInactive: {
+    color: 'rgba(240,237,232,0.35)',
   },
+
+  // Inline info button — circular ring + lowercase i, subtle so it
+  // doesn't compete with the pill label.
+  infoBtn: {
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+  },
+  infoCircle: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoCircleActive: {
+    borderColor: 'rgba(230,180,122,0.65)',
+  },
+  infoCircleInactive: {
+    borderColor: 'rgba(230,180,122,0.3)',
+  },
+  infoChar: {
+    fontFamily: 'CormorantGaramond_400Regular_Italic',
+    fontSize: 11,
+    lineHeight: 13,
+    // Optical-center the lowercase i in the circle. Tweaked manually
+    // because RN Text has no baseline-center, and the natural glyph
+    // sits a hair high in this circle size.
+    marginTop: -1,
+  },
+  infoCharActive: { color: '#E6B47A' },
+  infoCharInactive: { color: 'rgba(230,180,122,0.5)' },
 
   backdrop: {
     flex: 1,
@@ -175,30 +248,21 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(230,180,122,0.2)',
     width: '100%',
   },
-  title: {
-    fontFamily: 'CormorantGaramond_600SemiBold',
-    fontSize: 20,
-    color: '#F0EDE8',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  label: {
+  modalLabel: {
     fontFamily: 'DMSans_500Medium',
     fontSize: 13,
     color: '#E6B47A',
-    letterSpacing: 1,
-    marginBottom: 6,
+    letterSpacing: 1.4,
+    textAlign: 'center',
+    marginBottom: 12,
   },
-  body: {
+  modalBody: {
     fontFamily: 'DMSans_400Regular',
     fontSize: 14,
-    color: 'rgba(240,237,232,0.7)',
-    lineHeight: 21,
-  },
-  divider: {
-    height: 0.5,
-    backgroundColor: 'rgba(230,180,122,0.1)',
-    marginBottom: 16,
+    color: 'rgba(240,237,232,0.78)',
+    lineHeight: 22,
+    textAlign: 'center',
+    marginBottom: 20,
   },
   gotIt: {
     alignItems: 'center',
