@@ -7,8 +7,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
-        "simulator": false,
-        "bundleIdentifier": "com.srulischor.innermap.dev"
+        "simulator": false
       }
     },
     "preview": {
