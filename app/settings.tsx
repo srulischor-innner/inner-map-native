@@ -24,7 +24,7 @@ import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
-import { getUserId } from '../services/user';
+import { getUserId, setUserId as overrideUserId } from '../services/user';
 import {
   useExperienceLevel, loadExperienceLevel, setExperienceLevel,
   LEVEL_LABELS, ExperienceLevel,
@@ -154,6 +154,54 @@ export default function SettingsScreen() {
             </Text>
           </View>
         </View>
+
+        {/* Dev-only identity recovery — handles the case where a SecureStore
+            stall caused the boot path to mint a fresh UUID and orphan the
+            user from their existing data. Hidden in production builds. */}
+        {__DEV__ ? (
+          <Pressable
+            style={styles.linkRow}
+            onPress={() => {
+              Alert.prompt(
+                'Override device ID',
+                'Paste an existing user id to restore. Writes to SecureStore + AsyncStorage and reloads on next API call.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Override',
+                    style: 'destructive',
+                    onPress: async (input?: string) => {
+                      const next = String(input || '').trim();
+                      if (!next) return;
+                      try {
+                        await overrideUserId(next);
+                        setUserId(next);
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                        Alert.alert(
+                          'ID overridden',
+                          `Device id is now ${next.slice(0, 8)}…\nReload the app for all tabs to pick it up cleanly.`,
+                        );
+                      } catch (e) {
+                        Alert.alert('Override failed', (e as Error)?.message || 'unknown');
+                      }
+                    },
+                  },
+                ],
+                'plain-text',
+                userId,
+              );
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Override device ID (dev only)</Text>
+              <Text style={styles.rowSub}>
+                Paste an id to recover from a SecureStore stall that orphaned
+                the previous identity.
+              </Text>
+            </View>
+            <Ionicons name="construct-outline" size={18} color={colors.creamFaint} />
+          </Pressable>
+        ) : null}
 
         {/* ===== CONTACT ===== */}
         <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>CONTACT</Text>
