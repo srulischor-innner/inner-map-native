@@ -30,7 +30,7 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
 import { api, ChatMessage } from '../../services/api';
-import { parseChatMeta, parseAttentionStatePayload, stripMarkers } from '../../utils/markers';
+import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
 import { clearMapVoiceHistory } from '../../services/mapVoiceHistory';
 import { ChatModeToggle, ChatModeIndicator, ChatMode } from '../../components/ChatModeToggle';
@@ -310,9 +310,51 @@ export default function ChatScreen() {
       }
 
       const md = map?.mapData || map || {};
-      const anyCoreFilled = ['wound', 'fixer', 'skeptic'].some((k) => !!md?.[k]);
+      // Onboarding-vs-ongoing decision: "any core node filled" means
+      // the user has clinically meaningful map content somewhere in the
+      // system. Two storage paths can deposit it independently:
+      //
+      //   1. Legacy flat-shape on the session's mapData blob — populated
+      //      when MAP_READY fires. mapData.{wound|fixer|skeptic} are
+      //      short strings. This is the only path the original check
+      //      knew about.
+      //
+      //   2. Parts table — populated by the new MAPPING prompt's
+      //      MAP_UPDATE markers. A confirmed wound lands here even when
+      //      MAP_READY never fires (e.g. the AI maps the wound through
+      //      the bridge-to-wound move without ever consolidating into
+      //      the legacy flat shape). The wound row has a non-empty
+      //      corePhrase OR a markerFields.belief.value entry; same
+      //      shape for fixer.pattern and skeptic.pattern.
+      //
+      // Falling back to onboarding when only path #2 is populated was
+      // routing returning users into the onboarding prompt and silently
+      // disabling Explore-mode features (the prompt selector picks
+      // HOLDING_SPACE in onboarding mode regardless of chatMode). Now
+      // either path counts.
+      const partsArr: any[] = Array.isArray(map?.parts) ? map.parts : [];
+      const partsFilled = partsArr.some((p) => {
+        if (!p || !p.category) return false;
+        const cat = String(p.category).toLowerCase();
+        if (cat !== 'wound' && cat !== 'fixer' && cat !== 'skeptic') return false;
+        if (typeof p.corePhrase === 'string' && p.corePhrase.trim()) return true;
+        // markerFields shape: { [field]: { value, confidence, ts } }
+        const mf = p.markerFields && typeof p.markerFields === 'object' ? p.markerFields : {};
+        for (const v of Object.values(mf)) {
+          const val = (v as any)?.value;
+          if (typeof val === 'string' && val.trim()) return true;
+        }
+        return false;
+      });
+      const flatFilled = ['wound', 'fixer', 'skeptic'].some((k) => !!md?.[k]);
+      const anyCoreFilled = flatFilled || partsFilled;
       const chosenMode = anyCoreFilled ? 'ongoing' : 'onboarding';
-      console.log('[mode]', chosenMode, 'anyCoreFilled:', anyCoreFilled, 'mapData:', JSON.stringify(md).slice(0, 300));
+      console.log(
+        '[mode]', chosenMode,
+        'anyCoreFilled:', anyCoreFilled,
+        '(flat:', flatFilled, 'parts:', partsFilled + ')',
+        'mapData:', JSON.stringify(md).slice(0, 200),
+      );
       setMode(chosenMode);
 
       // Pull the most-recently-detected part name out of the map
@@ -569,7 +611,16 @@ export default function ChatScreen() {
           {
             onDelta: (delta) => {
               rawAccum += delta;
-              target = stripMarkers(rawAccum);
+              // target drives the bubble's reveal animation + final
+              // displayed text. In __DEV__ stripMarkersForDisplay is a
+              // pass-through, so devs see markers stream into the
+              // bubble word-by-word for live debugging. In production
+              // builds it strips like stripMarkers — bubble stays
+              // clean. TTS, history saves, and any path that feeds
+              // back to the model continue to use stripMarkers below
+              // so a dev build never speaks a marker aloud or echoes
+              // one back to the AI on the next turn.
+              target = stripMarkersForDisplay(rawAccum);
               if (typing) setTyping(false);
               if (!revealTimer) revealTimer = setTimeout(tickReveal, PER_WORD_MS);
               // First delta means the AI has actually started replying;
@@ -655,12 +706,17 @@ export default function ChatScreen() {
               // chunk on sentence boundaries (≥80 chars per chunk) and
               // queue audio so playback begins shortly after the first
               // sentence finishes streaming, instead of after the full
-              // reply lands.
-              if (streamingTTSStarted) appendTTSStream(target);
+              // reply lands. ALWAYS pass through stripMarkers, never
+              // the dev-display pass-through — the model would
+              // otherwise speak "MAP_UPDATE colon brace…" out loud.
+              if (streamingTTSStarted) appendTTSStream(stripMarkers(rawAccum));
             },
             onDone: (full) => {
               rawAccum = full || rawAccum;
-              target = stripMarkers(rawAccum);
+              // Same split as onDelta: target = display, cleanText =
+              // canonical stripped value used for history + saves.
+              target = stripMarkersForDisplay(rawAccum);
+              const cleanText = stripMarkers(rawAccum);
               streamDone = true;
               // Diagnostic — confirms whether the AI actually emitted any
               // map / part markers in this turn. If you see "no markers"
@@ -692,7 +748,11 @@ export default function ChatScreen() {
                   ),
                 );
               }
-              turnThread.historyRef.current.push({ role: 'assistant', content: target });
+              // History gets the FULLY-stripped text regardless of
+               // __DEV__ — it's sent back to the model as conversation
+               // context on the next turn, and the model shouldn't see
+               // its own markers echoed back.
+              turnThread.historyRef.current.push({ role: 'assistant', content: cleanText });
               // Persist the growing transcript so the web app's session list stays in sync.
               // Sends THIS thread's history; the other thread is saved
               // independently when its own turns complete.

@@ -78,7 +78,9 @@ export function parseChatMeta(text: string): ChatMeta | null {
 
 /**
  * Remove every known marker from a string so it's safe to display or speak.
- * Mirrors the web app's strip list.
+ * Mirrors the web app's strip list. Always strips — used for TTS, saved
+ * transcripts, history sent back to the server, and any path where markers
+ * leaking through would actually break something.
  */
 export function stripMarkers(text: string): string {
   if (!text) return '';
@@ -87,9 +89,29 @@ export function stripMarkers(text: string): string {
     .replace(/\[(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|SUMMARY_META):[\s\S]*?\]/g, '')
     // ATTENTION_STATE — bracketed and bare forms both stripped from visible text.
     .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)(?:\s*\|\s*part:\s*[a-z-]+)?\s*\]?/gi, '')
+    // Line-anchored bare forms emitted by the new MAPPING prompt at the
+    // very end of replies — same set as the bracketed versions above.
+    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
+}
+
+/**
+ * Display-time stripper used by the chat-bubble render path. In production
+ * builds it behaves identically to `stripMarkers`; in __DEV__ builds it
+ * returns the input unchanged so MAP_UPDATE / MAP_SECONDARY / SPECTRUM_UPDATE
+ * / CHAT_META / etc. are visible in the bubble for live debugging.
+ *
+ * IMPORTANT: never use this for TTS, history saves, or anything sent back to
+ * the server. Only the visual bubble. Audio + persistence keep using
+ * `stripMarkers` unconditionally so a dev build never speaks a marker aloud
+ * or echoes one back to the model on the next turn.
+ */
+export function stripMarkersForDisplay(text: string): string {
+  if (!text) return '';
+  if (__DEV__) return text;
+  return stripMarkers(text);
 }
 
 /** Friendly display name for each part category. */
