@@ -27,9 +27,15 @@ const EXPLORE_INFO_TEXT =
 type Props = {
   mode: ChatMode;
   onChange: (mode: ChatMode) => void;
+  /** Optional center slot — rendered between the two pills, vertically
+   *  centered. Used by the chat tab to host the active mode's ambient
+   *  indicator (Process triangle / Explore confidence ring) so the
+   *  active-mode glyph sits at the visual midpoint of the toggle bar
+   *  instead of in the top-right header. */
+  centerSlot?: React.ReactNode;
 };
 
-export function ChatModeToggle({ mode, onChange }: Props) {
+export function ChatModeToggle({ mode, onChange, centerSlot }: Props) {
   // Per-pill info modal target. Null = closed.
   const [infoFor, setInfoFor] = useState<ChatMode | null>(null);
 
@@ -53,6 +59,14 @@ export function ChatModeToggle({ mode, onChange }: Props) {
           onPress={() => pick('process')}
           onInfoPress={() => openInfo('process')}
         />
+        {/* Center slot — flex:1 wrapper centers whatever the parent
+            passes in, so the indicator floats midway between the
+            two pills. Empty wrapper takes the same flex share when
+            centerSlot is null so the pills stay anchored to their
+            edges either way. */}
+        <View style={styles.centerSlot} pointerEvents="box-none">
+          {centerSlot}
+        </View>
         <ModePill
           label="Explore"
           active={mode === 'explore'}
@@ -160,13 +174,27 @@ export function ChatModeIndicator({ mode }: { mode: ChatMode }) {
 const styles = StyleSheet.create({
   bar: {
     flexDirection: 'row',
+    // Vertically center every child of the bar — pills and the
+    // center slot — so an icon placed in the middle aligns with the
+    // pill text baselines instead of drifting toward the bar's top.
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 0,
-    paddingBottom: 4,
+    // Symmetric vertical padding so the pills sit on the optical
+    // center of the bar. Previously paddingTop:0 / paddingBottom:4
+    // pushed everything slightly upward.
+    paddingTop: 6,
+    paddingBottom: 6,
     paddingHorizontal: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: 'rgba(230,180,122,0.1)',
+  },
+  centerSlot: {
+    // Takes the empty space between the two pills and centers its
+    // single child both axes. flex:1 ensures the pills hug the bar's
+    // outer edges regardless of the icon's intrinsic width.
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // Pill — wraps label + inline info icon. flexDirection row so the

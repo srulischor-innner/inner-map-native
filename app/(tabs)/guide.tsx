@@ -64,10 +64,18 @@ export default function GuideScreen() {
   >('unknown');
   useEffect(() => {
     AsyncStorage.getItem(HAS_SEEN_WELCOME_KEY)
-      .then((v) => setWelcomeAnimGate(v ? 'instant' : 'animate'))
-      .catch(() => setWelcomeAnimGate('instant'));
+      .then((v) => {
+        const gate = v ? 'instant' : 'animate';
+        console.log(`[guide] welcomeAnimGate resolved → '${gate}' (hasSeenWelcome=${v ? `'${v}'` : 'null'})`);
+        setWelcomeAnimGate(gate);
+      })
+      .catch((e) => {
+        console.warn('[guide] AsyncStorage read failed, defaulting to instant:', (e as Error)?.message);
+        setWelcomeAnimGate('instant');
+      });
   }, []);
   const markWelcomeSeen = useCallback(() => {
+    console.log('[guide] markWelcomeSeen — flipping hasSeenWelcome to "1"');
     setWelcomeAnimGate((prev) => (prev === 'animate' ? 'instant' : prev));
     AsyncStorage.setItem(HAS_SEEN_WELCOME_KEY, '1').catch(() => {});
   }, []);

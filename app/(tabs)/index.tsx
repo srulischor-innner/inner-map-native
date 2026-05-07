@@ -699,6 +699,11 @@ export default function ChatScreen() {
               api.saveSession({
                 id: sessionIdRef.current,
                 messages: turnThread.historyRef.current,
+                // chatMode tags the saved session row so the Journey
+                // tab can show a Process / Explore label on each
+                // entry. Sticky on the server — only overwrites
+                // when a non-null value is provided.
+                chatMode: turnMode,
               });
               // If we started a streaming TTS for this reply, flush the
               // tail of the buffer so the final partial sentence is also
@@ -803,18 +808,26 @@ export default function ChatScreen() {
             When OFF, audio is silent and any in-flight playback stops
             immediately. No per-message control. */}
         <AudioToggle enabled={audioEnabled} onToggle={toggleAudio} />
-        {chatMode === 'explore' ? (
-          <PartConfidenceIndicator part={livePart} confidence={liveConfidence} />
-        ) : (
-          <AttentionIndicator />
-        )}
       </View>
       {/* Mode toggle — Process (gentle holding) vs Explore (active
-          map-building). Selection drives which system prompt the
-          server uses on /api/chat. Subtle below-strip placement so
-          it's always available but never competing with the
-          conversation. Reset to 'process' on every new session. */}
-      <ChatModeToggle mode={chatMode} onChange={setChatMode} />
+          map-building). The mode-active indicator (Process triangle
+          or Explore confidence ring) lives in the center of the bar
+          via centerSlot — moved here from the top-right header so
+          the active-mode glyph sits at the visual midpoint between
+          the two pills. Selection drives which system prompt the
+          server uses on /api/chat. Reset to 'process' on every new
+          session. */}
+      <ChatModeToggle
+        mode={chatMode}
+        onChange={setChatMode}
+        centerSlot={
+          chatMode === 'explore' ? (
+            <PartConfidenceIndicator part={livePart} confidence={liveConfidence} />
+          ) : (
+            <AttentionIndicator />
+          )
+        }
+      />
       {/* Keyboard avoidance. `keyboardVerticalOffset` must equal the height of
           anything above this KeyboardAvoidingView on the screen: the iOS safe-
           area top inset + the hamburger row (34) + the tab row (40) + the
@@ -934,8 +947,10 @@ export default function ChatScreen() {
               }
             })().catch(() => setSummaryFailed(true));
 
-            // Save in parallel — fire-and-forget.
-            api.saveSession({ id: sessionIdForSave, messages: transcriptForSave })
+            // Save in parallel — fire-and-forget. Tagged with the
+            // mode the user ENDED in, so the Journey tab's session
+            // chip reflects that.
+            api.saveSession({ id: sessionIdForSave, messages: transcriptForSave, chatMode: turnMode })
               .catch(() => {});
 
             // Stage the actual reset behind the summary screen's continue

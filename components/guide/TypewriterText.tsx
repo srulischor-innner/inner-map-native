@@ -58,6 +58,7 @@ export function TypewriterText({
       }
     };
 
+    console.log(`[typewriter] starting — len=${text.length} startDelayMs=${startDelayMs} preview="${text.slice(0, 32)}${text.length > 32 ? '…' : ''}"`);
     let timer: ReturnType<typeof setTimeout> = setTimeout(tick, startDelayMs);
     return () => {
       cancelled = true;

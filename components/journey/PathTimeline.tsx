@@ -15,6 +15,9 @@ export type PathItem = {
   title?: string;
   hasMap?: boolean;
   messageCount?: number;
+  /** Which mode the session was ended in. NULL on legacy rows
+   *  saved before the column existed; the chip is hidden for those. */
+  chatMode?: 'process' | 'explore' | null;
 };
 
 export function PathTimeline({
@@ -52,10 +55,33 @@ export function PathTimeline({
               style={({ pressed }) => [styles.body, pressed && styles.bodyPressed]}
               accessibilityLabel={`Open session from ${formatDate(it.date)}`}
             >
-              <Text style={styles.date}>
-                {formatDate(it.date)}
-                {it.time ? <Text style={styles.time}>{' · ' + it.time}</Text> : null}
-              </Text>
+              <View style={styles.headerRow}>
+                <Text style={styles.date}>
+                  {formatDate(it.date)}
+                  {it.time ? <Text style={styles.time}>{' · ' + it.time}</Text> : null}
+                </Text>
+                {/* Mode chip — small Process / Explore label so the
+                    user can tell at a glance which thread the saved
+                    session captured. Hidden for legacy rows where
+                    chatMode is NULL. */}
+                {it.chatMode === 'process' || it.chatMode === 'explore' ? (
+                  <View
+                    style={[
+                      styles.modeChip,
+                      it.chatMode === 'explore' ? styles.modeChipExplore : styles.modeChipProcess,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeChipText,
+                        it.chatMode === 'explore' ? styles.modeChipTextExplore : styles.modeChipTextProcess,
+                      ]}
+                    >
+                      {it.chatMode === 'explore' ? 'EXPLORE' : 'PROCESS'}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
               {it.title ? <Text style={styles.title}>{it.title}</Text> : null}
               {it.preview ? (
                 <Text style={styles.preview} numberOfLines={2}>"{it.preview}"</Text>
@@ -97,8 +123,43 @@ const styles = StyleSheet.create({
   line: { flex: 1, width: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginTop: 2 },
   body: { flex: 1, backgroundColor: colors.backgroundCard, borderRadius: radii.md, padding: spacing.sm },
   bodyPressed: { backgroundColor: 'rgba(230,180,122,0.08)', borderColor: colors.amberDim, borderWidth: 1 },
-  date: { color: colors.amber, fontSize: 12, fontWeight: '600', letterSpacing: 0.3 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  date: { color: colors.amber, fontSize: 12, fontWeight: '600', letterSpacing: 0.3, flexShrink: 1 },
   time: { color: colors.creamFaint, fontWeight: '400' },
+  // Small uppercase chip — leans on the same dim-amber treatment as
+  // the inactive mode pill in ChatModeToggle so the two surfaces feel
+  // related. Process is the gentler default → cooler amber-on-dim;
+  // Explore is the active mode → brighter amber-on-amber-tint.
+  modeChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 0.5,
+  },
+  modeChipProcess: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderColor: 'rgba(230,180,122,0.25)',
+  },
+  modeChipExplore: {
+    backgroundColor: 'rgba(230,180,122,0.12)',
+    borderColor: 'rgba(230,180,122,0.55)',
+  },
+  modeChipText: {
+    fontSize: 9,
+    letterSpacing: 1.2,
+    fontWeight: '700',
+  },
+  modeChipTextProcess: {
+    color: 'rgba(230,180,122,0.6)',
+  },
+  modeChipTextExplore: {
+    color: '#E6B47A',
+  },
   title: { color: colors.cream, fontSize: 15, fontWeight: '500', marginTop: 4 },
   preview: { color: colors.creamDim, fontSize: 13, fontStyle: 'italic', marginTop: 4, lineHeight: 18 },
   meta: { flexDirection: 'row', gap: 6, marginTop: 8 },

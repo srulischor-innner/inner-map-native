@@ -37,12 +37,17 @@ export function GuideSlide({
   // One-shot trigger — flips true the first time this slide becomes
   // the active page while animateBody is in effect. Once true it stays
   // true for this mount, so re-entering the slide during the same
-  // session doesn't restart the animation. The flag itself never gets
-  // un-set; FlatList may unmount the slide and a future mount will
-  // re-animate, which is fine because by then the user has either
-  // hit the last slide (and the parent has set hasSeenWelcome) or is
-  // still legitimately exploring the welcome flow.
-  const [hasTriggered, setHasTriggered] = useState(false);
+  // session doesn't restart the animation.
+  //
+  // LAZY INITIALIZER: when the slide mounts already-active (slide 0
+  // on first paint of the welcome carousel), kick off the typewriter
+  // immediately. Without this, render 1 falls into the empty-text
+  // path below for one frame, then the post-paint effect flips
+  // hasTriggered and the typewriter mounts on render 2. In practice
+  // that's a perceptible flash before typing begins.
+  const [hasTriggered, setHasTriggered] = useState(
+    () => animateBody && isActive,
+  );
   useEffect(() => {
     if (animateBody && isActive && !hasTriggered) {
       setHasTriggered(true);
@@ -67,6 +72,13 @@ export function GuideSlide({
   }
 
   const showTypewriter = animateBody && hasTriggered && !isClosing;
+  // While animateBody is in effect but this slide hasn't been
+  // activated yet (off-screen siblings in the FlatList), render an
+  // empty <Text> instead of the full paragraph. Otherwise the user
+  // would see the full text appear on swipe-in for one frame before
+  // the typewriter mounts and resets it to empty — reading as a
+  // flash of finished text rather than an animation.
+  const showEmptyPlaceholder = animateBody && !hasTriggered && !isClosing;
 
   return (
     <ScrollView
@@ -105,6 +117,14 @@ export function GuideSlide({
                 startDelayMs={startOffsets.current[i] || 0}
               />
             );
+          }
+          if (showEmptyPlaceholder) {
+            // Empty Text — preserves layout height so the slide
+            // doesn't reflow when the typewriter mounts, but
+            // doesn't flash the finished string before typing
+            // begins. Identity ('') is stable so React reuses
+            // this node across renders.
+            return <Text key={i} style={paraStyle}>{''}</Text>;
           }
           return (
             <Text key={i} style={paraStyle}>
