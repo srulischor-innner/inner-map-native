@@ -140,6 +140,7 @@ export function HamburgerMenu({
                 date={s.date}
                 title={s.title || s.preview}
                 mostActivePart={s.mostActivePart}
+                chatMode={s.chatMode}
                 onPress={() => openSession(s.id)}
               />
             ))}
@@ -229,19 +230,38 @@ export function HamburgerMenu({
 
 // ---------- session row ----------
 function SessionRow({
-  date, title, mostActivePart, onPress,
+  date, title, mostActivePart, chatMode, onPress,
 }: {
   date?: string;
   title?: string;
   mostActivePart?: string | null;
+  /** Mode the session was ended in. NULL for legacy rows that
+   *  predate the column on the server — the row hides the label
+   *  in that case so older history doesn't grow a misleading tag. */
+  chatMode?: 'process' | 'explore' | null;
   onPress: () => void;
 }) {
   const dotColor = mostActivePart ? (PART_COLOR[mostActivePart] || colors.amber) : 'rgba(255,255,255,0.2)';
+  const showMode = chatMode === 'process' || chatMode === 'explore';
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.sessionRow, pressed && { opacity: 0.65 }]}>
       <View style={[styles.sessionDot, { backgroundColor: dotColor }]} />
       <View style={{ flex: 1 }}>
-        <Text style={styles.sessionDate}>{formatShortDate(date)}</Text>
+        <View style={styles.sessionHeaderRow}>
+          <Text style={styles.sessionDate}>{formatShortDate(date)}</Text>
+          {showMode ? (
+            <Text
+              style={[
+                styles.sessionMode,
+                chatMode === 'explore'
+                  ? styles.sessionModeExplore
+                  : styles.sessionModeProcess,
+              ]}
+            >
+              {chatMode === 'explore' ? 'Explore' : 'Process'}
+            </Text>
+          ) : null}
+        </View>
         <Text style={styles.sessionTitle} numberOfLines={1}>
           {title?.trim() || 'Untitled session'}
         </Text>
@@ -490,11 +510,34 @@ const styles = StyleSheet.create({
     width: 8, height: 8, borderRadius: 4,
     shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 3,
   },
+  sessionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
   sessionDate: {
     color: colors.creamFaint,
     fontSize: 10,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
+    flexShrink: 1,
+  },
+  // Muted-gold mode label per the spec — Process is the gentler
+  // default (dimmer); Explore is the active mode (brighter). Sits
+  // on the right side of the date row, hidden when chatMode is
+  // null (legacy rows predating the column).
+  sessionMode: {
+    fontSize: 10,
+    letterSpacing: 0.5,
+    fontStyle: 'italic',
+    fontFamily: 'CormorantGaramond_400Regular_Italic',
+  },
+  sessionModeProcess: {
+    color: 'rgba(230,180,122,0.55)',
+  },
+  sessionModeExplore: {
+    color: '#E6B47A',
   },
   sessionTitle: { color: colors.cream, fontSize: 14, marginTop: 2 },
 

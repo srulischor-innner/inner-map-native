@@ -16,6 +16,7 @@ import {
   StyleSheet,
   useWindowDimensions,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -80,6 +81,27 @@ export default function GuideScreen() {
     AsyncStorage.setItem(HAS_SEEN_WELCOME_KEY, '1').catch(() => {});
   }, []);
 
+  // Bumps on a __DEV__ reset to remount SlideSection so the lazy
+  // initializer in GuideSlide.tsx fires fresh — re-running the
+  // typewriter from the top instead of trying to retro-trigger an
+  // already-mounted slide.
+  const [welcomeRemountNonce, setWelcomeRemountNonce] = useState(0);
+  const resetHasSeenWelcome = useCallback(async () => {
+    if (!__DEV__) return;
+    console.log('[guide] DEV reset — clearing hasSeenWelcome and remounting Welcome');
+    try {
+      await AsyncStorage.removeItem(HAS_SEEN_WELCOME_KEY);
+    } catch (e) {
+      console.warn('[guide] DEV reset — AsyncStorage.removeItem failed:', (e as Error)?.message);
+    }
+    setWelcomeAnimGate('animate');
+    setWelcomeRemountNonce((n) => n + 1);
+    Alert.alert(
+      'Welcome reset',
+      'hasSeenWelcome cleared. The typewriter will play on the next welcome render.',
+    );
+  }, []);
+
   return (
     <SafeAreaView style={styles.root} edges={[]}>
       <View style={styles.header}>
@@ -103,6 +125,19 @@ export default function GuideScreen() {
               Haptics.selectionAsync().catch(() => {});
               setSection(id);
             }}
+            // __DEV__-only long-press on the Welcome pill resets the
+            // hasSeenWelcome AsyncStorage flag so the typewriter
+            // animation can be re-tested without uninstalling the
+            // app. No-op on other pills and in production builds.
+            onLongPress={
+              id === 'welcome' && __DEV__
+                ? () => {
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+                    resetHasSeenWelcome();
+                  }
+                : undefined
+            }
+            delayLongPress={600}
             style={[styles.pill, section === id && styles.pillActive]}
           >
             <Text style={[styles.pillText, section === id && styles.pillTextActive]}>
@@ -115,11 +150,16 @@ export default function GuideScreen() {
       {section === 'welcome' ? (
         // Hold the welcome render until the AsyncStorage read resolves —
         // otherwise a returning user briefly sees the plain-text version
-        // before the typewriter would have started, or vice versa.
+        // before the typewriter would have started, or vice versa. The
+        // welcomeRemountNonce key forces a fresh mount when the dev
+        // reset fires, so GuideSlide's lazy initializer kicks the
+        // typewriter from poll one instead of trying to retro-trigger
+        // an already-mounted slide.
         welcomeAnimGate === 'unknown' ? (
           <View style={styles.sectionRoot} />
         ) : (
           <SlideSection
+            key={`welcome-${welcomeRemountNonce}`}
             slides={WELCOME_SLIDES}
             animateBody={welcomeAnimGate === 'animate'}
             onReachLastSlide={markWelcomeSeen}
