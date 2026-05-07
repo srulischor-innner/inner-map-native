@@ -114,11 +114,24 @@ export default function MapScreen() {
       if (typeof res?.blendedSelfLedScore === 'number') setBlendedSelfLedScore(res.blendedSelfLedScore);
       setParts(ps);
       if (journey?.clinicalPatterns) setClinicalPatterns(journey.clinicalPatterns);
+      // TEMP DEBUG — print the raw layers payload so Metro logs make it
+      // obvious whether the second wound is reaching the client at all.
+      // Pair with the [latest-map] line on Railway. Delete once the
+      // regression is closed.
+      console.log(
+        '[map] received res.layers=',
+        Array.isArray(res?.layers) ? `[${res.layers.length}]` : `(not-array: ${typeof res?.layers})`,
+        Array.isArray(res?.layers)
+          ? res.layers.map((L: any, i: number) => `${i}:${(L?.woundBelief || '').slice(0, 40)}`).join(' | ')
+          : '',
+      );
       // Layers — use the server-provided array if present. Cap at 5 (also
       // capped server-side; defensive double-check). Default behavior (one
       // wound) means layers has length 0 or 1 → no dots, no swipe gesture.
       if (Array.isArray(res?.layers) && res.layers.length > 0) {
         setLayers(res.layers.slice(0, 5));
+      } else {
+        console.log('[map] layers payload empty or missing — keeping previous state');
       }
       setLoadStatus('loaded');
     } catch (e) {
