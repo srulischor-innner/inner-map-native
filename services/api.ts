@@ -268,10 +268,48 @@ export const api = {
   async getLatestMap(): Promise<any | null> {
     try {
       const headers = await authHeaders();
-      const res = await apiFetch('/api/latest-map', { label: 'latest-map', headers });
+      // Cache-busting + no-cache headers — iOS URLCache will return a
+      // previously-fetched body without hitting the network if the server
+      // sent any Cache-Control directive that allows it. /api/latest-map
+      // changes after every assistant turn, so we MUST bypass any cache.
+      // The query param breaks URL identity for cache lookup; the headers
+      // tell the OS-level cache + any intermediaries (Cloudflare, Railway
+      // edge) to revalidate.
+      const cacheBust = `?t=${Date.now()}`;
+      const res = await apiFetch(`/api/latest-map${cacheBust}`, {
+        label: 'latest-map',
+        headers: {
+          ...headers,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+        },
+      });
+      // TEMP DEBUG — print the full raw body BEFORE parsing so we can see
+      // exactly what the server returned. Diagnoses the regression where
+      // /api/debug/identity-check confirms data is present and the deploy
+      // is current, but getLatestMap still receives empty arrays. If this
+      // log shows non-empty layers but the Map tab still renders empty,
+      // the bug is downstream of this function. If this log shows empty
+      // layers despite curl returning data for the same userId, the bug
+      // is either the X-User-Id header (logged below) or a cache layer.
+      console.log(`[latest-map] sent X-User-Id=${headers['X-User-Id']?.slice(0, 8)}…`);
+      // Read the body as text first (so we can log it raw) then parse as
+      // JSON. Avoids the RN-fetch .clone() gotcha — on some RN builds
+      // clone()'s body stream isn't independently readable from the
+      // original. One read + JSON.parse is universally safe.
+      const text = await res.text();
+      console.log(`[latest-map] status=${res.status} bodyLen=${text.length} body="${text.slice(0, 600)}${text.length > 600 ? '…' : ''}"`);
       if (!res.ok) return null;
-      return await res.json();
-    } catch { return null; }
+      try {
+        return JSON.parse(text);
+      } catch (parseErr) {
+        console.warn('[latest-map] JSON parse failed:', (parseErr as Error)?.message);
+        return null;
+      }
+    } catch (e) {
+      console.warn('[latest-map] threw:', (e as Error)?.message);
+      return null;
+    }
   },
 
   /** Persist a session's messages + map data to the server. Returns true on
