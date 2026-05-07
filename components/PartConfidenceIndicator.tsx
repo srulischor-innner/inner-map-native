@@ -194,14 +194,21 @@ export function PartConfidenceIndicator({ part, confidence }: Props) {
 
 const styles = StyleSheet.create({
   tapTarget: {
-    // Push the indicator down a touch — the headerStrip was clipping
-    // the top of the ring on some devices. 9px clears the clip and
-    // gives the label below a bit more breathing room.
-    marginTop: 9,
+    // Explicit width pins the indicator to its natural square so a
+    // wide flex parent (e.g. the ChatModeToggle centerSlot) can't
+    // stretch the Canvas horizontally and render the circle as an
+    // oval. Height stays auto so the part-name label below the ring
+    // can extend the box vertically.
+    width: SIZE,
     alignItems: 'center',
     justifyContent: 'center',
   },
   root: {
+    // Width pinned to the ring's natural diameter — height stays
+    // auto so the part-name label can sit beneath the ring with the
+    // gap below. Without a width pin, a wide flex parent stretched
+    // the Canvas into an oval.
+    width: SIZE,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
