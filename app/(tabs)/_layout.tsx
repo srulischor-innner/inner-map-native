@@ -21,11 +21,15 @@ import { HamburgerMenu } from '../../components/HamburgerMenu';
 import { subscribeMapPulse } from '../../utils/mapPulse';
 
 const TAB_ROUTES: { name: string; label: string; path: string }[] = [
-  { name: 'index',   label: 'CHAT',    path: '/' },
-  { name: 'map',     label: 'MAP',     path: '/map' },
-  { name: 'journal', label: 'JOURNAL', path: '/journal' },
-  { name: 'journey', label: 'JOURNEY', path: '/journey' },
-  { name: 'guide',   label: 'GUIDE',   path: '/guide' },
+  { name: 'index',         label: 'CHAT',    path: '/' },
+  { name: 'map',           label: 'MAP',     path: '/map' },
+  { name: 'journal',       label: 'JOURNAL', path: '/journal' },
+  { name: 'journey',       label: 'JOURNEY', path: '/journey' },
+  // Relationships tab. Label rendered as PARTNER (7 chars) to fit the
+  // 1/6 horizontal allotment alongside the longer existing tabs;
+  // the screen header still calls itself "Relationships" in full.
+  { name: 'relationships', label: 'PARTNER', path: '/relationships' },
+  { name: 'guide',         label: 'GUIDE',   path: '/guide' },
 ];
 
 function TopTabBar({ onMenu }: { onMenu: () => void }) {
@@ -124,11 +128,12 @@ export default function TabsLayout() {
           tabBarButton: () => null,
         }}
       >
-        <Tabs.Screen name="index"   options={{ title: 'Chat' }} />
-        <Tabs.Screen name="map"     options={{ title: 'Map' }} />
-        <Tabs.Screen name="journal" options={{ title: 'Journal' }} />
-        <Tabs.Screen name="journey" options={{ title: 'Journey' }} />
-        <Tabs.Screen name="guide"   options={{ title: 'Guide' }} />
+        <Tabs.Screen name="index"         options={{ title: 'Chat' }} />
+        <Tabs.Screen name="map"           options={{ title: 'Map' }} />
+        <Tabs.Screen name="journal"       options={{ title: 'Journal' }} />
+        <Tabs.Screen name="journey"       options={{ title: 'Journey' }} />
+        <Tabs.Screen name="relationships" options={{ title: 'Relationships' }} />
+        <Tabs.Screen name="guide"         options={{ title: 'Guide' }} />
       </Tabs>
       <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} />
     </View>
