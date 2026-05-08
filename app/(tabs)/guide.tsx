@@ -40,9 +40,11 @@ import { HealingErrorBoundary } from '../../components/guide/HealingErrorBoundar
 
 type SectionId = 'welcome' | 'map' | 'healing' | 'using';
 
-// AsyncStorage key — flips to '1' the first time the user reaches the
-// last Welcome slide, then suppresses the Welcome typewriter animation
-// on every subsequent tab visit and app launch.
+// Same AsyncStorage key the onboarding flow sets on B E G I N. We never
+// read it from this file anymore — the Guide tab's Welcome section
+// always renders static reference material. The key is referenced here
+// only so the __DEV__ long-press can clear it for testing the cinematic
+// onboarding experience without uninstalling.
 const HAS_SEEN_WELCOME_KEY = 'hasSeenWelcome';
 
 export default function GuideScreen() {
@@ -54,51 +56,29 @@ export default function GuideScreen() {
   // pill so users never have to leave their slide to ask a question.
   const [askOpen, setAskOpen] = useState(false);
 
-  // Three-state animation gate:
-  //   'unknown' — we haven't read AsyncStorage yet; render nothing
-  //               typewriter-related so the first paint isn't a flash
-  //               of plain text immediately replaced by an animation.
-  //   'animate' — first launch, run the typewriter on welcome slides.
-  //   'instant' — flag is set, every welcome slide renders text instantly.
-  const [welcomeAnimGate, setWelcomeAnimGate] = useState<
-    'unknown' | 'animate' | 'instant'
-  >('unknown');
-  useEffect(() => {
-    AsyncStorage.getItem(HAS_SEEN_WELCOME_KEY)
-      .then((v) => {
-        const gate = v ? 'instant' : 'animate';
-        console.log(`[guide] welcomeAnimGate resolved → '${gate}' (hasSeenWelcome=${v ? `'${v}'` : 'null'})`);
-        setWelcomeAnimGate(gate);
-      })
-      .catch((e) => {
-        console.warn('[guide] AsyncStorage read failed, defaulting to instant:', (e as Error)?.message);
-        setWelcomeAnimGate('instant');
-      });
-  }, []);
-  const markWelcomeSeen = useCallback(() => {
-    console.log('[guide] markWelcomeSeen — flipping hasSeenWelcome to "1"');
-    setWelcomeAnimGate((prev) => (prev === 'animate' ? 'instant' : prev));
-    AsyncStorage.setItem(HAS_SEEN_WELCOME_KEY, '1').catch(() => {});
-  }, []);
-
-  // Bumps on a __DEV__ reset to remount SlideSection so the lazy
-  // initializer in GuideSlide.tsx fires fresh — re-running the
-  // typewriter from the top instead of trying to retro-trigger an
-  // already-mounted slide.
-  const [welcomeRemountNonce, setWelcomeRemountNonce] = useState(0);
+  // __DEV__-only "replay onboarding" affordance. Long-press the Welcome
+  // pill in a dev build to clear hasSeenWelcome + the per-screen
+  // onboarding flags. The next app launch re-runs the cinematic
+  // onboarding (typewriter + bumped typography) from the top. No-op in
+  // production. Reload required after invocation — the route
+  // /onboarding only mounts at app boot, so AsyncStorage clear without
+  // a relaunch leaves the user on the tabs.
   const resetHasSeenWelcome = useCallback(async () => {
     if (!__DEV__) return;
-    console.log('[guide] DEV reset — clearing hasSeenWelcome and remounting Welcome');
+    console.log('[guide] DEV reset — clearing hasSeenWelcome + onboarding flags');
     try {
-      await AsyncStorage.removeItem(HAS_SEEN_WELCOME_KEY);
+      await AsyncStorage.multiRemove([
+        HAS_SEEN_WELCOME_KEY,
+        'hasSeenIntro',
+        'termsAccepted',
+        'intakeComplete',
+      ]);
     } catch (e) {
-      console.warn('[guide] DEV reset — AsyncStorage.removeItem failed:', (e as Error)?.message);
+      console.warn('[guide] DEV reset — AsyncStorage clear failed:', (e as Error)?.message);
     }
-    setWelcomeAnimGate('animate');
-    setWelcomeRemountNonce((n) => n + 1);
     Alert.alert(
-      'Welcome reset',
-      'hasSeenWelcome cleared. The typewriter will play on the next welcome render.',
+      'Onboarding reset',
+      'hasSeenWelcome + onboarding flags cleared. Force-quit and relaunch to see the cinematic onboarding from the top.',
     );
   }, []);
 
@@ -148,23 +128,12 @@ export default function GuideScreen() {
       </ScrollView>
 
       {section === 'welcome' ? (
-        // Hold the welcome render until the AsyncStorage read resolves —
-        // otherwise a returning user briefly sees the plain-text version
-        // before the typewriter would have started, or vice versa. The
-        // welcomeRemountNonce key forces a fresh mount when the dev
-        // reset fires, so GuideSlide's lazy initializer kicks the
-        // typewriter from poll one instead of trying to retro-trigger
-        // an already-mounted slide.
-        welcomeAnimGate === 'unknown' ? (
-          <View style={styles.sectionRoot} />
-        ) : (
-          <SlideSection
-            key={`welcome-${welcomeRemountNonce}`}
-            slides={WELCOME_SLIDES}
-            animateBody={welcomeAnimGate === 'animate'}
-            onReachLastSlide={markWelcomeSeen}
-          />
-        )
+        // Welcome in the Guide tab is reference material only — the
+        // cinematic typewriter+bumped-typography experience lives in
+        // the onboarding flow (app/onboarding.tsx) and runs once per
+        // install. The Guide tab always renders the same slides
+        // statically with standard typography.
+        <SlideSection slides={WELCOME_SLIDES} />
       ) : section === 'map' ? (
         <SlideSection slides={MAP_SLIDES} />
       ) : section === 'healing' ? (

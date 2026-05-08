@@ -13,18 +13,27 @@ export function GuideSlide({
   width,
   animateBody = false,
   isActive = false,
+  cinematic = false,
 }: {
   data: SlideData;
   width: number;
   /** When true, body paragraphs animate in via TypewriterText the first
-   *  time the slide becomes the active page. Used only by the Welcome
-   *  section's first-launch run (gated by hasSeenWelcome in the parent).
+   *  time the slide becomes the active page. Used by the onboarding
+   *  flow's WelcomeSlides on a brand-new install (gated by the
+   *  hasSeenWelcome AsyncStorage flag in the parent). The Guide tab
+   *  always passes false — once the user has seen the cinematic
+   *  welcome, the same slides render statically as reference material.
    *  Title always renders instantly regardless. */
   animateBody?: boolean;
   /** Whether this slide is currently the foreground page in the
    *  pager. Triggers the one-shot typewriter when both this and
    *  animateBody are true. */
   isActive?: boolean;
+  /** When true, render with bumped, bolder typography for a cinematic
+   *  first-launch feel (~20% larger title + body, weight 600 body).
+   *  False everywhere else (Guide tab, Map / Healing / Using sections)
+   *  so post-onboarding renders use the standard reference layout. */
+  cinematic?: boolean;
 }) {
   const { height } = useWindowDimensions();
   const visualSize = Math.min(width * 0.5, height * 0.32);
@@ -101,13 +110,23 @@ export function GuideSlide({
         </View>
       )}
       {data.title ? (
-        <Text style={[styles.title, data.titleColor ? { color: data.titleColor } : null]}>
+        <Text
+          style={[
+            styles.title,
+            cinematic && !isClosing ? styles.titleCinematic : null,
+            data.titleColor ? { color: data.titleColor } : null,
+          ]}
+        >
           {data.title}
         </Text>
       ) : null}
       <View style={[styles.body, isClosing && styles.closingBody]}>
         {data.body.map((para, i) => {
-          const paraStyle = isClosing ? styles.closingPara : styles.para;
+          const paraStyle = isClosing
+            ? styles.closingPara
+            : cinematic
+              ? styles.paraCinematic
+              : styles.para;
           if (showTypewriter) {
             return (
               <TypewriterText
@@ -158,6 +177,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: spacing.md,
   },
+  // Cinematic title — ~22% larger than the reference title, same
+  // CormorantGaramond_600SemiBold so the weight stays consistent.
+  // Used by the first-launch onboarding WelcomeSlides only.
+  titleCinematic: {
+    fontSize: 44,
+    lineHeight: 52,
+    letterSpacing: 0.4,
+    marginBottom: spacing.lg,
+  },
   body: { width: '100%', maxWidth: 560 },
   para: {
     color: colors.cream,
@@ -165,6 +193,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 24,
     marginBottom: spacing.sm,
+  },
+  // Cinematic body — ~20% larger and stepped up to weight 600 (DMSans
+  // SemiBold) so the words land with more presence on first launch.
+  // Used by the onboarding WelcomeSlides only; Guide-tab Welcome
+  // section keeps `para` for reference-material rhythm.
+  paraCinematic: {
+    color: colors.cream,
+    fontFamily: fonts.sansBold,
+    fontSize: 18,
+    lineHeight: 28,
+    marginBottom: spacing.md,
+    letterSpacing: 0.2,
   },
 
   // Closing slide — generous vertical breathing room so the morphing

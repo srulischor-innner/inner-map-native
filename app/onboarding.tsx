@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import {
@@ -26,6 +27,11 @@ import { api } from '../services/api';
 import { GuideSlide } from '../components/guide/GuideSlide';
 import { GuideDots } from '../components/guide/GuideDots';
 import { WELCOME_SLIDES } from '../utils/guideContent';
+
+// Same key used to gate the Guide tab's Welcome section so it never
+// re-runs the cinematic experience as static reference. Set the moment
+// the user taps B E G I N on the last onboarding slide.
+const HAS_SEEN_WELCOME_KEY = 'hasSeenWelcome';
 import {
   ExperienceLevel, LEVEL_OPTIONS, setExperienceLevel,
 } from '../services/experienceLevel';
@@ -45,7 +51,21 @@ export default function OnboardingScreen() {
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       {phase === 'welcome' ? (
-        <WelcomeSlides onDone={async () => { await markIntroSeen(); setPhase('terms'); }} />
+        <WelcomeSlides
+          onDone={async () => {
+            // Set hasSeenWelcome the moment the user finishes the
+            // cinematic onboarding experience. From this point on
+            // every visit to the Guide tab's Welcome section renders
+            // the same slides as static reference material — no
+            // typewriter, standard typography. Best-effort; an
+            // AsyncStorage failure here just means the Guide tab
+            // would briefly render in the cinematic style on the
+            // user's first visit, which isn't catastrophic.
+            try { await AsyncStorage.setItem(HAS_SEEN_WELCOME_KEY, '1'); } catch {}
+            await markIntroSeen();
+            setPhase('terms');
+          }}
+        />
       ) : phase === 'terms' ? (
         <TermsScreen onAccept={async () => { await markTermsAccepted(); await api.acceptTerms(); setPhase('intake'); }} />
       ) : phase === 'intake' ? (
@@ -96,7 +116,19 @@ function WelcomeSlides({ onDone }: { onDone: () => void }) {
           if (i !== index) setIndex(i);
         }}
         scrollEventThrottle={16}
-        renderItem={({ item }) => <GuideSlide data={item} width={width} />}
+        renderItem={({ item, index: i }) => (
+          <GuideSlide
+            data={item}
+            width={width}
+            // First-launch cinematic experience: typewriter on each
+            // slide as it becomes active, bigger/bolder typography
+            // throughout. Both flags are owned by the onboarding
+            // route and live nowhere else.
+            animateBody
+            cinematic
+            isActive={i === index}
+          />
+        )}
       />
       <View style={styles.welcomeFoot}>
         <GuideDots
