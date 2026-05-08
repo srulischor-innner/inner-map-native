@@ -892,6 +892,41 @@ export const api = {
     }
   },
 
+  /** GET /api/relationships/:id/map. Returns the two-triangle visual
+   *  data: each partner's wound / fixer / skeptic / self-like content
+   *  (each { text, confirmed }), plus the shared-wound state (active
+   *  flag + content). Returns null on transport failure. */
+  async getRelationshipMap(relationshipId: string): Promise<{
+    relationshipId: string;
+    mySide: 'inviter' | 'invitee';
+    partnerName: string | null;
+    me: {
+      wound:    { text: string | null; confirmed: boolean };
+      fixer:    { text: string | null; confirmed: boolean };
+      skeptic:  { text: string | null; confirmed: boolean };
+      selfLike: { text: string | null; confirmed: boolean };
+    };
+    partner: {
+      wound:    { text: string | null; confirmed: boolean };
+      fixer:    { text: string | null; confirmed: boolean };
+      skeptic:  { text: string | null; confirmed: boolean };
+      selfLike: { text: string | null; confirmed: boolean };
+    };
+    sharedWound: { active: boolean; content: string | null };
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/relationships/${encodeURIComponent(relationshipId)}/map`, {
+        label: 'rel-map', method: 'GET', headers,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      console.warn('[rel-map] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   /** POST /api/relationships/:id/shared/:sid/comment. Server caps at
    *  500 chars and 400's longer payloads — UI should mirror the cap. */
   async commentOnSharedItem(

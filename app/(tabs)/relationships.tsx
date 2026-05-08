@@ -52,6 +52,7 @@ import { api } from '../../services/api';
 import { PENDING_INVITE_CODE_KEY } from '../connect/[code]';
 import { RelationshipChat } from '../../components/relationships/RelationshipChat';
 import { SharedFeed } from '../../components/relationships/SharedFeed';
+import { RelationshipMap } from '../../components/relationships/RelationshipMap';
 
 // One row of /api/relationships, mirrored from the api.ts wrapper. Kept
 // inline rather than imported so the screen is self-documenting on the
@@ -524,13 +525,12 @@ function ActiveView({ rel }: { rel: Relationship }) {
           onPromptChip={onPromptChip}
         />
       </View>
-      {view === 'map' ? (
-        <View style={styles.stubBody}>
-          <Text style={styles.stubHeadline}>The map of you and {rel.partnerName || 'your partner'}</Text>
-          <Text style={styles.stubSub}>The two-triangle visual lands in the next build.</Text>
-          <Text style={styles.stubMeta}>relationship id: {rel.id.slice(0, 8)}…</Text>
-        </View>
-      ) : null}
+      <View style={[styles.subViewRoot, view !== 'map' && styles.subViewHidden]}>
+        <RelationshipMap
+          relationshipId={rel.id}
+          partnerName={rel.partnerName}
+        />
+      </View>
     </View>
   );
 }

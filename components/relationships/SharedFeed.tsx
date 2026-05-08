@@ -28,6 +28,7 @@ import * as Haptics from 'expo-haptics';
 
 import { colors, fonts, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
+import { RelationshipMapPinned } from './RelationshipMap';
 
 const COMMENT_CAP = 500;
 
@@ -169,6 +170,17 @@ export function SharedFeed({
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Pinned compact map at the top — same source data as the
+            Map sub-view, mounted independently so this component
+            doesn't depend on the parent passing it down. The pinned
+            variant fetches /api/relationships/:id/map on mount and
+            holds a fixed-height placeholder until the response
+            lands so the feed below doesn't jump. */}
+        <RelationshipMapPinned
+          relationshipId={relationshipId}
+          partnerName={partnerName}
+        />
+
         {pending.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Awaiting your approval</Text>
