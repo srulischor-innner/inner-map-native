@@ -267,17 +267,60 @@ export default function MapScreen() {
     });
   }
 
+  // Swipe-detection thresholds. Tuned for one-handed thumb swipes
+  // across the canvas — too tight and quick flicks miss; too loose
+  // and a vertical scroll inside the canvas wrap accidentally pages.
+  const SWIPE_MIN_DX           = 8;     // pickup threshold for declaring "this is a swipe"
+  const SWIPE_DIRECTION_RATIO  = 1.0;   // |dx| must exceed |dy| (strict horizontal)
+  const SWIPE_COMMIT_DX        = 40;    // distance threshold to commit the page change
+  const SWIPE_COMMIT_VX        = 0.3;   // velocity threshold for fast-flick commits
+
+  // Shared horizontal-pan detector used by both the regular and
+  // Capture phases. The capture phase claims the gesture from
+  // child views (the tappable InnerMapCanvas nodes) when the user
+  // moves enough horizontally — without it, a Pressable inside the
+  // canvas can briefly hold the gesture and the swipe gets dropped.
+  function isHorizontalSwipe(g: { dx: number; dy: number }) {
+    if (layersRef.current.length < 2) return false;
+    const absDx = Math.abs(g.dx);
+    const absDy = Math.abs(g.dy);
+    return absDx > SWIPE_MIN_DX && absDx > absDy * SWIPE_DIRECTION_RATIO;
+  }
+
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_evt, g) => {
-        if (layersRef.current.length < 2) return false;
-        return Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5;
-      },
+      // Touch start NEVER claims the gesture — taps on canvas nodes
+      // (handleTap on InnerMapCanvas) need to reach their handlers,
+      // and the swipe is only declared once the user actually moves.
+      onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponderCapture: () => false,
+      // Move-phase: regular AND capture variants both run the same
+      // horizontal-swipe test. Capture claims from descendants the
+      // moment a horizontal drag is identifiable — this is the
+      // single biggest reliability fix; without Capture, the
+      // first child Pressable to react to the touch wins, and the
+      // swipe silently drops on contact.
+      onMoveShouldSetPanResponder:        (_evt, g) => isHorizontalSwipe(g),
+      onMoveShouldSetPanResponderCapture: (_evt, g) => isHorizontalSwipe(g),
+      // Once we own the gesture, refuse to give it back to a child —
+      // otherwise mid-swipe a Pressable could re-claim and drop us.
+      onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_evt, g) => {
         slideX.setValue(g.dx);
       },
       onPanResponderRelease: (_evt, g) => {
-        if (Math.abs(g.dx) >= 60) {
+        // Two ways to commit a page change:
+        //   1. Distance crossed: |dx| ≥ 40px.
+        //   2. Fast flick: |vx| ≥ 0.3 in the dx direction. Lets a
+        //      quick decisive flick advance even if the finger only
+        //      traveled 25-30px before lifting.
+        const distOK = Math.abs(g.dx) >= SWIPE_COMMIT_DX;
+        const flickOK = Math.abs(g.vx) >= SWIPE_COMMIT_VX && Math.sign(g.vx) === Math.sign(g.dx);
+        if (distOK || flickOK) {
+          // dx < 0 (finger moved LEFT) → +1, advancing toward
+          // secondary (layers[1+]). dx > 0 (finger moved RIGHT) →
+          // -1, returning toward primary (layers[0]). Standard
+          // page-carousel convention; do NOT flip.
           commitLayerChange(g.dx < 0 ? 1 : -1);
         } else {
           Animated.spring(slideX, { toValue: 0, useNativeDriver: true, friction: 8 }).start();
