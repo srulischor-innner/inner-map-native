@@ -50,6 +50,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, fonts, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { PENDING_INVITE_CODE_KEY } from '../connect/[code]';
+import { RelationshipChat } from '../../components/relationships/RelationshipChat';
+import { SharedFeed } from '../../components/relationships/SharedFeed';
 
 // One row of /api/relationships, mirrored from the api.ts wrapper. Kept
 // inline rather than imported so the screen is self-documenting on the
@@ -274,7 +276,7 @@ export default function RelationshipsScreen() {
       ) : phase.kind === 'pending-intros' ? (
         <PendingIntrosView rel={phase.rel} onRefresh={refresh} onReadIntro={onReadIntro} />
       ) : (
-        <ActiveStubView rel={phase.rel} />
+        <ActiveView rel={phase.rel} />
       )}
     </SafeAreaView>
   );
@@ -462,19 +464,27 @@ function PendingIntrosView({
 }
 
 // =============================================================================
-// ACTIVE — Phase 6 will replace this with the three sub-views (chat / shared /
-// map). Stubs for now so the tab is fully navigable end-to-end.
+// ACTIVE — three sub-views (chat / shared / map). Chat + Shared are
+// fully implemented in this commit; Map remains a stub here and lands
+// in Phase 6 commit 2 with the two-triangle visual.
+//
+// Shared → Chat hand-off: when the user taps a prompt chip on a shared
+// item, the chat sub-view receives a prefill string. ActiveView holds
+// that prefill in local state and clears it the moment the chat view
+// has consumed it (via onPrefillConsumed) so a second chip tap
+// delivers a fresh prefill.
 // =============================================================================
 type SubView = 'chat' | 'shared' | 'map';
 
-function ActiveStubView({ rel }: { rel: Relationship }) {
+function ActiveView({ rel }: { rel: Relationship }) {
   const [view, setView] = useState<SubView>('chat');
-  const partner = rel.partnerName || 'your partner';
-  const headline = useMemo(() => {
-    if (view === 'chat')   return `Private chat with the AI about you and ${partner}`;
-    if (view === 'shared') return `Approved insights — visible to both of you`;
-    return `The map of you and ${partner}`;
-  }, [view, partner]);
+  const [chatPrefill, setChatPrefill] = useState<string | null>(null);
+
+  const onPromptChip = useCallback((prefill: string) => {
+    setChatPrefill(prefill);
+    setView('chat');
+  }, []);
+
   return (
     <View style={styles.activeRoot}>
       <View style={styles.segments}>
@@ -494,11 +504,33 @@ function ActiveStubView({ rel }: { rel: Relationship }) {
           </Pressable>
         ))}
       </View>
-      <View style={styles.stubBody}>
-        <Text style={styles.stubHeadline}>{headline}</Text>
-        <Text style={styles.stubSub}>This view lands in the next build.</Text>
-        <Text style={styles.stubMeta}>relationship id: {rel.id.slice(0, 8)}…</Text>
+      {/* Both Chat and Shared mount continuously and just hide via
+          display:'none' — keeps their state intact (chat scroll
+          position, shared feed cache) when the user toggles between
+          them. The Map sub-view is a placeholder until Phase 6
+          commit 2. */}
+      <View style={[styles.subViewRoot, view !== 'chat' && styles.subViewHidden]}>
+        <RelationshipChat
+          relationshipId={rel.id}
+          partnerName={rel.partnerName}
+          prefill={chatPrefill}
+          onPrefillConsumed={() => setChatPrefill(null)}
+        />
       </View>
+      <View style={[styles.subViewRoot, view !== 'shared' && styles.subViewHidden]}>
+        <SharedFeed
+          relationshipId={rel.id}
+          partnerName={rel.partnerName}
+          onPromptChip={onPromptChip}
+        />
+      </View>
+      {view === 'map' ? (
+        <View style={styles.stubBody}>
+          <Text style={styles.stubHeadline}>The map of you and {rel.partnerName || 'your partner'}</Text>
+          <Text style={styles.stubSub}>The two-triangle visual lands in the next build.</Text>
+          <Text style={styles.stubMeta}>relationship id: {rel.id.slice(0, 8)}…</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -678,6 +710,12 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   segmentTextActive: { color: colors.amber },
+  // subViewRoot — fills the remaining tab area beneath the segmented
+  // control. flex:1 + display='none' on the inactive view keeps both
+  // chat + shared continuously mounted (state preserved) without
+  // re-creating their tree on every toggle.
+  subViewRoot: { flex: 1 },
+  subViewHidden: { display: 'none' },
   stubBody: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   stubHeadline: {
     color: colors.cream,

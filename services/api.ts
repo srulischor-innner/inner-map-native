@@ -116,12 +116,19 @@ export const api = {
       /** When true, server swaps in MAP_VOICE_PROMPT and caps max_tokens
        *  at 150 for snappy spoken replies. */
       mapVoice?: boolean;
-      /** Chat tab mode toggle — drives which of the two text-chat
-       *  prompts the server uses on /api/chat:
-       *    'process' → HOLDING_SPACE_PROMPT (default, gentle)
-       *    'explore' → MAPPING_PROMPT (active curiosity + mapping)
+      /** Chat tab mode toggle — drives which of the prompt templates
+       *  the server selects on /api/chat:
+       *    'process'      → HOLDING_SPACE_PROMPT (default, gentle)
+       *    'explore'      → MAPPING_PROMPT (active curiosity + mapping)
+       *    'relationship' → RELATIONSHIPS_PROMPT (couple-mode, requires
+       *                     relationshipId; server assembles a partner-
+       *                     context preamble before the prompt body)
        *  Defaults to 'process' on the server when unset. */
-      chatMode?: 'process' | 'explore';
+      chatMode?: 'process' | 'explore' | 'relationship';
+      /** Required when chatMode === 'relationship'. Server validates
+       *  membership + status='active' + both intro flags before
+       *  letting the chat run. */
+      relationshipId?: string;
     },
     cb: StreamCallbacks,
   ): Promise<() => void> {
@@ -138,6 +145,7 @@ export const api = {
     if (params.experienceLevel) bodyObj.experienceLevel = params.experienceLevel;
     if (params.mapVoice) bodyObj.mapVoice = true;
     if (params.chatMode) bodyObj.chatMode = params.chatMode;
+    if (params.relationshipId) bodyObj.relationshipId = params.relationshipId;
     console.log(
       `[chat] sending mode=${bodyObj.mode} msgCount=${params.messages.length} lastRole=${params.messages[params.messages.length - 1]?.role}`,
     );
@@ -756,6 +764,154 @@ export const api = {
       return j;
     } catch (e) {
       console.warn('[rel-accept-intro] threw:', (e as Error)?.message);
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  // ===========================================================================
+  // RELATIONSHIPS — phase 6 wrappers (chat history + shared feed)
+  // ===========================================================================
+
+  /** GET /api/relationships/:id/messages. Returns the calling partner's
+   *  PRIVATE chat history — only their own rows. The other partner's
+   *  chat is visible to the AI through the server-side preamble but
+   *  never to the calling partner directly. */
+  async listRelationshipMessages(relationshipId: string): Promise<Array<{
+    id: string; role: 'user' | 'assistant'; content: string; createdAt: string;
+  }>> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/relationships/${encodeURIComponent(relationshipId)}/messages`, {
+        label: 'rel-messages', method: 'GET', headers,
+      });
+      if (!res.ok) return [];
+      const j: any = await res.json();
+      return Array.isArray(j?.messages) ? j.messages : [];
+    } catch (e) {
+      console.warn('[rel-messages] threw:', (e as Error)?.message);
+      return [];
+    }
+  },
+
+  /** GET /api/relationships/:id/shared. Pulls published shared items
+   *  (each hydrated with reactions + comments) plus this user's
+   *  pending proposals — proposals from THIS user's chat awaiting
+   *  their own approval (scope='this-partner'), or proposals from
+   *  EITHER chat awaiting their approval (scope='both-partners'). */
+  async listRelationshipShared(relationshipId: string): Promise<{
+    sharedItems: Array<{
+      id: string; type: string; content: string; publishedAt: string;
+      reactions: Array<{ id: string; userId: string; reaction: string; createdAt: string; side: 'inviter' | 'invitee' }>;
+      comments:  Array<{ id: string; userId: string; content: string; createdAt: string; side: 'inviter' | 'invitee' }>;
+    }>;
+    myPendingProposals: Array<{
+      id: string; type: string; content: string;
+      scope: 'this-partner' | 'both-partners';
+      sourceSide: 'inviter' | 'invitee';
+      youAreSource: boolean;
+      createdAt: string;
+    }>;
+    meta: { mySide: 'inviter' | 'invitee' };
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/relationships/${encodeURIComponent(relationshipId)}/shared`, {
+        label: 'rel-shared', method: 'GET', headers,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      console.warn('[rel-shared] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** POST /api/relationships/:id/proposals/:pid/approve. Server flips
+   *  the caller's column to 'approved' and auto-promotes the proposal
+   *  to a shared item if its scope's threshold is met (this-partner
+   *  needs only the source's approval; both-partners needs both). */
+  async approveRelationshipProposal(relationshipId: string, proposalId: string): Promise<
+    | { approved: boolean; promoted: boolean; sharedItemId: string | null; already?: boolean }
+    | { error: string; message?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/proposals/${encodeURIComponent(proposalId)}/approve`,
+        { label: 'rel-proposal-approve', method: 'POST', headers, body: JSON.stringify({}) },
+      );
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
+      return j;
+    } catch (e) {
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  /** POST /api/relationships/:id/proposals/:pid/reject. Marks the
+   *  caller's column as 'rejected'. Proposal stays in the table for
+   *  audit but can never promote. */
+  async rejectRelationshipProposal(relationshipId: string, proposalId: string): Promise<
+    | { rejected: boolean }
+    | { error: string; message?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/proposals/${encodeURIComponent(proposalId)}/reject`,
+        { label: 'rel-proposal-reject', method: 'POST', headers, body: JSON.stringify({}) },
+      );
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
+      return j;
+    } catch (e) {
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  /** POST /api/relationships/:id/shared/:sid/react. Server enforces
+   *  toggle semantics — passing the same reaction the user already
+   *  has clears it; passing null clears explicitly; passing a
+   *  different one replaces. */
+  async reactToSharedItem(
+    relationshipId: string,
+    sharedItemId: string,
+    reaction: 'resonates' | 'unsure' | 'doesnt-fit' | null,
+  ): Promise<{ reaction: 'resonates' | 'unsure' | 'doesnt-fit' | null } | { error: string; message?: string }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/${encodeURIComponent(sharedItemId)}/react`,
+        { label: 'rel-shared-react', method: 'POST', headers, body: JSON.stringify({ reaction }) },
+      );
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
+      return j;
+    } catch (e) {
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  /** POST /api/relationships/:id/shared/:sid/comment. Server caps at
+   *  500 chars and 400's longer payloads — UI should mirror the cap. */
+  async commentOnSharedItem(
+    relationshipId: string,
+    sharedItemId: string,
+    content: string,
+  ): Promise<
+    | { comment: { id: string; content: string; createdAt: string; userId: string; side: 'inviter' | 'invitee' } }
+    | { error: string; message?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/${encodeURIComponent(sharedItemId)}/comment`,
+        { label: 'rel-shared-comment', method: 'POST', headers, body: JSON.stringify({ content }) },
+      );
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
+      return j;
+    } catch (e) {
       return { error: 'transport-failed', message: (e as Error)?.message };
     }
   },
