@@ -162,18 +162,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   tab: { flex: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  // Tightened typography for the six-tab bar. Previously fontSize 11
+  // + letterSpacing 1.2 made the longer labels (JOURNAL, JOURNEY,
+  // PARTNER) crowd into each other once a sixth pill landed. ~15%
+  // smaller font + halved letter-spacing fits all six cleanly with
+  // even spacing across the bar.
   label: {
     color: colors.creamFaint,
     fontFamily: fonts.sansBold,
-    fontSize: 11,
-    letterSpacing: 1.2,
+    fontSize: 9.5,
+    letterSpacing: 0.6,
   },
   labelActive: { color: colors.amber, fontFamily: fonts.sansBold },
   // Chunkier, glowier active underline per the latest spec. 2px tall with a
-  // strong amber shadow so it reads as "lit" even in daylight.
+  // strong amber shadow so it reads as "lit" even in daylight. Inset
+  // tightened from 14 → 8 to match the smaller label footprint.
   underline: {
     position: 'absolute',
-    left: 14, right: 14, bottom: 0,
+    left: 8, right: 8, bottom: 0,
     height: 2,
     backgroundColor: colors.amber,
     borderRadius: 2,

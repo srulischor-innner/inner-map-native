@@ -53,6 +53,15 @@ import { PENDING_INVITE_CODE_KEY } from '../connect/[code]';
 import { RelationshipChat } from '../../components/relationships/RelationshipChat';
 import { SharedFeed } from '../../components/relationships/SharedFeed';
 import { RelationshipMap } from '../../components/relationships/RelationshipMap';
+import { RelationshipIntroCarousel } from '../../components/relationships/RelationshipIntroCarousel';
+
+// AsyncStorage flag — flips to '1' the first time the user reaches the
+// last slide of the informational intro (tab-level). Subsequent visits
+// to the Partner tab skip the carousel and go straight to the connect
+// screen / state machine. Per-install, not per-relationship — distinct
+// from the per-pairing 'relationships.introSeen:<id>' key used by the
+// commitment-mode carousel after pairing.
+const TAB_INTRO_SEEN_KEY = 'relationships.tabIntroSeen';
 
 // One row of /api/relationships, mirrored from the api.ts wrapper. Kept
 // inline rather than imported so the screen is self-documenting on the
@@ -103,6 +112,32 @@ export default function RelationshipsScreen() {
   // mount. Without this, refresh() can trigger a second attempt that
   // hits "invite-already-claimed" instead of the success path.
   const [resumeAttempted, setResumeAttempted] = useState(false);
+
+  // First-time tab-intro gate. Three-state pattern (same as the
+  // typewriter gate elsewhere) so the screen holds a blank canvas
+  // briefly while AsyncStorage resolves rather than flashing the
+  // connect screen and *then* swapping in the carousel.
+  //
+  //   'unknown' → AsyncStorage read still pending; render loader
+  //   'unseen'  → flag absent → render the informational carousel
+  //   'seen'    → flag present → fall through to the state machine
+  const [tabIntro, setTabIntro] = useState<'unknown' | 'unseen' | 'seen'>('unknown');
+
+  useEffect(() => {
+    AsyncStorage.getItem(TAB_INTRO_SEEN_KEY)
+      .then((v) => setTabIntro(v ? 'seen' : 'unseen'))
+      .catch(() => setTabIntro('seen'));
+  }, []);
+
+  // GET STARTED handler — last-slide button in the informational
+  // carousel. Flip the flag, advance to the state machine. The
+  // carousel also stamps the same key internally on its own
+  // last-slide-reached effect, but we set it here too so the parent
+  // state stays in lockstep with what's on disk.
+  const onTabIntroDone = useCallback(async () => {
+    try { await AsyncStorage.setItem(TAB_INTRO_SEEN_KEY, '1'); } catch {}
+    setTabIntro('seen');
+  }, []);
 
   // Navigate to the per-partner intro carousel (Phase 5).
   // /relationships/intro/[id] is a route file under app/, so a normal
@@ -255,6 +290,30 @@ export default function RelationshipsScreen() {
   // require a dependency bump that this phase doesn't need.
 
   // ---- Render branches ----
+
+  // First-time tab-intro gate. We render the carousel BEFORE running
+  // the relationship state machine — a brand-new user sees the six
+  // cinematic slides on their very first tap into the Partner tab,
+  // and only after GET STARTED do they see the connect screen.
+  // Subsequent visits skip directly to the state machine.
+  if (tabIntro === 'unknown') {
+    return (
+      <SafeAreaView style={styles.root} edges={[]}>
+        <CenteredLoader />
+      </SafeAreaView>
+    );
+  }
+  if (tabIntro === 'unseen') {
+    return (
+      <SafeAreaView style={styles.root} edges={[]}>
+        <RelationshipIntroCarousel
+          mode="informational"
+          onComplete={onTabIntroDone}
+          introSeenKey={TAB_INTRO_SEEN_KEY}
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
