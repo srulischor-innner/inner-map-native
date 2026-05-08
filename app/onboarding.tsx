@@ -9,7 +9,7 @@
 // restart mid-flow resumes where the user left off. When the final flag lands we
 // router.replace('/') to the main tabs.
 
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, Pressable, TextInput, ScrollView, StyleSheet,
   KeyboardAvoidingView, Platform, FlatList, useWindowDimensions,
@@ -38,16 +38,79 @@ import {
 
 type Phase = 'welcome' | 'terms' | 'intake' | 'experience' | 'resources' | 'notTherapy';
 
+// Same key the deep-link route in app/connect/[code].tsx writes when a
+// brand-new user taps an invite link before completing onboarding.
+// Imported here only by string identity to keep the dependency graph
+// flat — onboarding.tsx and connect/[code].tsx are both top-level
+// route files, so a runtime import would create an awkward cycle.
+const PENDING_INVITE_CODE_KEY = 'relationships.pendingInviteCode';
+
 export default function OnboardingScreen() {
   const [phase, setPhase] = useState<Phase>('welcome');
+  // isInvitee — flips true on mount when AsyncStorage has a staged
+  // invite code (set by app/connect/[code].tsx). Drives the shortened
+  // onboarding path: welcome slides → terms → /relationships, skipping
+  // intake / experience / resources / notTherapy. The relationship
+  // intro slides (Phase 5) live in the relationships tab itself, so
+  // the invitee lands there with their staged code in hand and the
+  // tab's resume-after-onboarding effect picks it up automatically.
+  //
+  // Self-explorers who didn't come in through a deep link follow the
+  // full path unchanged.
+  const [isInvitee, setIsInvitee] = useState<boolean | null>(null);
   const router = useRouter();
 
+  useEffect(() => {
+    AsyncStorage.getItem(PENDING_INVITE_CODE_KEY)
+      .then((v) => setIsInvitee(!!v))
+      .catch(() => setIsInvitee(false));
+  }, []);
+
+  // Full-path completion (self-explorer): mark intake complete + route
+  // to chat tab. The relationship intro slides + chat live behind the
+  // PARTNER tab; users who go through the full flow can opt into them
+  // later.
   async function finishAndEnterApp() {
     await markIntakeComplete();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     router.replace('/');
   }
 
+  // Invitee shortcut — terms-only path. Mark intro+intake all complete
+  // (no welcome slides shown, no intake collected, no experience-level
+  // pick, no resources/notTherapy moment), then route to /relationships
+  // where the resume-after-onboarding consumer will accept the staged
+  // invite and surface the relationship intro slides.
+  async function finishAsInvitee() {
+    try { await markIntroSeen(); } catch {}
+    try { await markIntakeComplete(); } catch {}
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    router.replace('/relationships');
+  }
+
+  // Hold rendering until the invitee detection settles. Otherwise a
+  // brand-new invitee would flash through one frame of the welcome
+  // slide before the effect resolved and we'd skip past it.
+  if (isInvitee === null) {
+    return <SafeAreaView style={styles.root} edges={['top', 'bottom']} />;
+  }
+
+  // INVITEE PATH — terms only. Bypasses every other onboarding phase.
+  if (isInvitee) {
+    return (
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <TermsScreen
+          onAccept={async () => {
+            await markTermsAccepted();
+            try { await api.acceptTerms(); } catch {}
+            await finishAsInvitee();
+          }}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // SELF-EXPLORER PATH — full original flow.
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       {phase === 'welcome' ? (
