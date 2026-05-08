@@ -43,6 +43,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -90,6 +91,7 @@ function classify(rels: Relationship[]): Phase {
 }
 
 export default function RelationshipsScreen() {
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const [pasteCode, setPasteCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -98,6 +100,17 @@ export default function RelationshipsScreen() {
   // mount. Without this, refresh() can trigger a second attempt that
   // hits "invite-already-claimed" instead of the success path.
   const [resumeAttempted, setResumeAttempted] = useState(false);
+
+  // Navigate to the per-partner intro carousel (Phase 5).
+  // /relationships/intro/[id] is a route file under app/, so a normal
+  // expo-router push routes there. The intro screen calls
+  // acceptRelationshipIntro on accept and replaces back here, where
+  // the state machine refreshes into pending-intros (waiting on the
+  // other partner) or active.
+  const onReadIntro = useCallback((relationshipId: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    router.push(`/relationships/intro/${encodeURIComponent(relationshipId)}` as any);
+  }, [router]);
 
   const refresh = useCallback(async () => {
     const rels = (await api.listRelationships()) as Relationship[];
@@ -259,7 +272,7 @@ export default function RelationshipsScreen() {
           onRefresh={refresh}
         />
       ) : phase.kind === 'pending-intros' ? (
-        <PendingIntrosView rel={phase.rel} onRefresh={refresh} />
+        <PendingIntrosView rel={phase.rel} onRefresh={refresh} onReadIntro={onReadIntro} />
       ) : (
         <ActiveStubView rel={phase.rel} />
       )}
@@ -386,7 +399,13 @@ function PendingNoPartnerView({
   );
 }
 
-function PendingIntrosView({ rel, onRefresh }: { rel: Relationship; onRefresh: () => void }) {
+function PendingIntrosView({
+  rel, onRefresh, onReadIntro,
+}: {
+  rel: Relationship;
+  onRefresh: () => void;
+  onReadIntro: (relationshipId: string) => void;
+}) {
   const partner = rel.partnerName || 'Your partner';
   const waitingOnMe = !rel.myIntroDone;
   const waitingOnThem = rel.myIntroDone && !rel.partnerIntroDone;
@@ -421,7 +440,7 @@ function PendingIntrosView({ rel, onRefresh }: { rel: Relationship; onRefresh: (
         </View>
         {waitingOnMe ? (
           <Pressable
-            onPress={() => Alert.alert('Coming next', 'The intro screen lands in the next build. For now, the chat opens once both of you tap through.')}
+            onPress={() => onReadIntro(rel.id)}
             style={[styles.btnPrimary, { marginTop: spacing.lg }]}
             accessibilityLabel="Read the intro"
           >
