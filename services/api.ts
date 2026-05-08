@@ -648,4 +648,115 @@ export const api = {
       return null;
     }
   },
+
+  // ===========================================================================
+  // RELATIONSHIPS — phase 2 wrappers
+  // ===========================================================================
+
+  /** POST /api/relationships/invite. Mints (or reuses) a pending invite for
+   *  the calling user. Returns the relationshipId, the 8-char code, the
+   *  shareable link, and whether the row was reused vs freshly created. */
+  async createRelationshipInvite(): Promise<{
+    relationshipId: string;
+    inviteCode: string;
+    link: string;
+    reused: boolean;
+  } | { error: string; message?: string }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/relationships/invite', {
+        label: 'rel-invite', method: 'POST', headers, body: JSON.stringify({}),
+      });
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
+      return j;
+    } catch (e) {
+      console.warn('[rel-invite] threw:', (e as Error)?.message);
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  /** POST /api/relationships/accept. Accepts an invite by code. Server
+   *  validates the code, the not-self constraint, and the v1 single-active-
+   *  relationship limit. Returns relationshipId + partnerName on success;
+   *  on failure returns one of:
+   *    'missing-invite-code' | 'invite-not-found' | 'invite-already-used'
+   *    | 'invite-already-claimed' | 'cannot-accept-own-invite'
+   *    | 'already-in-relationship'
+   *  All as plain { error } objects so the screen can branch on them. */
+  async acceptRelationshipInvite(inviteCode: string): Promise<
+    | { relationshipId: string; partnerName: string | null }
+    | { error: string; message?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/relationships/accept', {
+        label: 'rel-accept', method: 'POST', headers,
+        body: JSON.stringify({ inviteCode: String(inviteCode || '').trim().toUpperCase() }),
+      });
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
+      return j;
+    } catch (e) {
+      console.warn('[rel-accept] threw:', (e as Error)?.message);
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  /** GET /api/relationships. Lists relationships the user is part of, each
+   *  enriched with myRole / partnerId / partnerName / myIntroDone /
+   *  partnerIntroDone for native rendering. safetyFlagged is stripped on the
+   *  server. Returns [] on transport failure rather than null so the UI can
+   *  uniformly check .length. */
+  async listRelationships(): Promise<Array<{
+    id: string;
+    inviterUserId: string;
+    inviteeUserId: string | null;
+    inviteCode: string | null;
+    status: 'pending' | 'active' | 'paused';
+    inviterAcceptedIntro: number;
+    inviteeAcceptedIntro: number;
+    createdAt: string;
+    updatedAt: string;
+    link: string | null;
+    myRole: 'inviter' | 'invitee';
+    partnerId: string | null;
+    partnerName: string | null;
+    myIntroDone: boolean;
+    partnerIntroDone: boolean;
+  }>> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/relationships', {
+        label: 'rel-list', method: 'GET', headers,
+      });
+      if (!res.ok) return [];
+      const j: any = await res.json();
+      return Array.isArray(j?.relationships) ? j.relationships : [];
+    } catch (e) {
+      console.warn('[rel-list] threw:', (e as Error)?.message);
+      return [];
+    }
+  },
+
+  /** POST /api/relationships/:id/accept-intro. Flips the calling user's
+   *  intro flag. Server auto-promotes the row to status='active' the moment
+   *  both flags + inviteeUserId are set; that's surfaced as `promoted`. */
+  async acceptRelationshipIntro(relationshipId: string): Promise<
+    | { relationship: any; promoted: boolean }
+    | { error: string; message?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/relationships/${encodeURIComponent(relationshipId)}/accept-intro`, {
+        label: 'rel-accept-intro', method: 'POST', headers, body: JSON.stringify({}),
+      });
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
+      return j;
+    } catch (e) {
+      console.warn('[rel-accept-intro] threw:', (e as Error)?.message);
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
 };

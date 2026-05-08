@@ -17,6 +17,9 @@
       "bundleIdentifier": "com.srulischor.innermap",
       "buildNumber": "1",
       "supportsTablet": false,
+      "associatedDomains": [
+        "applinks:inner-map-production.up.railway.app"
+      ],
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Inner Map uses the microphone for voice notes and voice conversations.",
         "NSSpeechRecognitionUsageDescription": "Inner Map uses speech recognition to transcribe your voice notes.",
@@ -41,6 +44,23 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "RECORD_AUDIO"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "inner-map-production.up.railway.app",
+              "pathPrefix": "/connect/"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
       ]
     },
     "web": {
