@@ -1,4 +1,4 @@
-// Six-slide cinematic intro carousel — used in two places in the
+// Six-slide cinematic intro carousel — used in three places in the
 // app, each with its own button copy:
 //
 //   mode='informational'
@@ -15,9 +15,15 @@
 //     onComplete() fires api.acceptRelationshipIntro to flip the
 //     server-side intro flag.
 //
-// Both modes share the exact same six slides + visuals + cinematic
-// typography. Body text renders instantly on every slide — the
-// previous typewriter animation was removed so the cinematic
+//   mode='review'
+//     User tapped the info (ℹ︎) button on the Partner tab to
+//     revisit the framing. No commitment, no flag flip — last
+//     slide button reads "GOT IT" and onComplete() just dismisses
+//     back to whatever sub-view the user was on.
+//
+// All three modes share the exact same six slides + visuals +
+// cinematic typography. Body text renders instantly on every
+// slide — the previous typewriter animation was removed so the
 // reading experience matches a printed page rather than a
 // teleprompter.
 
@@ -88,7 +94,7 @@ const SLIDES: { title: string; body: string }[] = [
   },
 ];
 
-type Mode = 'informational' | 'commitment';
+type Mode = 'informational' | 'commitment' | 'review';
 
 export function RelationshipIntroCarousel({
   mode,
@@ -201,8 +207,14 @@ function IntroSlide({
   onComplete: () => void;
 }) {
   const visualSize = useMemo(() => Math.min(width * 0.6, 280), [width]);
-  const buttonLabel = mode === 'commitment' ? 'I UNDERSTAND AND ACCEPT' : 'GET STARTED';
-  const a11yLabel   = mode === 'commitment' ? 'I understand and accept' : 'Get started';
+  const buttonLabel =
+    mode === 'commitment' ? 'I UNDERSTAND AND ACCEPT' :
+    mode === 'review'     ? 'GOT IT' :
+                            'GET STARTED';
+  const a11yLabel =
+    mode === 'commitment' ? 'I understand and accept' :
+    mode === 'review'     ? 'Got it' :
+                            'Get started';
 
   return (
     <View style={[styles.slide, { width }]}>

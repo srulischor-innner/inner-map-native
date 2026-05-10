@@ -139,6 +139,19 @@ export default function RelationshipsScreen() {
     setTabIntro('seen');
   }, []);
 
+  // Review-mode intro re-open — driven by the floating ℹ︎ button
+  // rendered in the top-right of the screen. Lets the user revisit
+  // the six framing slides at any time without disturbing whichever
+  // sub-state (connect / pending / active) they were on. On dismiss
+  // (last-slide GOT IT or back chevron), state flips back and the
+  // underlying screen re-renders unchanged.
+  const [reviewIntroOpen, setReviewIntroOpen] = useState(false);
+  const closeReview = useCallback(() => setReviewIntroOpen(false), []);
+  const openReview = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    setReviewIntroOpen(true);
+  }, []);
+
   // Navigate to the per-partner intro carousel (Phase 5).
   // /relationships/intro/[id] is a route file under app/, so a normal
   // expo-router push routes there. The intro screen calls
@@ -314,8 +327,38 @@ export default function RelationshipsScreen() {
     );
   }
 
+  // Review-mode short-circuit. While the user has the ℹ︎ panel open
+  // we replace the entire tab content with the carousel; the back
+  // chevron + GOT IT button both call closeReview() which flips
+  // back to whatever sub-state was underneath.
+  if (reviewIntroOpen) {
+    return (
+      <SafeAreaView style={styles.root} edges={[]}>
+        <RelationshipIntroCarousel
+          mode="review"
+          onComplete={closeReview}
+          showBackButton
+          onBack={closeReview}
+        />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.root} edges={[]}>
+      {/* Floating ℹ︎ — re-opens the framing carousel from anywhere
+          on the Partner tab (connect screen, pending states, all
+          three active sub-views). Absolute-positioned so it stays
+          in the same screen-corner regardless of which sub-state
+          is currently rendered below. */}
+      <Pressable
+        onPress={openReview}
+        hitSlop={10}
+        style={styles.infoBtn}
+        accessibilityLabel="About this space"
+      >
+        <Ionicons name="information-circle-outline" size={22} color={colors.amber} />
+      </Pressable>
       {phase.kind === 'loading' ? (
         <CenteredLoader />
       ) : phase.kind === 'none' ? (
@@ -600,6 +643,20 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
+  // Floating info button — top-right of the Partner tab content.
+  // Sits in the empty space at the right edge of the segments row
+  // (active state) or in the top-right corner above the scroll
+  // content (connect / pending states). zIndex keeps it above the
+  // tab content; the 4px padding gives the icon a comfortable touch
+  // target while hitSlop=10 expands the actual hit zone further.
+  infoBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 10,
+    zIndex: 10,
+    padding: 4,
+  },
+
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
   h1: {
     color: colors.cream,
@@ -741,9 +798,13 @@ const styles = StyleSheet.create({
 
   // Active state — Phase 6 territory; light segmented control + a stub body.
   activeRoot: { flex: 1 },
+  // Segments row leaves extra right-side padding so the absolute-
+  // positioned ℹ︎ button doesn't visually overlap (or steal taps
+  // from) the rightmost MAP segment.
   segments: {
     flexDirection: 'row',
-    paddingHorizontal: spacing.lg,
+    paddingLeft: spacing.lg,
+    paddingRight: 36,
     paddingVertical: spacing.sm,
     gap: spacing.sm,
     borderBottomColor: 'rgba(230,180,122,0.1)',
