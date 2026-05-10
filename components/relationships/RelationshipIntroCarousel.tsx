@@ -1,12 +1,12 @@
 // Six-slide cinematic intro carousel — used in two places in the
-// app, each with its own button copy and gating semantics:
+// app, each with its own button copy:
 //
 //   mode='informational'
 //     Played the very first time the user taps the Partner tab,
 //     before they've created or accepted any invite. Last slide
 //     button reads "GET STARTED" — no API call, just calls
-//     onComplete() so the parent can flip an AsyncStorage flag and
-//     fall through to the connect screen.
+//     onComplete() so the parent can flip its AsyncStorage flag
+//     and fall through to the connect screen.
 //
 //   mode='commitment'
 //     Played AFTER both partners have accepted an invite — the
@@ -16,28 +16,26 @@
 //     server-side intro flag.
 //
 // Both modes share the exact same six slides + visuals + cinematic
-// typography. Typewriter on first viewing is gated by an
-// AsyncStorage key the parent provides (per-relationship for the
-// commitment route; a single fixed key for the informational tab
-// flow).
+// typography. Body text renders instantly on every slide — the
+// previous typewriter animation was removed so the cinematic
+// reading experience matches a printed page rather than a
+// teleprompter.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, FlatList, Linking, StyleSheet,
+  View, Text, Pressable, FlatList, StyleSheet,
   useWindowDimensions, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { colors, fonts, spacing } from '../../constants/theme';
-import { TypewriterText } from '../guide/TypewriterText';
 import { GuideDots } from '../guide/GuideDots';
 import { RelationshipIntroVisual } from './RelationshipIntroVisual';
 
 // Slide content — single source of truth. Visuals live in
 // RelationshipIntroVisual and are indexed by 1-based slide number.
-const SLIDES: { title: string; body: string; accent?: 'safety' }[] = [
+const SLIDES: { title: string; body: string }[] = [
   {
     title: 'Welcome to your relationship space',
     body:
@@ -69,13 +67,18 @@ const SLIDES: { title: string; body: string; accent?: 'safety' }[] = [
       "together.",
   },
   {
+    // Safety slide — phone numbers + tappable tel/sms links removed
+    // intentionally. The intent is to point users at professional
+    // support without prescribing a specific hotline; mobile OSes
+    // already make "domestic violence hotline" a one-tap web search,
+    // and editorializing on a single number risks pointing the user
+    // at a service that isn't appropriate for their region or
+    // situation.
     title: "If something doesn't feel safe",
     body:
       "This space is for couples doing mutual healing work. If you're experiencing physical " +
-      "violence, threats, coercion, or fear in your relationship, please reach out to professional " +
-      "support. National Domestic Violence Hotline: 1-800-799-7233. Text START to 88788. " +
-      "You're not alone.",
-    accent: 'safety',
+      "violence, threats, coercion, or fear in your relationship, please reach out to " +
+      "professional support. You're not alone.",
   },
   {
     title: 'Ready to begin?',
@@ -91,7 +94,6 @@ export function RelationshipIntroCarousel({
   mode,
   onComplete,
   accepting = false,
-  introSeenKey,
   showBackButton = false,
   onBack,
 }: {
@@ -104,11 +106,6 @@ export function RelationshipIntroCarousel({
   /** Spinner state for the last-slide button. Driven by the parent
    *  while it's awaiting an API call (commitment mode only).  */
   accepting?: boolean;
-  /** AsyncStorage key gating the first-view typewriter. Per-
-   *  relationship for the commitment route (keys keep the cinematic
-   *  experience local to each pairing); a single fixed key for the
-   *  informational tab flow (one playthrough per install). */
-  introSeenKey: string;
   /** When true, render a back chevron in the header. The route-
    *  based commitment screen uses this; the in-tab informational
    *  embed doesn't (the user can't go anywhere meaningful — the
@@ -118,31 +115,7 @@ export function RelationshipIntroCarousel({
 }) {
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(0);
-  const [animateBody, setAnimateBody] = useState<'unknown' | 'animate' | 'instant'>('unknown');
   const listRef = useRef<FlatList>(null);
-
-  // Three-state typewriter gate — same pattern as Guide tab + the
-  // existing per-relationship intro screen. Holds rendering at a
-  // blank canvas until the AsyncStorage read settles so a returning
-  // user doesn't flash through plain text before the gate flips.
-  useEffect(() => {
-    if (!introSeenKey) {
-      setAnimateBody('instant');
-      return;
-    }
-    AsyncStorage.getItem(introSeenKey)
-      .then((v) => setAnimateBody(v ? 'instant' : 'animate'))
-      .catch(() => setAnimateBody('instant'));
-  }, [introSeenKey]);
-
-  // Mark the flag the moment the user first reaches the last slide.
-  // After that, even pop-and-return renders body text instantly.
-  useEffect(() => {
-    if (!introSeenKey) return;
-    if (index === SLIDES.length - 1 && animateBody === 'animate') {
-      AsyncStorage.setItem(introSeenKey, '1').catch(() => {});
-    }
-  }, [index, animateBody, introSeenKey]);
 
   const onScroll = useCallback(
     (e: any) => {
@@ -164,10 +137,6 @@ export function RelationshipIntroCarousel({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     await onComplete();
   }, [accepting, onComplete]);
-
-  if (animateBody === 'unknown') {
-    return <View style={styles.root} />;
-  }
 
   return (
     <View style={styles.root}>
@@ -200,8 +169,6 @@ export function RelationshipIntroCarousel({
             data={item}
             slideNumber={i + 1}
             width={width}
-            isActive={i === index}
-            animateBody={animateBody === 'animate'}
             isLast={i === SLIDES.length - 1}
             mode={mode}
             accepting={accepting}
@@ -218,87 +185,24 @@ export function RelationshipIntroCarousel({
 }
 
 // =============================================================================
-// One slide. Visual on top, cinematic title, body that types in on
-// first view (instant on re-entry). Slide 5 renders the safety
-// contacts as tappable tel:/sms: links. Slide 6 includes the
-// completion button — copy depends on mode.
+// One slide. Visual on top, cinematic title, body rendered as plain
+// static Text. Last slide includes the completion button — copy
+// depends on mode.
 // =============================================================================
 function IntroSlide({
-  data, slideNumber, width, isActive, animateBody, isLast, mode, accepting, onComplete,
+  data, slideNumber, width, isLast, mode, accepting, onComplete,
 }: {
-  data: { title: string; body: string; accent?: 'safety' };
+  data: { title: string; body: string };
   slideNumber: number;
   width: number;
-  isActive: boolean;
-  animateBody: boolean;
   isLast: boolean;
   mode: Mode;
   accepting: boolean;
   onComplete: () => void;
 }) {
-  const [hasTriggered, setHasTriggered] = useState(() => animateBody && isActive);
-  useEffect(() => {
-    if (animateBody && isActive && !hasTriggered) setHasTriggered(true);
-  }, [animateBody, isActive, hasTriggered]);
-
   const visualSize = useMemo(() => Math.min(width * 0.6, 280), [width]);
-  const showTypewriter = animateBody && hasTriggered;
-  const showEmptyPlaceholder = animateBody && !hasTriggered;
-
   const buttonLabel = mode === 'commitment' ? 'I UNDERSTAND AND ACCEPT' : 'GET STARTED';
   const a11yLabel   = mode === 'commitment' ? 'I understand and accept' : 'Get started';
-
-  if (data.accent === 'safety') {
-    return (
-      <View style={[styles.slide, { width }]}>
-        <View style={[styles.visualWrap, { width: visualSize, height: visualSize }]}>
-          <RelationshipIntroVisual slide={slideNumber} size={visualSize} />
-        </View>
-        <Text style={styles.title}>{data.title}</Text>
-        <View style={styles.body}>
-          {showTypewriter ? (
-            <TypewriterText
-              text="This space is for couples doing mutual healing work. If you're experiencing physical violence, threats, coercion, or fear in your relationship, please reach out to professional support."
-              style={styles.bodyText}
-            />
-          ) : showEmptyPlaceholder ? (
-            <Text style={styles.bodyText}>{''}</Text>
-          ) : (
-            <Text style={styles.bodyText}>
-              This space is for couples doing mutual healing work. If you're experiencing physical violence, threats, coercion, or fear in your relationship, please reach out to professional support.
-            </Text>
-          )}
-          <View style={styles.safetyLinks}>
-            <Pressable
-              onPress={() => Linking.openURL('tel:18007997233').catch(() => {})}
-              style={styles.safetyRow}
-              hitSlop={6}
-              accessibilityLabel="Call National Domestic Violence Hotline"
-            >
-              <Ionicons name="call-outline" size={16} color={colors.amber} style={styles.safetyIcon} />
-              <Text style={styles.safetyLabel}>
-                National Domestic Violence Hotline:{' '}
-                <Text style={styles.safetyNum}>1-800-799-7233</Text>
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => Linking.openURL('sms:88788?body=START').catch(() => {})}
-              style={styles.safetyRow}
-              hitSlop={6}
-              accessibilityLabel="Text START to 88788"
-            >
-              <Ionicons name="chatbox-outline" size={16} color={colors.amber} style={styles.safetyIcon} />
-              <Text style={styles.safetyLabel}>
-                Text <Text style={styles.safetyNum}>START</Text> to{' '}
-                <Text style={styles.safetyNum}>88788</Text>
-              </Text>
-            </Pressable>
-          </View>
-          <Text style={styles.bodyText}>You're not alone.</Text>
-        </View>
-      </View>
-    );
-  }
 
   return (
     <View style={[styles.slide, { width }]}>
@@ -307,13 +211,7 @@ function IntroSlide({
       </View>
       <Text style={styles.title}>{data.title}</Text>
       <View style={styles.body}>
-        {showTypewriter ? (
-          <TypewriterText text={data.body} style={styles.bodyText} />
-        ) : showEmptyPlaceholder ? (
-          <Text style={styles.bodyText}>{''}</Text>
-        ) : (
-          <Text style={styles.bodyText}>{data.body}</Text>
-        )}
+        <Text style={styles.bodyText}>{data.body}</Text>
       </View>
       {isLast ? (
         <Pressable
@@ -375,30 +273,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     textAlign: 'center',
     marginBottom: spacing.md,
-  },
-  safetyLinks: {
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
-    alignItems: 'center',
-  },
-  safetyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: spacing.md,
-  },
-  safetyIcon: { marginRight: 8 },
-  safetyLabel: {
-    color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 15,
-    lineHeight: 22,
-    textAlign: 'center',
-  },
-  safetyNum: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    textDecorationLine: 'underline',
   },
   acceptBtn: {
     backgroundColor: colors.amber,

@@ -8,12 +8,6 @@
 //   - this screen                    (mode='commitment', after pairing,
 //     hits api.acceptRelationshipIntro)
 //
-// Per-relationship typewriter gate: the AsyncStorage key is scoped
-// to THIS relationshipId so a user who somehow ends up in a second
-// relationship in a future build still gets the cinematic experience
-// there. Subsequent re-entries to the same relationship's intro
-// render body text instantly.
-//
 // On accept the screen pops back to /relationships, where the tab's
 // state machine re-fetches and either shows the still-pending state
 // (if the partner hasn't read theirs yet) or transitions to active.
@@ -27,8 +21,6 @@ import * as Haptics from 'expo-haptics';
 import { colors } from '../../../constants/theme';
 import { RelationshipIntroCarousel } from '../../../components/relationships/RelationshipIntroCarousel';
 import { api } from '../../../services/api';
-
-const introSeenKey = (id: string) => `relationships.introSeen:${id}`;
 
 export default function RelationshipIntroScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -59,7 +51,6 @@ export default function RelationshipIntroScreen() {
         mode="commitment"
         onComplete={onAccept}
         accepting={accepting}
-        introSeenKey={relationshipId ? introSeenKey(relationshipId) : ''}
         showBackButton
         onBack={() => router.back()}
       />

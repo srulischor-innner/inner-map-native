@@ -309,7 +309,6 @@ export default function RelationshipsScreen() {
         <RelationshipIntroCarousel
           mode="informational"
           onComplete={onTabIntroDone}
-          introSeenKey={TAB_INTRO_SEEN_KEY}
         />
       </SafeAreaView>
     );
