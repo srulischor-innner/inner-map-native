@@ -88,8 +88,13 @@ const META: Record<NodeKey, Meta> = {
     title: 'The Self-Like Part',
     color: '#8A7AAA',
     subtitle: 'The architect of your actual life',
+    // Reframed (May 2026) — earlier copy ended with "always has an
+    // agenda," which read as accusatory. The new framing honors the
+    // part: it built the actual life, it holds the system together,
+    // and underneath the management it just wants the person to feel
+    // okay. Same content, no shame-tinge.
     description:
-      'Navigates the space between fixer and skeptic. Uses the language of healing — but always has an agenda.',
+      'The part that navigates the space between your fixer and skeptic. It built your career, your relationships, the rhythms of your daily life. It holds the system together — and what it wants, underneath, is simply for you to feel okay.',
   },
   manager: {
     title: 'Managers',
@@ -559,28 +564,33 @@ function SelfSections({
   );
 }
 function SelfLikeSections({ part, mapData }: { part: any; mapData: any }) {
+  // Section copy reframed May 2026 — old labels ("The Agenda",
+  // "Opening vs. Clenching") and old empty-state lines ("the
+  // underlying agenda…") read as accusatory. New language honors
+  // the part: what it WANTS underneath, how it's currently HOLDING
+  // things. Same fields, same data flow, warmer surface.
   return (
     <View style={styles.sections}>
       <DetectedPill part={part} color="#8A7AAA" />
       <Section
         label="What It Built"
         value={readField(part, 'what-it-built') || mapData?.compromise}
-        placeholder="What this part has built and holds together..."
+        placeholder="The actual life this part has shaped — work, choices, the way you show up day to day."
       />
       <Section
         label="How It Manages"
         value={readField(part, 'how-it-shows-up')}
-        placeholder="How this part keeps things stable..."
+        placeholder="How this part navigates between your fixer and skeptic to keep things workable."
       />
       <Section
-        label="The Agenda"
+        label="What It Wants"
         value={readField(part, 'agenda')}
-        placeholder="The underlying agenda..."
+        placeholder="Underneath everything, what this part is trying to feel — usually some version of okay, stable, at peace."
       />
       <Section
-        label="Opening vs. Clenching"
+        label="How It Shows Up"
         value={readField(part, 'clenched-or-open')}
-        placeholder="Still reading this part..."
+        placeholder="How this part is currently holding things — relaxed and trusting, or tight and managing."
       />
       <SelfVoiceButton part={part} />
       <GoDeeperSection part={part} fields={SELF_LIKE_DEEPER} />
