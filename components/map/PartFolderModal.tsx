@@ -599,6 +599,48 @@ function SelfLikeSections({ part, mapData }: { part: any; mapData: any }) {
 // list and render those as plain name+context cards without the
 // per-protector deeper UI.
 // ============================================================================
+// One-liner row that prints "Last activated · 3 hours ago" (or "yesterday",
+// "5 days ago", etc.) under a protector card. Returns null if the
+// part has never been detected so brand-new rows don't show a stale
+// "never" string. Lightweight relative-time formatter — no extra dep.
+function formatRelativeTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const diffMs = Date.now() - t;
+  if (diffMs < 0) return 'just now';
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+  const day = Math.floor(hr / 24);
+  if (day === 1) return 'yesterday';
+  if (day < 7) return `${day} days ago`;
+  if (day < 30) {
+    const wk = Math.floor(day / 7);
+    return `${wk} week${wk === 1 ? '' : 's'} ago`;
+  }
+  if (day < 365) {
+    const mo = Math.floor(day / 30);
+    return `${mo} month${mo === 1 ? '' : 's'} ago`;
+  }
+  const yr = Math.floor(day / 365);
+  return `${yr} year${yr === 1 ? '' : 's'} ago`;
+}
+
+function LastActivatedRow({ lastDetected }: { lastDetected: string | null | undefined }) {
+  const rel = formatRelativeTime(lastDetected);
+  if (!rel) return null;
+  return (
+    <View style={styles.lastActivatedRow}>
+      <Text style={styles.lastActivatedLabel}>LAST ACTIVATED</Text>
+      <Text style={styles.lastActivatedValue}>{rel}</Text>
+    </View>
+  );
+}
+
 function ProtectorList({
   category, partsRows, fallbackItems, color, emptyLine,
 }: {
@@ -631,6 +673,12 @@ function ProtectorList({
               value={readField(row, 'what-it-manages')}
               placeholder="Still getting to know this part..."
             />
+            {/* Last activated — surfaces the parts.lastDetected
+                timestamp as a relative-time line. Helps the user see
+                which protectors are currently busy vs. which haven't
+                fired in weeks. Hidden when the row has never been
+                detected (a brand-new part inserted via direct edit). */}
+            <LastActivatedRow lastDetected={row.lastDetected} />
             <SelfVoiceButton part={row} />
             <GoDeeperSection part={row} fields={MANAGER_FIREFIGHTER_DEEPER} />
           </View>
@@ -864,6 +912,31 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: fonts.sansMedium,
     flex: 1,
+  },
+  // "LAST ACTIVATED · 3 hours ago" — quiet metadata row that sits
+  // beneath the strategy/what-it-manages sections. Same uppercase
+  // amber label register as the section labels for visual rhyme,
+  // value rendered inline in cream serif italic.
+  lastActivatedRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginTop: 14,
+    paddingTop: 8,
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(230,180,122,0.15)',
+  },
+  lastActivatedLabel: {
+    color: '#E6B47A',
+    fontFamily: fonts.sansBold,
+    fontSize: 9.5,
+    letterSpacing: 1.6,
+    marginRight: 8,
+  },
+  lastActivatedValue: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    letterSpacing: 0.2,
   },
 
   // Legacy fallback list-item (when partsRows is empty but

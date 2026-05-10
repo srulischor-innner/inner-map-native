@@ -71,10 +71,25 @@ const MAP_RGB = {
 type Props = {
   geom: MapGeometry;
   activePart?: NodeKey | null;           // currently detected — scales this node up
+  /** Specific name of the currently-active part. Only set for
+   *  manager / firefighter activations (e.g. "perfectionist"). When
+   *  present, the matching ring renders this name in place of the
+   *  static MANAGERS / FIREFIGHTERS label so the user can see WHICH
+   *  protector just activated. Triangle nodes ignore this. */
+  activeLabel?: string | null;
+  /** Total managers in the user's parts table. Drives the small
+   *  count badge that sits at the top-right corner of the managers
+   *  ring whenever count > 1. Lets the map stay clean while telling
+   *  the user "you have N managers — tap to see them all." */
+  managerCount?: number;
+  /** Same as managerCount, for the firefighters ring. */
+  firefighterCount?: number;
   onNodeTap?: (k: NodeKey) => void;
 };
 
-export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
+export function InnerMapCanvas({
+  geom, activePart, activeLabel, managerCount = 0, firefighterCount = 0, onNodeTap,
+}: Props) {
   // ===== SHARED VALUES (Reanimated) =====
   const breath = useSharedValue(0.55);          // triangle-line opacity cycle
   // Shared value for the atmospheric-glow opacity cycle. Named *Breath so it
@@ -338,10 +353,62 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
       <NodeLabel x={self.x}          y={self.y}         label="SELF"         color={MAP_STROKE.self} />
       {/* Side-ring labels sit on the center of their circle — no horizontal
           offset. MANAGERS fits comfortably. FIREFIGHTERS uses a smaller font
-          so the longer word never clips on narrow screens. */}
-      <NodeLabel x={managers.x}      y={managers.y}     label="MANAGERS"     color={MAP_STROKE.managers}     width={112} />
-      <NodeLabel x={firefighters.x}  y={firefighters.y} label="FIREFIGHTERS" color={MAP_STROKE.firefighters} width={112} small />
+          so the longer word never clips on narrow screens.
+          When a SPECIFIC manager / firefighter has just activated, the
+          ring's label switches to that part's name (uppercased to match
+          the typographic register) so the user can see WHICH one fired.
+          Otherwise the generic MANAGERS / FIREFIGHTERS label stays. */}
+      {(() => {
+        const managersActive = activePart === 'manager' && !!activeLabel;
+        const text = managersActive ? activeLabel!.toUpperCase() : 'MANAGERS';
+        const long = text.length >= 12;
+        return (
+          <NodeLabel
+            x={managers.x} y={managers.y}
+            label={text}
+            color={MAP_STROKE.managers}
+            width={Math.max(112, text.length * 8)}
+            small={long}
+          />
+        );
+      })()}
+      {(() => {
+        const ffActive = activePart === 'firefighter' && !!activeLabel;
+        const text = ffActive ? activeLabel!.toUpperCase() : 'FIREFIGHTERS';
+        return (
+          <NodeLabel
+            x={firefighters.x} y={firefighters.y}
+            label={text}
+            color={MAP_STROKE.firefighters}
+            width={Math.max(112, text.length * 8)}
+            small
+          />
+        );
+      })()}
       <NodeLabel x={selfLike.cx}     y={selfLike.cy + selfLike.size + 18} label="SELF-LIKE" color={MAP_STROKE.selfLike} />
+
+      {/* COUNT BADGES — small "N" pill at the top-right of each side
+          ring when the user has more than one manager / firefighter.
+          Hidden while that ring is showing an active part name (the
+          name is enough signal in that moment). Tapping the ring
+          itself opens the full folder; the badge is purely a count
+          indicator and shares the underlying TapTarget hit zone. */}
+      {managerCount > 1 && !(activePart === 'manager' && !!activeLabel) ? (
+        <CountBadge
+          x={managers.x + managers.r * 0.72}
+          y={managers.y - managers.r * 0.72}
+          count={managerCount}
+          color={MAP_STROKE.managers}
+        />
+      ) : null}
+      {firefighterCount > 1 && !(activePart === 'firefighter' && !!activeLabel) ? (
+        <CountBadge
+          x={firefighters.x + firefighters.r * 0.72}
+          y={firefighters.y - firefighters.r * 0.72}
+          count={firefighterCount}
+          color={MAP_STROKE.firefighters}
+        />
+      ) : null}
 
       {/* ===== TAP OVERLAY ===== Absolutely-positioned Pressable per node. Hit region
            is slightly larger than the drawn circle for comfortable tap targets. */}
@@ -352,6 +419,36 @@ export function InnerMapCanvas({ geom, activePart, onNodeTap }: Props) {
       <TapTarget node={managers}  kind="manager"     onTap={onNodeTap} label="MANAGERS" />
       <TapTarget node={firefighters} kind="firefighter" onTap={onNodeTap} label="FIREFIGHTERS" />
       <DiamondTapTarget d={selfLike} kind="self-like" onTap={onNodeTap} label="SELF-LIKE" />
+    </View>
+  );
+}
+
+// Small "N" pill positioned at the top-right shoulder of a side-ring
+// node. Pure visual indicator — the parent <TapTarget> covers the
+// whole ring including this corner, so tapping the badge opens the
+// folder just like tapping the ring itself. pointerEvents='none' so
+// the badge never shadows the tap layer.
+function CountBadge({
+  x, y, count, color,
+}: { x: number; y: number; count: number; color: string }) {
+  const SIZE = 22;
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.countBadge,
+        {
+          left: x - SIZE / 2,
+          top: y - SIZE / 2,
+          width: SIZE,
+          height: SIZE,
+          borderColor: color,
+        },
+      ]}
+    >
+      <Text allowFontScaling={false} style={[styles.countBadgeText, { color }]} numberOfLines={1}>
+        {count > 99 ? '99+' : String(count)}
+      </Text>
     </View>
   );
 }
@@ -580,4 +677,25 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
   },
   labelTextSmall: { fontSize: 10.5, letterSpacing: 0.8 },
+  countBadge: {
+    position: 'absolute',
+    borderRadius: 999,
+    borderWidth: 1.2,
+    backgroundColor: 'rgba(20,19,26,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Soft shadow for depth so the badge reads as floating above the
+    // ring rather than painted on it.
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 3,
+  },
+  countBadgeText: {
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 0.2,
+    textAlign: 'center',
+  },
 });

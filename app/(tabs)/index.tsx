@@ -685,7 +685,13 @@ export default function ChatScreen() {
                     manager: 'manager', firefighter: 'firefighter',
                   };
                   const activatable = partActivationMap[detectedPart];
-                  if (activatable) activatePartOnMap(activatable);
+                  // For manager/firefighter activations, propagate the
+                  // specific part label (e.g. "perfectionist") so the
+                  // Map tab can show WHICH manager/firefighter just
+                  // activated rather than just lighting the generic
+                  // ring. Triangle nodes (wound/fixer/skeptic/self) get
+                  // null since there's only one of each.
+                  if (activatable) activatePartOnMap(activatable, partLabel || null);
                 }
               }
               // Update the ambient attention indicator if the AI emitted a

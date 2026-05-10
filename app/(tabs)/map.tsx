@@ -50,6 +50,12 @@ export default function MapScreen() {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [mapData, setMapData] = useState<any | null>(null);
   const [activePart, setActivePart] = useState<NodeKey | null>(null);
+  // Specific part label that came in with the activation — only set for
+  // manager / firefighter (e.g. "perfectionist", "image-manager"). For
+  // the triangle nodes there's only one of each so this stays null.
+  // Cleared alongside activePart so the canvas reverts to its idle
+  // labels after the same 8s the ring stays inflated.
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [folderPart, setFolderPart] = useState<NodeKey | null>(null);
   const sessionIdRef = useRef<string>(uuidv4());
 
@@ -59,10 +65,15 @@ export default function MapScreen() {
   const [layers, setLayers] = useState<MapLayer[]>([]);
   const [currentLayerIndex, setCurrentLayerIndex] = useState<number>(0);
 
-  // Wipe activePart after ~8 s so the breathing node doesn't stay inflated forever.
+  // Wipe activePart + activeLabel after ~8 s so the breathing node
+  // doesn't stay inflated forever and the specific name doesn't linger
+  // past when the chat-side detection actually meant something.
   useEffect(() => {
     if (!activePart) return;
-    const t = setTimeout(() => setActivePart(null), 8000);
+    const t = setTimeout(() => {
+      setActivePart(null);
+      setActiveLabel(null);
+    }, 8000);
     return () => clearTimeout(t);
   }, [activePart]);
 
@@ -71,14 +82,26 @@ export default function MapScreen() {
   // chat tab and the Map's activePart gets set, which springs the matching
   // node + lights up the connection lines + emits a ripple. Lets the map
   // respond to what's happening in the chat, not just to user taps.
+  //
+  // For manager/firefighter activations the chat also passes the SPECIFIC
+  // part label ("perfectionist" etc.) so we can show it inside the
+  // corresponding circle. Other categories ignore the label.
   useEffect(() => {
-    const unsub = subscribeMapActivation((part) => {
+    const unsub = subscribeMapActivation((part, label) => {
       const known: Record<string, NodeKey> = {
         wound: 'wound', fixer: 'fixer', skeptic: 'skeptic', self: 'self',
         'self-like': 'self-like', manager: 'manager', firefighter: 'firefighter',
       };
       const key = known[part];
-      if (key) setActivePart(key);
+      if (!key) return;
+      setActivePart(key);
+      // Only manager/firefighter circles benefit from the specific
+      // label — the others have a single canonical name already.
+      if (key === 'manager' || key === 'firefighter') {
+        setActiveLabel(label || null);
+      } else {
+        setActiveLabel(null);
+      }
     });
     return unsub;
   }, []);
@@ -163,6 +186,22 @@ export default function MapScreen() {
   }, [mapData, layers, currentLayerIndex]);
 
   const geom: MapGeometry | null = size ? computeMapGeometry(size.w, size.h) : null;
+
+  // Counts for the corner badges on the manager / firefighter rings.
+  // Reading from the parts table (rich rows with category + name) and
+  // falling back to the legacy detectedManagers / detectedFirefighters
+  // arrays on mapData if the parts table hasn't been populated yet for
+  // older accounts. Either way we get a single number per category.
+  const managerCount = useMemo(() => {
+    const fromParts = parts.filter((p: any) => p?.category === 'manager').length;
+    if (fromParts > 0) return fromParts;
+    return Array.isArray(mapData?.detectedManagers) ? mapData.detectedManagers.length : 0;
+  }, [parts, mapData]);
+  const firefighterCount = useMemo(() => {
+    const fromParts = parts.filter((p: any) => p?.category === 'firefighter').length;
+    if (fromParts > 0) return fromParts;
+    return Array.isArray(mapData?.detectedFirefighters) ? mapData.detectedFirefighters.length : 0;
+  }, [parts, mapData]);
 
   // Node-specific haptic patterns. Heavier impact for parts that carry heavier
   // somatic weight (wound, firefighter), soft notification for Self. Matches the
@@ -452,7 +491,14 @@ export default function MapScreen() {
           {geom ? (
             <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: triangleOpacity }]}
                            pointerEvents={view === 'triangle' ? 'box-none' : 'none'}>
-              <InnerMapCanvas geom={geom} activePart={activePart} onNodeTap={handleTap} />
+              <InnerMapCanvas
+                geom={geom}
+                activePart={activePart}
+                activeLabel={activeLabel}
+                managerCount={managerCount}
+                firefighterCount={firefighterCount}
+                onNodeTap={handleTap}
+              />
             </Animated.View>
           ) : null}
           {/* Circle (integration) map — also always mounted; the inactive
