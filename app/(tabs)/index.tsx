@@ -39,6 +39,7 @@ import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
 import { activatePartOnMap, ActivatablePart } from '../../utils/mapActivation';
+import { subscribeRateLimitNotice } from '../../utils/rateLimitNotice';
 import { consumeSelfMode } from '../../utils/selfMode';
 import {
   startStream as startTTSStream, appendStreamText as appendTTSStream,
@@ -157,6 +158,27 @@ export default function ChatScreen() {
   const [audioEnabled, setAudioEnabled] = useState(false);
   const audioEnabledRef = useRef(audioEnabled);
   useEffect(() => { audioEnabledRef.current = audioEnabled; }, [audioEnabled]);
+
+  // Transient inline notice for the daily TTS cap. When /api/speak
+  // returns 429, services/api.ts fires a rate-limit notice on the
+  // shared bus; we render a brief amber-bordered banner above the
+  // input area and auto-dismiss after ~5 seconds. Chat-side 429s
+  // are handled separately as a card inline in the conversation
+  // flow (StreamCallbacks.onRateLimit path).
+  const [speakNoticeText, setSpeakNoticeText] = useState<string | null>(null);
+  useEffect(() => {
+    let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = subscribeRateLimitNotice((notice) => {
+      if (notice.endpoint !== 'speak') return;
+      setSpeakNoticeText(notice.message);
+      if (dismissTimer) clearTimeout(dismissTimer);
+      dismissTimer = setTimeout(() => setSpeakNoticeText(null), 5000);
+    });
+    return () => {
+      unsub();
+      if (dismissTimer) clearTimeout(dismissTimer);
+    };
+  }, []);
   // Latest messages snapshot accessible from the toggle handler without
   // hitting React's stale-closure trap. Updated on every render — cheap.
   // Always points at the ACTIVE thread's messages, since the audio
@@ -785,6 +807,35 @@ export default function ChatScreen() {
               // Stream complete — drop attention indicator back to idle.
               setAttentionState('idle');
             },
+            onRateLimit: (info) => {
+              // Daily chat cap. Replace the streaming bubble with a
+              // styled rate-limit card carrying the server-prepared
+              // message. No retry pill — retrying within the window
+              // would just hit the same 429.
+              console.log('[chat] rate-limited:', info.message);
+              streamDone = true;
+              setAttentionState('idle');
+              turnThread.setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === streamId
+                    ? {
+                        ...m,
+                        text: info.message,
+                        streaming: false,
+                        rateLimited: true,
+                        errorRetryText: null,
+                      }
+                    : m,
+                ),
+              );
+              // Drop the empty assistant placeholder from history so
+              // a future successful send doesn't carry it forward.
+              turnThread.historyRef.current = turnThread.historyRef.current.filter(
+                (h) => !(h.role === 'assistant' && h.content === ''),
+              );
+              setSending(false);
+              setTyping(false);
+            },
             onError: (err) => {
               console.warn('[chat] stream error:', err);
               streamDone = true;
@@ -948,6 +999,18 @@ export default function ChatScreen() {
             smaller gap puts the input visually closer to the bottom
             without sitting on the home bar. */}
         <View style={{ paddingBottom: insets.bottom + 10 }}>
+        {/* Inline notice for the daily TTS cap. Shows for ~5s when
+            /api/speak returns 429, then auto-dismisses. Sits just
+            above the input bar so it never covers a message in the
+            thread. Text reply still streams normally — only audio
+            playback is what got rate-limited. */}
+        {speakNoticeText ? (
+          <View style={styles.speakNoticeWrap} pointerEvents="none">
+            <View style={styles.speakNotice}>
+              <Text style={styles.speakNoticeText} numberOfLines={2}>{speakNoticeText}</Text>
+            </View>
+          </View>
+        ) : null}
         <ChatInput
           disabled={sending}
           onSend={handleSend}
@@ -1097,6 +1160,30 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     fontSize: 17,
     letterSpacing: 0.3,
+    textAlign: 'center',
+  },
+  // Transient inline notice — daily TTS cap. Sits between message
+  // list and ChatInput so it doesn't cover thread content; auto
+  // dismisses after ~5s (timer in the subscriber effect).
+  speakNoticeWrap: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: 8,
+    alignItems: 'center',
+  },
+  speakNotice: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(20,19,26,0.92)',
+    borderColor: 'rgba(230,180,122,0.45)',
+    borderWidth: 0.5,
+    borderRadius: 14,
+    maxWidth: '92%',
+  },
+  speakNoticeText: {
+    color: colors.cream,
+    fontSize: 13,
+    lineHeight: 19,
+    letterSpacing: 0.2,
     textAlign: 'center',
   },
 });

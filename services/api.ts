@@ -13,6 +13,7 @@
 
 import Constants from 'expo-constants';
 import { getUserId } from './user';
+import { emitRateLimitNotice } from '../utils/rateLimitNotice';
 
 const BASE_URL: string =
   (Constants.expoConfig?.extra as any)?.apiBaseUrl ||
@@ -78,10 +79,30 @@ async function apiFetch(path: string, opts: ApiFetchOpts): Promise<Response> {
   }
 }
 
+/** Payload the server sends when a per-user daily rate limit is
+ *  exceeded — same shape across the SSE error event and the JSON
+ *  429 body. The chat tab uses this to render the styled limit
+ *  card instead of the generic error toast. */
+export type RateLimitInfo = {
+  /** Which endpoint hit the cap (currently 'chat'). */
+  endpoint: string;
+  /** Human-readable copy the server prepared for the user. */
+  message: string;
+  /** Daily cap — useful if the UI wants to show it. */
+  limit?: number;
+  /** Rolling window in hours. */
+  windowHours?: number;
+};
+
 export type StreamCallbacks = {
   onDelta: (text: string) => void;
   onDone: (fullText: string) => void;
   onError: (message: string) => void;
+  /** Fires INSTEAD of onError when the server returns a 429 /
+   *  rate-limit-exceeded SSE error event. Optional — if a caller
+   *  omits this, rate limits fall through to onError with the
+   *  human-readable message so existing call sites still work. */
+  onRateLimit?: (info: RateLimitInfo) => void;
 };
 
 export const api = {
@@ -156,6 +177,49 @@ export const api = {
           label: 'chat', method: 'POST', headers, body: JSON.stringify(bodyObj),
           signal: controller.signal, timeoutMs: 60000,
         });
+        // 429 — per-user daily rate limit. Server returns either:
+        //   - HTTP 429 with a JSON body, OR
+        //   - HTTP 429 with an SSE error frame (when wantStream was set)
+        // Both carry an "error":"rate-limit-exceeded" code + a human
+        // "message" the chat tab renders as the styled limit card via
+        // cb.onRateLimit. Falls through to cb.onError when the caller
+        // didn't opt in to the new callback.
+        if (res.status === 429) {
+          let info: RateLimitInfo | null = null;
+          try {
+            const ct = res.headers.get('content-type') || '';
+            if (ct.includes('text/event-stream')) {
+              const raw = await res.text();
+              for (const line of raw.split('\n')) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                  const evt = JSON.parse(line.slice(6));
+                  if (evt.type === 'error' && evt.error === 'rate-limit-exceeded') {
+                    info = {
+                      endpoint: String(evt.endpoint || 'chat'),
+                      message: String(evt.message || ''),
+                      limit: typeof evt.limit === 'number' ? evt.limit : undefined,
+                      windowHours: typeof evt.windowHours === 'number' ? evt.windowHours : undefined,
+                    };
+                  }
+                } catch { /* skip */ }
+              }
+            } else {
+              const j: any = await res.json().catch(() => null);
+              if (j && j.error === 'rate-limit-exceeded') {
+                info = {
+                  endpoint: String(j.endpoint || 'chat'),
+                  message: String(j.message || ''),
+                  limit: typeof j.limit === 'number' ? j.limit : undefined,
+                  windowHours: typeof j.windowHours === 'number' ? j.windowHours : undefined,
+                };
+              }
+            }
+          } catch { /* fall through */ }
+          if (cb.onRateLimit && info) cb.onRateLimit(info);
+          else cb.onError(info?.message || `chat ${res.status}`);
+          return;
+        }
         if (!res.ok) {
           // apiFetch already logged the body preview on non-OK; still surface the
           // status here so the error reaching the screen is specific.
@@ -170,14 +234,34 @@ export const api = {
           // Parse all SSE frames; find the done/error events and the final text.
           let fullText = '';
           let serverError: string | null = null;
+          let rateLimitInfo: RateLimitInfo | null = null;
           for (const line of raw.split('\n')) {
             if (!line.startsWith('data: ')) continue;
             try {
               const evt = JSON.parse(line.slice(6));
               if (evt.type === 'delta' && typeof evt.text === 'string') fullText += evt.text;
               else if (evt.type === 'done') fullText = evt.text || fullText;
-              else if (evt.type === 'error') serverError = evt.error || 'unknown error';
+              else if (evt.type === 'error') {
+                // Surface rate-limit specifically — the server can emit a
+                // 200-with-SSE-error frame in rare paths, so guard both
+                // the 429 branch above AND the in-stream variant here.
+                if (evt.error === 'rate-limit-exceeded') {
+                  rateLimitInfo = {
+                    endpoint: String(evt.endpoint || 'chat'),
+                    message: String(evt.message || ''),
+                    limit: typeof evt.limit === 'number' ? evt.limit : undefined,
+                    windowHours: typeof evt.windowHours === 'number' ? evt.windowHours : undefined,
+                  };
+                } else {
+                  serverError = evt.error || 'unknown error';
+                }
+              }
             } catch { /* skip */ }
+          }
+          if (rateLimitInfo) {
+            if (cb.onRateLimit) cb.onRateLimit(rateLimitInfo);
+            else cb.onError(rateLimitInfo.message);
+            return;
           }
           if (serverError) { cb.onError(serverError); return; }
           if (fullText) { cb.onDelta(fullText); cb.onDone(fullText); return; }
@@ -587,6 +671,26 @@ export const api = {
       });
       console.log('[speak] status:', res.status,
         '| content-type:', res.headers.get('content-type'));
+      if (res.status === 429) {
+        // Per-user daily TTS cap. Fire a rate-limit notice the chat
+        // tab renders as a brief inline notification, then return
+        // null so the existing "no audio" fallback path runs (the
+        // user still sees the text reply on screen — only audio
+        // playback is suppressed).
+        try {
+          const j: any = await res.json().catch(() => null);
+          const message = (j && j.message) ||
+            "Voice playback isn't available right now. You can still read replies on screen.";
+          emitRateLimitNotice('speak', String(message));
+          console.log(`[speak] rate limited — ${message}`);
+        } catch {
+          emitRateLimitNotice(
+            'speak',
+            "Voice playback isn't available right now. You can still read replies on screen.",
+          );
+        }
+        return null;
+      }
       if (!res.ok) {
         // Pull a short preview of the error body so 400s with
         // 'Empty text after scrubbing markers' are visible in Metro

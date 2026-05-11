@@ -176,6 +176,33 @@ export function RelationshipChat({
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
             setSending(false);
           },
+          onRateLimit: (info) => {
+            // Same daily-chat cap that gates the main chat tab.
+            // Render the server-prepared message as a rate-limit
+            // card via the MessageBubble.rateLimited variant; no
+            // retry pill since retrying would just hit the same
+            // 429. The text reply still streams in the main chat
+            // tab too — limit is global per userId, not per tab.
+            console.log('[rel-chat] rate-limited:', info.message);
+            streamDone = true;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === streamId
+                  ? {
+                      ...m,
+                      text: info.message,
+                      streaming: false,
+                      rateLimited: true,
+                      errorRetryText: null,
+                    }
+                  : m,
+              ),
+            );
+            historyRef.current = historyRef.current.filter(
+              (m) => !(m.role === 'assistant' && m.content === ''),
+            );
+            setSending(false);
+          },
           onError: (err) => {
             console.warn('[rel-chat] stream error:', err);
             streamDone = true;

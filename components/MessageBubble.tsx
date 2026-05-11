@@ -30,6 +30,11 @@ export type ChatMsg = {
    *  the bubble renders a small "Retry" pill below the text; tapping it
    *  re-submits the user's last message. The string is the text to send. */
   errorRetryText?: string | null;
+  /** Set when this "bubble" should render as the daily rate-limit
+   *  card instead of a regular AI message. No avatar, no caret, no
+   *  retry pill — just a centered amber-bordered card with the
+   *  server-prepared message. */
+  rateLimited?: boolean;
   /** Present on user voice-note messages. The bubble renders a play button +
    *  waveform + duration + the transcript below a hairline divider. While
    *  the transcript is still being produced, `transcript` is null and the
@@ -39,6 +44,21 @@ export type ChatMsg = {
 
 export function MessageBubble({ msg, onRetry }: { msg: ChatMsg; onRetry?: (text: string) => void }) {
   const isUser = msg.role === 'user';
+  // Daily rate-limit card — different visual treatment from a chat
+  // bubble. Centered, amber-bordered, the server-prepared copy reads
+  // as a system note rather than an AI utterance. Renders early so
+  // none of the bubble-specific branches below (streaming caret,
+  // retry pill, part badge) need to add rate-limit guards.
+  if (!isUser && msg.rateLimited) {
+    return (
+      <View style={styles.rateLimitRow}>
+        <View style={styles.rateLimitCard}>
+          <Ionicons name="time-outline" size={16} color={colors.amber} style={styles.rateLimitIcon} />
+          <Text style={styles.rateLimitText}>{msg.text}</Text>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
       <View style={[styles.bubble, isUser ? styles.user : styles.assistant]}>
@@ -474,6 +494,38 @@ const styles = StyleSheet.create({
     color: colors.cream,
     fontFamily: fonts.sans,
     fontSize: 11,
+    letterSpacing: 0.2,
+  },
+  // Daily rate-limit card — centered, amber-bordered, distinct from
+  // chat bubbles so the user reads it as a system note rather than an
+  // AI utterance. Sits in the conversation flow at the point the
+  // user's request would have produced a reply.
+  rateLimitRow: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  rateLimitCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+    backgroundColor: 'rgba(230,180,122,0.06)',
+    borderColor: colors.amber,
+    borderWidth: 0.5,
+    borderRadius: radii.md,
+    maxWidth: '90%',
+  },
+  rateLimitIcon: {
+    marginRight: 10,
+    marginTop: 2,
+  },
+  rateLimitText: {
+    flex: 1,
+    color: colors.cream,
+    fontFamily: fonts.serifItalic,
+    fontSize: 14,
+    lineHeight: 22,
     letterSpacing: 0.2,
   },
 });
