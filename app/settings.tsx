@@ -23,6 +23,15 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 
+// expo-file-system v19 ships a new class-based API (Paths/File/Directory).
+// The legacy URI-based namespace at 'expo-file-system/legacy' is still
+// shipped alongside it; we use that here because (a) the export-share-
+// sheet flow only needs to write one short JSON file and (b) the
+// imperative writeAsStringAsync API is a closer match to what we want
+// than constructing a File instance.
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { getUserId, setUserId as overrideUserId } from '../services/user';
 import {
@@ -32,6 +41,7 @@ import {
 import {
   biometricsAvailable, isLockEnabled, setLockEnabled,
 } from '../services/biometrics';
+import { api } from '../services/api';
 
 const SUPPORT_EMAIL = 'innermapapp@gmail.com';
 
@@ -203,6 +213,10 @@ export default function SettingsScreen() {
           </Pressable>
         ) : null}
 
+        {/* ===== ACCOUNT & DATA — export + delete ===== */}
+        <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>ACCOUNT & DATA</Text>
+        <AccountDataRows />
+
         {/* ===== CONTACT ===== */}
         <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>CONTACT</Text>
         <Pressable
@@ -312,4 +326,127 @@ const styles = StyleSheet.create({
     marginTop: spacing.xxl,
     letterSpacing: 0.4,
   },
+  // Account & Data rows — "Export My Data" + "Delete Account" pills.
+  accountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.backgroundCard,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  accountRowDestructive: {
+    borderColor: 'rgba(220, 90, 90, 0.45)',
+  },
+  accountRowTitleDestructive: {
+    color: '#E68080',
+    fontFamily: fonts.sansBold,
+    fontSize: 14,
+  },
 });
+
+// =============================================================================
+// AccountDataRows — Export + Delete pills inside Settings → Account & Data.
+//
+// Export: calls api.exportAccount(), writes the JSON to a temp file via
+// expo-file-system, opens the OS share sheet via expo-sharing. The share
+// sheet lets the user save to Files / send via Mail / save to Drive.
+//
+// Delete: routes to /account/delete (dedicated confirmation screen —
+// per spec, not a modal alert). The actual cascade-delete + post-delete
+// local cleanup all live on that screen.
+// =============================================================================
+function AccountDataRows() {
+  const router = useRouter();
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    if (exporting) return;
+    Haptics.selectionAsync().catch(() => {});
+    setExporting(true);
+    try {
+      const result = await api.exportAccount();
+      if (!result.ok) {
+        if (result.error === 'rate-limit-exceeded') {
+          Alert.alert(
+            'Export limit reached',
+            result.message || "You've hit the daily export limit. Please try again later.",
+          );
+        } else {
+          Alert.alert(
+            "Couldn't export",
+            result.message || 'Something went wrong. Please try again.',
+          );
+        }
+        return;
+      }
+      // Write the JSON body to a temp file so the share sheet has a
+      // proper file URI (sharing a raw string opens up paste, not save).
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
+      if (!cacheDir) {
+        Alert.alert("Couldn't export", 'No cache directory available.');
+        return;
+      }
+      const uri = cacheDir + result.suggestedFilename;
+      await FileSystem.writeAsStringAsync(uri, result.body, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        Alert.alert(
+          'Share unavailable',
+          'Sharing isn\'t available on this device. The export file is at:\n' + uri,
+        );
+        return;
+      }
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/json',
+        dialogTitle: 'Save your Inner Map data',
+        UTI: 'public.json',
+      });
+    } catch (e) {
+      console.warn('[settings/export] threw:', (e as Error)?.message);
+      Alert.alert("Couldn't export", (e as Error)?.message || 'Unknown error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDelete = () => {
+    Haptics.selectionAsync().catch(() => {});
+    router.push('/account/delete' as any);
+  };
+
+  return (
+    <>
+      <Pressable onPress={handleExport} disabled={exporting} style={styles.accountRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Export My Data</Text>
+          <Text style={styles.rowSub}>
+            Save a copy of everything Inner Map holds about you. JSON file you can
+            keep, search, or import into another tool later.
+          </Text>
+        </View>
+        {exporting ? (
+          <Ionicons name="hourglass-outline" size={18} color={colors.creamFaint} />
+        ) : (
+          <Ionicons name="download-outline" size={18} color={colors.creamFaint} />
+        )}
+      </Pressable>
+      <Pressable
+        onPress={handleDelete}
+        style={[styles.accountRow, styles.accountRowDestructive]}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.accountRowTitleDestructive}>Delete Account</Text>
+          <Text style={styles.rowSub}>
+            Permanently remove your data from Inner Map. Cannot be undone.
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color="#E68080" />
+      </Pressable>
+    </>
+  );
+}

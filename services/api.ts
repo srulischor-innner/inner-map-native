@@ -815,6 +815,111 @@ export const api = {
     }
   },
 
+  /** POST /api/relationships/:id/dismiss-departure-notice — flips
+   *  partnerNoticeShown=1 so the one-time modal won't re-fire after
+   *  the user has seen it. Idempotent. */
+  async dismissPartnerDepartureNotice(relationshipId: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/relationships/${encodeURIComponent(relationshipId)}/dismiss-departure-notice`, {
+        label: 'rel-dismiss-departure', method: 'POST', headers,
+      });
+      if (!res.ok) {
+        let j: any = null; try { j = await res.json(); } catch {}
+        return { ok: false, error: j?.error || `http_${res.status}` };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'transport-failed' };
+    }
+  },
+
+  /** POST /api/relationships/:id/leave — this user departs the
+   *  relationship. If the OTHER partner already departed, the
+   *  relationship + all child rows are fully torn down server-side.
+   *  Used by the "Close relationship" action on the partner-departure
+   *  modal. */
+  async leaveRelationship(relationshipId: string): Promise<{ ok: boolean; status?: 'departed' | 'torn-down'; error?: string }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/relationships/${encodeURIComponent(relationshipId)}/leave`, {
+        label: 'rel-leave', method: 'POST', headers,
+      });
+      const j: any = await res.json().catch(() => null);
+      if (!res.ok || !j || !j.status) {
+        return { ok: false, error: j?.error || `http_${res.status}` };
+      }
+      return { ok: true, status: j.status };
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message || 'transport-failed' };
+    }
+  },
+
+  /** GET /api/account/export — returns the JSON export body as a raw
+   *  string so the caller can write it to a temp file and hand off to
+   *  expo-sharing. Server-side validates rate limit (5/24h) and returns
+   *  429 with { error: 'rate-limit-exceeded', message } on cap; we
+   *  surface that as a structured result for the Settings UI.  */
+  async exportAccount(): Promise<
+    | { ok: true; body: string; suggestedFilename: string }
+    | { ok: false; error: string; message?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/account/export', {
+        label: 'account-export', method: 'GET', headers, timeoutMs: 60000,
+      });
+      if (res.status === 429) {
+        let j: any = null;
+        try { j = await res.json(); } catch {}
+        return { ok: false, error: 'rate-limit-exceeded', message: j?.message };
+      }
+      if (!res.ok) {
+        let j: any = null;
+        try { j = await res.json(); } catch {}
+        return { ok: false, error: j?.error || `http_${res.status}`, message: j?.message };
+      }
+      const body = await res.text();
+      // Pull filename from Content-Disposition so the share sheet
+      // surfaces the proper name. Falls back to a generic name.
+      const cd = res.headers.get('content-disposition') || '';
+      const match = /filename="([^"]+)"/.exec(cd);
+      const suggestedFilename = match ? match[1] : `innermap-export-${Date.now()}.json`;
+      return { ok: true, body, suggestedFilename };
+    } catch (e) {
+      console.warn('[account-export] threw:', (e as Error)?.message);
+      return { ok: false, error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  /** DELETE /api/account — irreversible. Returns the server's
+   *  { status: "deleted", deletedAt, counters } on success. Idempotent
+   *  on the server side, so a retry after a network blip still
+   *  returns clean. */
+  async deleteAccount(): Promise<
+    | { ok: true; deletedAt: string; counters: { relationships: number; sessions: number; parts: number; journal: number } }
+    | { ok: false; error: string; message?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/account', {
+        label: 'account-delete', method: 'DELETE', headers, timeoutMs: 60000,
+      });
+      const j: any = await res.json().catch(() => null);
+      if (!res.ok || !j || j.status !== 'deleted') {
+        return {
+          ok: false,
+          error: j?.error || `http_${res.status}`,
+          message: j?.message,
+        };
+      }
+      return { ok: true, deletedAt: j.deletedAt, counters: j.counters };
+    } catch (e) {
+      console.warn('[account-delete] threw:', (e as Error)?.message);
+      return { ok: false, error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
   /** GET /api/relationships. Lists relationships the user is part of, each
    *  enriched with myRole / partnerId / partnerName / myIntroDone /
    *  partnerIntroDone for native rendering. safetyFlagged is stripped on the
@@ -836,6 +941,13 @@ export const api = {
     partnerName: string | null;
     myIntroDone: boolean;
     partnerIntroDone: boolean;
+    // Partner-departure (PR 2b). Set when the OTHER partner deleted
+    // their account. The remaining partner sees a one-time notice;
+    // shared insights stay readable; new private chat is suppressed
+    // by the UI (relationship is effectively read-only).
+    partnerDeparted?: 0 | 1;
+    departedAt?: string | null;
+    partnerNoticeShown?: 0 | 1;
   }>> {
     try {
       const headers = await authHeaders();

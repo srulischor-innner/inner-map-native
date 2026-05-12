@@ -40,6 +40,7 @@ import {
   Share,
   Alert,
   Platform,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -80,6 +81,12 @@ type Relationship = {
   partnerName: string | null;
   myIntroDone: boolean;
   partnerIntroDone: boolean;
+  // Partner-departure (PR 2b). Set when the OTHER partner deleted
+  // their account. Native renders a one-time modal asking whether to
+  // keep the relationship (read-only) or close it.
+  partnerDeparted?: 0 | 1;
+  departedAt?: string | null;
+  partnerNoticeShown?: 0 | 1;
 };
 
 type Phase =
@@ -380,7 +387,120 @@ export default function RelationshipsScreen() {
       ) : (
         <ActiveView rel={phase.rel} />
       )}
+
+      {/* Partner-departure one-time notice. Fires when ANY relationship
+          in the user's list has partnerDeparted=1 + partnerNoticeShown=0.
+          The modal action either acknowledges-and-keeps (read-only
+          relationship) or fully leaves. Mounting is always-on so the
+          modal can appear in any sub-state (none / pending / active). */}
+      <PartnerDepartureNoticeModal onChange={refresh} />
     </SafeAreaView>
+  );
+}
+
+// =============================================================================
+// PartnerDepartureNoticeModal — one-time modal shown to the remaining
+// partner after the other partner deletes their account. Driven by
+// /api/relationships' partnerDeparted + partnerNoticeShown columns.
+//
+// Polls listRelationships on mount; if any returned row has
+// partnerDeparted=1 && partnerNoticeShown=0, renders the modal.
+// "Keep" → POST dismiss-departure-notice (sets shown=1).
+// "Close" → POST leave (this user departs too → server-side cascade).
+// =============================================================================
+function PartnerDepartureNoticeModal({ onChange }: { onChange: () => void }) {
+  const [pending, setPending] = useState<Relationship | null>(null);
+  const [busy, setBusy] = useState<'idle' | 'keeping' | 'closing'>('idle');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rels = (await api.listRelationships()) as Relationship[];
+        if (cancelled) return;
+        const stale = rels.find(
+          (r) => r.partnerDeparted === 1 && r.partnerNoticeShown === 0,
+        );
+        if (stale) setPending(stale);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!pending) return null;
+
+  async function keep() {
+    if (busy !== 'idle' || !pending) return;
+    setBusy('keeping');
+    Haptics.selectionAsync().catch(() => {});
+    const result = await api.dismissPartnerDepartureNotice(pending.id);
+    setBusy('idle');
+    if (!result.ok) {
+      Alert.alert("Couldn't update", result.error || 'Try again.');
+      return;
+    }
+    setPending(null);
+    onChange();
+  }
+
+  async function close() {
+    if (busy !== 'idle' || !pending) return;
+    setBusy('closing');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    const result = await api.leaveRelationship(pending.id);
+    setBusy('idle');
+    if (!result.ok) {
+      Alert.alert("Couldn't close", result.error || 'Try again.');
+      return;
+    }
+    setPending(null);
+    onChange();
+  }
+
+  const partnerName = pending.partnerName || 'Your partner';
+  const dateStr = (() => {
+    if (!pending.departedAt) return '';
+    try { return new Date(pending.departedAt).toLocaleDateString(); }
+    catch { return ''; }
+  })();
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={keep}>
+      <View style={styles.departureBackdrop}>
+        <View style={styles.departureCard}>
+          <Text style={styles.departureTitle}>
+            {partnerName} left Inner Map
+          </Text>
+          <Text style={styles.departureBody}>
+            {partnerName} deleted their account{dateStr ? ` on ${dateStr}` : ''}.
+            The shared work you did together is preserved here. You can
+            continue to view it, or close this relationship from your side.
+          </Text>
+          <Pressable
+            onPress={keep}
+            disabled={busy !== 'idle'}
+            style={[styles.departurePrimary, busy === 'keeping' && styles.departureBtnDim]}
+          >
+            {busy === 'keeping' ? (
+              <ActivityIndicator color={colors.background} />
+            ) : (
+              <Text style={styles.departurePrimaryText}>KEEP RELATIONSHIP (READ-ONLY)</Text>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={close}
+            disabled={busy !== 'idle'}
+            style={[styles.departureSecondary, busy === 'closing' && styles.departureBtnDim]}
+          >
+            {busy === 'closing' ? (
+              <ActivityIndicator color={colors.amber} />
+            ) : (
+              <Text style={styles.departureSecondaryText}>CLOSE RELATIONSHIP</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -856,4 +976,64 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 1,
   },
+
+  // Partner-departure modal — fires once when the OTHER partner has
+  // deleted their account. Centered card with two buttons.
+  departureBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  departureCard: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#14131A',
+    borderColor: 'rgba(230,180,122,0.45)',
+    borderWidth: 0.5,
+    borderRadius: 16,
+    padding: spacing.lg,
+  },
+  departureTitle: {
+    color: colors.amber,
+    fontFamily: fonts.serifBold,
+    fontSize: 22,
+    lineHeight: 28,
+    marginBottom: spacing.md,
+  },
+  departureBody: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    lineHeight: 22,
+    marginBottom: spacing.lg,
+  },
+  departurePrimary: {
+    backgroundColor: colors.amber,
+    paddingVertical: 14,
+    borderRadius: 999,
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  departurePrimaryText: {
+    color: colors.background,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+    letterSpacing: 0.8,
+  },
+  departureSecondary: {
+    paddingVertical: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(230,180,122,0.45)',
+    alignItems: 'center',
+  },
+  departureSecondaryText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+    letterSpacing: 0.8,
+  },
+  departureBtnDim: { opacity: 0.6 },
 });
