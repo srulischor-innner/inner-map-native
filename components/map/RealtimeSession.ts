@@ -104,8 +104,18 @@ export class RealtimeSession {
       // session.update with the Inner Map system prompt as soon as the
       // upstream connects — we just need to keep our end alive.
       const userId = await getUserId();
-      const wsUrl = API_BASE.replace(/^http/, 'ws') + '/realtime';
-      console.log('[realtime] WS status: connecting →', wsUrl);
+      // Belt-and-suspenders authn — pass userId in BOTH the X-User-Id
+      // header (RN's WebSocket constructor accepts a 3rd-arg options
+      // bag with headers) AND as a ?userId=... query string. The
+      // server's /realtime upgrade gate added 2026-05-12 reads the
+      // header first and falls back to the query param — either alone
+      // would work, but if some transport path silently drops custom
+      // WS headers (which has been observed under certain RN debugger
+      // setups) the query param keeps the gate from rejecting us.
+      const wsUrl =
+        API_BASE.replace(/^http/, 'ws') +
+        `/realtime?userId=${encodeURIComponent(userId)}`;
+      console.log('[realtime] WS status: connecting →', wsUrl.replace(userId, userId.slice(0, 8) + '…'));
       const WSAny = WebSocket as any;
       const ws = new WSAny(wsUrl, undefined, { headers: { 'X-User-Id': userId } });
       this.ws = ws;
