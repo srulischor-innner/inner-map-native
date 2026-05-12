@@ -1,49 +1,44 @@
-// Journal storage — local-only, AsyncStorage-backed. Entries never leave the
-// device, matching the web app's "Private — only you can see this" promise.
-// Each entry has an id, kind (freeflow | deepdive), timestamp, content.
+// Journal storage — local-only, ENCRYPTED on-device. Entries never leave
+// the device, matching the in-app "Private — only you can see this"
+// promise. Backed by react-native-mmkv with an AES key persisted in
+// expo-secure-store (Keychain / EncryptedSharedPreferences).
+//
+// Migration from the legacy AsyncStorage backend runs at most once per
+// process on first read after upgrade — see services/journalMigration.ts
+// for the verify-before-delete contract. Until the migration verifies
+// the MMKV write byte-for-byte, the AsyncStorage copy is retained.
+//
+// Public API (list / add / remove / detectParts / randomDeepDivePrompt)
+// is unchanged from the pre-encryption shape so call sites in
+// app/(tabs)/journal.tsx and components/journal/* compile + behave
+// identically.
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
-const KEY = 'journal.entries';
+import * as encryptedStorage from '../utils/encryptedStorage';
+import { runMigrationOnce } from './journalMigration';
 
-export type JournalKind = 'freeflow' | 'deepdive';
-// Parts that can be tagged on an entry. Mirrors the NodeKey union used
-// elsewhere so the UI can reuse the same color palette without a remap.
-export type DetectedPart =
-  | 'wound' | 'fixer' | 'skeptic' | 'self' | 'self-like'
-  | 'manager' | 'firefighter';
-export type JournalEntry = {
-  id: string;
-  kind: JournalKind;
-  createdAt: string;   // ISO timestamp
-  content: string;
-  prompt?: string;     // for deepdive — the guiding prompt shown at the top
-  /** Parts detected in the entry text at save time. Used by the parts
-   *  filter dropdown on the journal tab. May be empty when none of the
-   *  recognized signal words appeared, or undefined for legacy entries
-   *  saved before tagging existed. */
-  detectedParts?: DetectedPart[];
-};
+// Re-export the shared types from the encrypted-storage module so
+// consumers can keep their `from '../services/journal'` imports
+// unchanged. JournalEntry / JournalKind / DetectedPart all live in
+// utils/encryptedStorage as the source of truth now.
+export type { JournalKind, DetectedPart, JournalEntry } from '../utils/encryptedStorage';
+import type { JournalKind, DetectedPart, JournalEntry } from '../utils/encryptedStorage';
 
-async function readAll(): Promise<JournalEntry[]> {
-  try {
-    const raw = await AsyncStorage.getItem(KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch { return []; }
-}
-async function writeAll(entries: JournalEntry[]): Promise<void> {
-  try { await AsyncStorage.setItem(KEY, JSON.stringify(entries)); }
-  catch (e) { console.warn('[journal] write failed:', (e as Error).message); }
+/** Run the one-time AsyncStorage→MMKV migration before any read or
+ *  write. Cached promise — subsequent calls in the same process
+ *  resolve instantly. */
+function ensureReady(): Promise<unknown> {
+  return runMigrationOnce();
 }
 
 export const journal = {
   async list(): Promise<JournalEntry[]> {
-    const all = await readAll();
-    // Most recent first.
+    await ensureReady();
+    const all = await encryptedStorage.getAllEntries();
+    // Most recent first — sort stays identical to the pre-encryption
+    // implementation so journal-tab ordering doesn't change.
     return all.slice().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   },
 
@@ -53,7 +48,7 @@ export const journal = {
     prompt?: string,
     detectedParts?: DetectedPart[],
   ): Promise<JournalEntry> {
-    const all = await readAll();
+    await ensureReady();
     const entry: JournalEntry = {
       id: uuidv4(),
       kind,
@@ -62,16 +57,20 @@ export const journal = {
       prompt,
       detectedParts: detectedParts && detectedParts.length ? detectedParts : undefined,
     };
-    all.push(entry);
-    await writeAll(all);
+    await encryptedStorage.addEntry(entry);
     return entry;
+  },
+
+  async remove(id: string): Promise<void> {
+    await ensureReady();
+    await encryptedStorage.deleteEntry(id);
   },
 
   /** Heuristic keyword-based parts detector used at journal-save time.
    *  Cheap and offline so saving stays instant. The signal vocabulary
    *  is intentionally broad — better to over-tag than to miss — and
    *  can be replaced with a server-side LLM detector later without
-   *  changing the storage shape. */
+   *  changing the storage shape. Pure function; no storage touch. */
   detectParts(text: string): DetectedPart[] {
     if (!text) return [];
     const t = text.toLowerCase();
@@ -92,11 +91,6 @@ export const journal = {
     // Firefighter — distractions, numbing, reaching for relief.
     test(/\b(firefighter|distract(ion|ed)?|numb(ing)?|scroll(ing)?|binge|reach for|relief|escape|drink(ing)?|smok(e|ing))\b/, 'firefighter');
     return Array.from(hits);
-  },
-
-  async remove(id: string): Promise<void> {
-    const all = await readAll();
-    await writeAll(all.filter((e) => e.id !== id));
   },
 
   /** A rotating bank of deepdive prompts — picked at random when the user taps
