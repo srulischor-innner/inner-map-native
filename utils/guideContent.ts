@@ -53,12 +53,15 @@ export type GuideSlide = {
 // Single source of truth so concepts can be revisited later without
 // drifting out of sync with the first-time experience.
 //
-// History: previously 7 entries (2 separate slides for "Your map starts
-// as a sketch" + "The map changes everything", plus a closing "This is
-// not therapy" slide). The two map-evolution slides were merged into
-// one to remove the redundancy; the "This is not therapy" closing slide
-// was removed because the dedicated NotTherapyScreen later in onboarding
-// already lands that message once, cleanly. Result: 5 slides total.
+// History: previously 7 entries. The two map-evolution slides were
+// merged into one ("Your map starts as a sketch" + "The map changes
+// everything" → a single combined slide) to remove the redundancy.
+// The "This is not therapy" closing slide was briefly removed but
+// then restored — the redundancy with the dedicated NotTherapyScreen
+// later in onboarding is intentional. Safety messaging in
+// mental-health-adjacent apps benefits from reinforcement, and App
+// Review favors multiple disclosures over a single buried one.
+// Result: 6 slides total.
 export const WELCOME_SLIDES: GuideSlide[] = [
   {
     visual: 'intro',
@@ -94,7 +97,7 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    // Final slide — breathing full map (every node alive, lines
+    // Companion slide — breathing full map (every node alive, lines
     // shimmering) communicates "system alive over time" rather than
     // "your data is private". Two paragraphs; the sequential
     // paragraph animation in GuideSlide makes paragraph 2 wait until
@@ -104,6 +107,20 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     body: [
       "Open the app when something is activated and you can't quite name the feeling. Return when a pattern keeps repeating and you want to understand why. Use it when you need to be heard without advice or fixing. Mark the moments when something shifts. Sit with it between therapy sessions, when you need somewhere to land.",
       "Over time, Inner Map learns who you are and what you're moving through. The more it knows you, the more its responses can meet you where you actually are — and the deeper the work can go.",
+    ],
+  },
+  {
+    // Closing slide — restores the "this is not therapy + come back
+    // anytime" beat that was briefly removed. Lives as the final
+    // welcome slide so the BEGIN button (onboarding) lands on this
+    // moment. The dedicated NotTherapyScreen later in onboarding
+    // reinforces the same message; the duplication is intentional
+    // safety-by-design.
+    visual: 'readyToBegin',
+    title: 'This is not therapy',
+    body: [
+      "It's a mirror. A space to see yourself more clearly. Nothing you share is judged.",
+      'Everything in this introduction lives in the Guide tab — come back anytime.',
     ],
   },
 ];
