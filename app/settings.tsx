@@ -43,7 +43,7 @@ import {
 } from '../services/biometrics';
 import { api } from '../services/api';
 
-const SUPPORT_EMAIL = 'innermapapp@gmail.com';
+const SUPPORT_EMAIL = 'support@my-inner-map.com';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -237,9 +237,11 @@ export default function SettingsScreen() {
           </Pressable>
         ) : null}
 
-        {/* ===== ACCOUNT & DATA — export + delete ===== */}
-        <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>ACCOUNT & DATA</Text>
-        <AccountDataRows />
+        {/* ACCOUNT & DATA section removed — Export My Data and Delete
+            My Account now live exclusively in PRIVACY & DATA above
+            (single source of truth, eliminates the two-paths-to-same-
+            destructive-action confusion). The shared useAccountExport
+            hook is the implementation underneath. */}
 
         {/* ===== CONTACT ===== */}
         <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>CONTACT</Text>
@@ -350,25 +352,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.xxl,
     letterSpacing: 0.4,
   },
-  // Account & Data rows — "Export My Data" + "Delete Account" pills.
-  accountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.backgroundCard,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-  },
-  accountRowDestructive: {
-    borderColor: 'rgba(220, 90, 90, 0.45)',
-  },
-  accountRowTitleDestructive: {
-    color: '#E68080',
-    fontFamily: fonts.sansBold,
-    fontSize: 14,
-  },
+  // (Former accountRow* styles for the now-removed AccountDataRows
+  // component dropped. PrivacyDataSection uses its own privacyActionBtn
+  // styling for Export / Delete actions.)
 
   // ===== Crisis Resources card =====
   // Single elevated card at the very top of Settings. Subtle amber
@@ -511,10 +497,13 @@ const styles = StyleSheet.create({
 });
 
 // =============================================================================
-// runAccountExport — shared helper for the two Settings rows (in
-// AccountDataRows below and in the new PrivacyDataSection) that
-// trigger an account export. Exposed via a useState-wrapping hook so
-// the caller's button can dim itself while the export is in flight.
+// useAccountExport — shared helper for the Settings → PRIVACY & DATA
+// "Export My Data" row. Originally split out so two call sites could
+// share the implementation; the second site (the old ACCOUNT & DATA
+// section) was retired, so this is now the sole consumer — but the
+// hook is kept as a clean integration point in case the export is
+// surfaced from another screen later. useState-wrapped so the caller's
+// button can dim itself while the export is in flight.
 // =============================================================================
 function useAccountExport() {
   const [exporting, setExporting] = useState(false);
@@ -573,56 +562,11 @@ function useAccountExport() {
 }
 
 // =============================================================================
-// AccountDataRows — Export + Delete pills inside Settings → Account & Data.
-//
-// Export: calls api.exportAccount(), writes the JSON to a temp file via
-// expo-file-system, opens the OS share sheet via expo-sharing. The share
-// sheet lets the user save to Files / send via Mail / save to Drive.
-//
-// Delete: routes to /account/delete (dedicated confirmation screen —
-// per spec, not a modal alert). The actual cascade-delete + post-delete
-// local cleanup all live on that screen.
+// (AccountDataRows component removed — its Export + Delete pills are
+// now exclusively rendered by PrivacyDataSection below, which has the
+// fuller framing + the email-privacy@ button alongside. The shared
+// useAccountExport hook is the underlying export implementation.)
 // =============================================================================
-function AccountDataRows() {
-  const router = useRouter();
-  const { exporting, run: handleExport } = useAccountExport();
-
-  const handleDelete = () => {
-    Haptics.selectionAsync().catch(() => {});
-    router.push('/account/delete' as any);
-  };
-
-  return (
-    <>
-      <Pressable onPress={handleExport} disabled={exporting} style={styles.accountRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.rowTitle}>Export My Data</Text>
-          <Text style={styles.rowSub}>
-            Save a copy of everything Inner Map holds about you. JSON file you can
-            keep, search, or import into another tool later.
-          </Text>
-        </View>
-        {exporting ? (
-          <Ionicons name="hourglass-outline" size={18} color={colors.creamFaint} />
-        ) : (
-          <Ionicons name="download-outline" size={18} color={colors.creamFaint} />
-        )}
-      </Pressable>
-      <Pressable
-        onPress={handleDelete}
-        style={[styles.accountRow, styles.accountRowDestructive]}
-      >
-        <View style={{ flex: 1 }}>
-          <Text style={styles.accountRowTitleDestructive}>Delete Account</Text>
-          <Text style={styles.rowSub}>
-            Permanently remove your data from Inner Map. Cannot be undone.
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={18} color="#E68080" />
-      </Pressable>
-    </>
-  );
-}
 
 // =============================================================================
 // CrisisResourcesSection — pinned at the very top of Settings.

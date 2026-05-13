@@ -20,7 +20,7 @@ import { useRouter } from 'expo-router';
 
 import { colors, fonts, spacing } from '../constants/theme';
 
-const CONTACT_EMAIL = 'innermapapp@gmail.com';
+const CONTACT_EMAIL = 'privacy@my-inner-map.com';
 
 export default function PrivacyScreen() {
   const router = useRouter();

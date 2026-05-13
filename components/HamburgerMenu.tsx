@@ -31,7 +31,7 @@ import { resetOnboarding } from '../services/onboarding';
 import { PART_COLOR } from '../utils/markers';
 import { SessionDetailModal } from './session/SessionDetailModal';
 
-const FEEDBACK_TO  = 'innermapapp@gmail.com';
+const FEEDBACK_TO  = 'support@my-inner-map.com';
 
 export function HamburgerMenu({
   visible,
