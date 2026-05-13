@@ -41,6 +41,7 @@ import {
   Alert,
   Platform,
   Modal,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -526,8 +527,23 @@ function NoRelationshipView({
   onPasteAccept: () => void;
 }) {
   const canPaste = pasteCode.trim().length >= 6 && !busy;
+  // The paste-code field sits near the bottom of the scroll list; on
+  // smaller iPhones the soft keyboard can sit over the input + the
+  // CONNECT button. KeyboardAvoidingView lifts the form above the
+  // keyboard — same pattern the main chat tab uses, but without a
+  // sticky-header offset because this screen has none above it (the
+  // tab bar lives in the parent and isn't pushed when the keyboard
+  // opens).
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <KeyboardAvoidingView
+      style={styles.kav}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+    <ScrollView
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
       <Text style={styles.h1}>Connect with your partner</Text>
       <Text style={styles.lede}>
         Inner Map can hold a private space for the two of you. You'll each have your own
@@ -582,6 +598,7 @@ function NoRelationshipView({
         </Pressable>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -761,6 +778,10 @@ function ActiveView({ rel }: { rel: Relationship }) {
 // =============================================================================
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
+  // KAV wrapper for the connect screen. flex:1 so the inner ScrollView
+  // still fills the available area; behavior is set per-platform on
+  // the component itself (padding on iOS, height on Android).
+  kav: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   // Floating info button — top-right of the Partner tab content.

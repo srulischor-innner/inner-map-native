@@ -49,6 +49,13 @@ type Props = {
   /** Override the canvas width. Defaults are tuned for `full` (sub-view)
    *  vs `compact` (pinned at top of Shared feed). */
   width?: number;
+  /** When true, the under-triangle labels are not rendered — the parent
+   *  has chosen to render its own labels (typically above the triangles
+   *  with explanatory copy). Used by the full Map sub-view so labels
+   *  are visible from the moment the triangles appear without having
+   *  to scroll past them to the panels below. Compact (Shared-feed
+   *  pinned) variant continues to render its under-triangle labels. */
+  hideLabels?: boolean;
 };
 
 // Per-node palette — mirrors constants/theme.ts and the Map tab.
@@ -66,6 +73,7 @@ export function RelationshipMapVisual({
   sharedWoundActive = false,
   variant = 'full',
   width,
+  hideLabels = false,
 }: Props) {
   const isCompact = variant === 'compact';
   const W = width ?? (isCompact ? 320 : 360);
@@ -219,15 +227,19 @@ export function RelationshipMapVisual({
         {renderTriangle(myParts,      leftNodes,  leftOutline)}
         {renderTriangle(partnerParts, rightNodes, rightOutline)}
       </Canvas>
-      {/* Labels under each triangle. */}
-      <View style={[styles.labelRow, isCompact && styles.labelRowCompact]}>
-        <Text style={[styles.label, isCompact && styles.labelCompact]} numberOfLines={1}>
-          {myLabel}
-        </Text>
-        <Text style={[styles.label, isCompact && styles.labelCompact]} numberOfLines={1}>
-          {partnerLabel}
-        </Text>
-      </View>
+      {/* Labels under each triangle — suppressed when the parent has
+          opted to render its own labels (full Map sub-view does this
+          to put labels above the triangles + add explanatory copy). */}
+      {hideLabels ? null : (
+        <View style={[styles.labelRow, isCompact && styles.labelRowCompact]}>
+          <Text style={[styles.label, isCompact && styles.labelCompact]} numberOfLines={1}>
+            {myLabel}
+          </Text>
+          <Text style={[styles.label, isCompact && styles.labelCompact]} numberOfLines={1}>
+            {partnerLabel}
+          </Text>
+        </View>
+      )}
     </View>
   );
 }

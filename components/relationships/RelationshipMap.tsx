@@ -116,6 +116,17 @@ export function RelationshipMap({
 
   const myDisplay      = 'You';
   const partnerDisplay = partnerName || data.partnerName || 'Partner';
+  // Labels rendered ABOVE each triangle. "Your map" on the left is
+  // generic-by-design — Inner Map doesn't carry a first-name surface
+  // client-side (user IDs are anonymous), so substituting a name
+  // there would require a server round-trip we don't need. The right
+  // label is the partner's display name when present; otherwise a
+  // generic "Partner's map" fallback. Both labels stay visible
+  // whenever the view is open — they are not dismissible.
+  const myMapLabel      = 'Your map';
+  const partnerMapLabel = partnerName
+    ? `${partnerName}'s map`
+    : (data.partnerName ? `${data.partnerName}'s map` : "Partner's map");
 
   return (
     <ScrollView
@@ -123,7 +134,25 @@ export function RelationshipMap({
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.amber} />}
       showsVerticalScrollIndicator={false}
     >
-      {/* Two-triangle visual. */}
+      {/* One-line framing hint at the very top — explains what the user
+          is looking at without taking real estate. Persistent (not
+          dismissible) so the meaning of the two triangles is always
+          available on every open. */}
+      <Text style={styles.viewHint}>
+        This view shows both maps so you can see how your dynamics interact.
+      </Text>
+
+      {/* Labels above each triangle. Mirrors the canvas's horizontal
+          layout (two triangles side-by-side with a small gutter), so
+          each label sits visually over its own triangle. */}
+      <View style={styles.aboveLabelRow}>
+        <Text style={styles.aboveLabel} numberOfLines={1}>{myMapLabel}</Text>
+        <Text style={styles.aboveLabel} numberOfLines={1}>{partnerMapLabel}</Text>
+      </View>
+
+      {/* Two-triangle visual. hideLabels=true because labels live
+          above (see aboveLabelRow) — the under-triangle labels would
+          be redundant in this layout. */}
       <View style={styles.visualWrap}>
         <RelationshipMapVisual
           myParts={data.me}
@@ -132,6 +161,7 @@ export function RelationshipMap({
           partnerLabel={partnerDisplay}
           sharedWoundActive={data.sharedWound.active}
           variant="full"
+          hideLabels
         />
       </View>
 
@@ -221,6 +251,39 @@ const styles = StyleSheet.create({
   errorText: { color: colors.creamDim, fontFamily: fonts.serifItalic, fontSize: 14 },
 
   scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
+
+  // One-line framing copy at the top of the view. Italic + dim so it
+  // reads as ambient guidance, not a heading. Persistent — appears
+  // every time the user opens the Map sub-view.
+  viewHint: {
+    color: colors.creamFaint,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  // Row of labels above the triangles. Mirrors the canvas's two-
+  // triangle horizontal layout so each label sits over its own
+  // triangle. Stays visible on every open of the Map sub-view —
+  // these are not a dismissible one-time hint.
+  aboveLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: spacing.lg,
+    marginBottom: 6,
+  },
+  aboveLabel: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+    flex: 1,
+  },
 
   visualWrap: {
     alignItems: 'center',
