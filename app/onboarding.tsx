@@ -50,11 +50,16 @@ import {
 // privacyNoticeSeen flag on dismissal so re-entries skip it.
 type Phase = 'welcome' | 'privacy' | 'terms' | 'intake' | 'experience' | 'resources' | 'notTherapy';
 
-// Same key the deep-link route in app/connect/[code].tsx writes when a
-// brand-new user taps an invite link before completing onboarding.
-// Imported here only by string identity to keep the dependency graph
-// flat — onboarding.tsx and connect/[code].tsx are both top-level
-// route files, so a runtime import would create an awkward cycle.
+// PR B note: this key was previously written by app/connect/[code].tsx
+// when a brand-new user tapped a partner-invite universal link before
+// completing onboarding. The deep-link route + its writer were deleted
+// in PR B (text-based code sharing has no link to intercept). The
+// onboarding flow still reads the key so that any user mid-onboarding
+// at the moment of the PR B deploy who has a stashed key still gets
+// the shortened invitee path. For all new users post-PR-B the key
+// will always be null and the invitee branch in this file is dead.
+// Once the cohort of mid-flight users has aged out we can remove this
+// constant + the isInvitee branch entirely.
 const PENDING_INVITE_CODE_KEY = 'relationships.pendingInviteCode';
 
 export default function OnboardingScreen() {

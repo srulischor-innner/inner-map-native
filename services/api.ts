@@ -766,12 +766,16 @@ export const api = {
   // ===========================================================================
 
   /** POST /api/relationships/invite. Mints (or reuses) a pending invite for
-   *  the calling user. Returns the relationshipId, the 8-char code, the
-   *  shareable link, and whether the row was reused vs freshly created. */
+   *  the calling user. PR B response shape (code-only):
+   *    { relationshipId, code, expiresAt, reused }
+   *  `code` is 6 characters from the unambiguous-glyph alphabet
+   *  (no O/0/I/1/L). `expiresAt` is ISO-8601, ~7 days in the future.
+   *  `reused` is true when the server handed back an existing
+   *  unexpired pending invite rather than minting a fresh row. */
   async createRelationshipInvite(): Promise<{
     relationshipId: string;
-    inviteCode: string;
-    link: string;
+    code: string;
+    expiresAt: string;
     reused: boolean;
   } | { error: string; message?: string }> {
     try {
@@ -789,14 +793,20 @@ export const api = {
   },
 
   /** POST /api/relationships/accept. Accepts an invite by code. Server
-   *  validates the code, the not-self constraint, and the v1 single-active-
-   *  relationship limit. Returns relationshipId + partnerName on success;
-   *  on failure returns one of:
-   *    'missing-invite-code' | 'invite-not-found' | 'invite-already-used'
+   *  validates code shape, existence, expiry, used-state, the
+   *  not-self constraint, and the v1 single-active-relationship limit.
+   *  Returns relationshipId + partnerName on success; on failure
+   *  returns one of (PR B):
+   *    'missing-invite-code' | 'invalid-code-format'
+   *    | 'invite-not-found' | 'invite-expired' | 'invite-already-used'
    *    | 'invite-already-claimed' | 'cannot-accept-own-invite'
-   *    | 'already-in-relationship'
-   *  All as plain { error } objects so the screen can branch on them. */
-  async acceptRelationshipInvite(inviteCode: string): Promise<
+   *    | 'already-in-relationship' | 'rate-limit-exceeded'
+   *  All as plain { error } objects so the screen can branch on them.
+   *
+   *  Wire format uses `{ code }` (was `{ inviteCode }` pre-PR-B). The
+   *  server accepts both keys for one release of overlap but new
+   *  clients should use `code`. */
+  async acceptRelationshipInvite(code: string): Promise<
     | { relationshipId: string; partnerName: string | null }
     | { error: string; message?: string }
   > {
@@ -804,7 +814,7 @@ export const api = {
       const headers = await authHeaders();
       const res = await apiFetch('/api/relationships/accept', {
         label: 'rel-accept', method: 'POST', headers,
-        body: JSON.stringify({ inviteCode: String(inviteCode || '').trim().toUpperCase() }),
+        body: JSON.stringify({ code: String(code || '').trim().toUpperCase() }),
       });
       const j: any = await res.json().catch(() => ({}));
       if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
@@ -930,12 +940,16 @@ export const api = {
     inviterUserId: string;
     inviteeUserId: string | null;
     inviteCode: string | null;
+    // PR B: invite expiry timestamp (ISO-8601, ~7 days after mint).
+    // Set on pending rows where the invite hasn't been consumed yet;
+    // null on accepted relationships and on pre-PR-B rows.
+    inviteExpiresAt?: string | null;
+    inviteUsedAt?: string | null;
     status: 'pending' | 'active' | 'paused';
     inviterAcceptedIntro: number;
     inviteeAcceptedIntro: number;
     createdAt: string;
     updatedAt: string;
-    link: string | null;
     myRole: 'inviter' | 'invitee';
     partnerId: string | null;
     partnerName: string | null;

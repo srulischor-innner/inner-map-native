@@ -4,29 +4,24 @@
 //
 //   loading                  → fetching the user's relationships
 //   none                     → no relationships → invite-or-paste UI
+//                              (NoRelationshipView)
 //   pending-no-partner       → user is the inviter, partner hasn't
-//                              accepted yet → show invite link big +
-//                              copy/share affordance
+//                              accepted yet → show 6-char code big +
+//                              text-only share affordance
 //   pending-intros           → both partners bound, one or both still
 //                              haven't completed the intro → waiting
 //                              state with a "Read the intro" CTA
 //                              when the calling user is the one we're
 //                              waiting on
-//   active                   → both intros done → three sub-view
-//                              stubs (chat / shared / map). Phase 5
-//                              owns the intro screens; Phase 6 owns
-//                              the real sub-view content.
+//   active                   → both intros done → three sub-views
+//                              (chat / shared / map)
 //
-// Resume-after-onboarding flow:
-//
-//   When a user lands here for the first time, the screen also looks
-//   for a staged invite code in AsyncStorage under
-//   PENDING_INVITE_CODE_KEY (set by app/connect/[code].tsx on a
-//   first-launch deep-link tap before onboarding was complete). If
-//   found AND the user has no relationship yet, the tab automatically
-//   calls acceptRelationshipInvite(code) and clears the key on
-//   success. This closes the deep-link → onboarding → tab loop without
-//   requiring the user to re-tap the link.
+// PR B: the pre-pairing informational carousel was removed entirely.
+// The first Partner-tab visit now goes straight to NoRelationshipView,
+// which has its own brief lede setting expectations for the upcoming
+// consent moment. The floating ℹ button still re-opens the consent
+// content, but now in review mode of the new ConsentDocument single
+// scrollable page (not the prior 6-slide carousel).
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -47,23 +42,29 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { colors, fonts, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
-import { PENDING_INVITE_CODE_KEY } from '../connect/[code]';
 import { RelationshipChat } from '../../components/relationships/RelationshipChat';
 import { SharedFeed } from '../../components/relationships/SharedFeed';
 import { RelationshipMap } from '../../components/relationships/RelationshipMap';
-import { RelationshipIntroCarousel } from '../../components/relationships/RelationshipIntroCarousel';
+import { ConsentDocument } from '../../components/relationships/ConsentDocument';
 
-// AsyncStorage flag — flips to '1' the first time the user reaches the
-// last slide of the informational intro (tab-level). Subsequent visits
-// to the Partner tab skip the carousel and go straight to the connect
-// screen / state machine. Per-install, not per-relationship — distinct
-// from the per-pairing 'relationships.introSeen:<id>' key used by the
-// commitment-mode carousel after pairing.
-const TAB_INTRO_SEEN_KEY = 'relationships.tabIntroSeen';
+// Safe alphabet for the 6-char invite codes (PR B). Mirrors the server
+// constant in prompts/relationships logic (server.js INVITE_CODE_ALPHABET).
+// Used by the paste-code TextInput to filter out characters the server
+// would reject anyway, so users don't see "invalid-code-format" errors
+// from typos that could be silently corrected at input time.
+const INVITE_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const INVITE_CODE_LENGTH = 6;
+function sanitizeInviteInput(raw: string): string {
+  return raw
+    .toUpperCase()
+    .split('')
+    .filter((c) => INVITE_CODE_ALPHABET.indexOf(c) !== -1)
+    .join('')
+    .slice(0, INVITE_CODE_LENGTH);
+}
 
 // One row of /api/relationships, mirrored from the api.ts wrapper. Kept
 // inline rather than imported so the screen is self-documenting on the
@@ -73,10 +74,15 @@ type Relationship = {
   inviterUserId: string;
   inviteeUserId: string | null;
   inviteCode: string | null;
+  // PR B: invite expiry timestamp. Set on pending rows where the
+  // invite hasn't been consumed yet; null on accepted relationships
+  // and on pre-PR-B rows. The pending-no-partner screen can show
+  // "expires in N days" copy if it wants to use this.
+  inviteExpiresAt?: string | null;
+  inviteUsedAt?: string | null;
   status: 'pending' | 'active' | 'paused';
   inviterAcceptedIntro: number;
   inviteeAcceptedIntro: number;
-  link: string | null;
   myRole: 'inviter' | 'invitee';
   partnerId: string | null;
   partnerName: string | null;
@@ -115,49 +121,21 @@ export default function RelationshipsScreen() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const [pasteCode, setPasteCode] = useState('');
   const [busy, setBusy] = useState(false);
-  // resumeAttempted prevents the deep-link-resume effect from re-running
-  // after the user has already been routed through it once during this
-  // mount. Without this, refresh() can trigger a second attempt that
-  // hits "invite-already-claimed" instead of the success path.
-  const [resumeAttempted, setResumeAttempted] = useState(false);
 
-  // First-time tab-intro gate. Three-state pattern (same as the
-  // typewriter gate elsewhere) so the screen holds a blank canvas
-  // briefly while AsyncStorage resolves rather than flashing the
-  // connect screen and *then* swapping in the carousel.
-  //
-  //   'unknown' → AsyncStorage read still pending; render loader
-  //   'unseen'  → flag absent → render the informational carousel
-  //   'seen'    → flag present → fall through to the state machine
-  const [tabIntro, setTabIntro] = useState<'unknown' | 'unseen' | 'seen'>('unknown');
-
-  useEffect(() => {
-    AsyncStorage.getItem(TAB_INTRO_SEEN_KEY)
-      .then((v) => setTabIntro(v ? 'seen' : 'unseen'))
-      .catch(() => setTabIntro('seen'));
-  }, []);
-
-  // GET STARTED handler — last-slide button in the informational
-  // carousel. Flip the flag, advance to the state machine. The
-  // carousel also stamps the same key internally on its own
-  // last-slide-reached effect, but we set it here too so the parent
-  // state stays in lockstep with what's on disk.
-  const onTabIntroDone = useCallback(async () => {
-    try { await AsyncStorage.setItem(TAB_INTRO_SEEN_KEY, '1'); } catch {}
-    setTabIntro('seen');
-  }, []);
-
-  // Review-mode intro re-open — driven by the floating ℹ︎ button
-  // rendered in the top-right of the screen. Lets the user revisit
-  // the six framing slides at any time without disturbing whichever
-  // sub-state (connect / pending / active) they were on. On dismiss
-  // (last-slide GOT IT or back chevron), state flips back and the
+  // Review-mode consent re-open — driven by the floating ℹ︎ button
+  // in the top-right corner. Lets the user revisit the consent
+  // document any time without disturbing whichever sub-state they
+  // were on. On dismiss (GOT IT button), state flips back and the
   // underlying screen re-renders unchanged.
-  const [reviewIntroOpen, setReviewIntroOpen] = useState(false);
-  const closeReview = useCallback(() => setReviewIntroOpen(false), []);
+  //
+  // PR B: this used to open the 6-slide RelationshipIntroCarousel.
+  // Now opens the new single-page ConsentDocument component in its
+  // 'review' mode.
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const closeReview = useCallback(() => setReviewOpen(false), []);
   const openReview = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
-    setReviewIntroOpen(true);
+    setReviewOpen(true);
   }, []);
 
   // Navigate to the per-partner intro carousel (Phase 5).
@@ -184,73 +162,14 @@ export default function RelationshipsScreen() {
     });
   }, [refresh]);
 
-  // Resume-after-onboarding consumer. Runs once per mount AFTER the
-  // initial /api/relationships fetch has resolved into a 'none' phase.
-  // If a code is staged AND we have no relationship, we accept it and
-  // refresh. Any other phase means the user already has a relationship
-  // (active or pending), so the staged code is stale — clear it.
-  useEffect(() => {
-    if (phase.kind === 'loading' || resumeAttempted) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const stagedCode = await AsyncStorage.getItem(PENDING_INVITE_CODE_KEY);
-        if (!stagedCode) return;
-        if (cancelled) return;
-        if (phase.kind !== 'none') {
-          // User already has something — staged code is stale, drop it
-          // silently to avoid a misleading error toast on next load.
-          console.log(`[relationships] dropping stale staged code (current phase=${phase.kind})`);
-          await AsyncStorage.removeItem(PENDING_INVITE_CODE_KEY).catch(() => {});
-          setResumeAttempted(true);
-          return;
-        }
-        console.log(`[relationships] resuming staged invite code=${stagedCode}`);
-        setResumeAttempted(true);
-        setBusy(true);
-        const result = await api.acceptRelationshipInvite(stagedCode);
-        if (cancelled) return;
-        if ('error' in result) {
-          console.warn(`[relationships] resume failed: ${result.error} ${result.message || ''}`);
-          // Don't clear the staged code on transport/server errors that
-          // might recover on retry. Cancel-permanent reasons (the
-          // invite is gone) get cleared so we don't loop on every
-          // mount.
-          const permanent = [
-            'invite-not-found',
-            'invite-already-used',
-            'invite-already-claimed',
-            'cannot-accept-own-invite',
-            'already-in-relationship',
-          ].includes(result.error);
-          if (permanent) {
-            await AsyncStorage.removeItem(PENDING_INVITE_CODE_KEY).catch(() => {});
-          }
-          setBusy(false);
-          // Surface the result so the user knows their tap landed.
-          // Friendly error mapping mirrors connect/[code].tsx.
-          const message = (
-            result.error === 'invite-not-found'        ? "We couldn't find this invite. Ask your partner to share a fresh link." :
-            result.error === 'invite-already-claimed'  ? "Someone has already accepted this invite." :
-            result.error === 'cannot-accept-own-invite' ? "This is your own invite — share it with your partner instead." :
-            result.error === 'already-in-relationship' ? "You already have an active relationship." :
-            "Couldn't complete the connection. Please try the link again."
-          );
-          Alert.alert('Hmm, that didn\'t work', message);
-          return;
-        }
-        // Success — clear the staged code, refresh the screen.
-        await AsyncStorage.removeItem(PENDING_INVITE_CODE_KEY).catch(() => {});
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        await refresh();
-        setBusy(false);
-      } catch (e) {
-        console.warn('[relationships] resume threw:', (e as Error)?.message);
-        setBusy(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [phase.kind, resumeAttempted, refresh]);
+  // (PR B removed the deep-link resume effect entirely. Pre-PR-B,
+  // tapping a partner invite URL stashed the code in AsyncStorage
+  // under PENDING_INVITE_CODE_KEY and this effect picked it up after
+  // onboarding. The code-only sharing flow has no deep links, so
+  // there's nothing to resume — the user types the code into the
+  // paste field instead. Any stale staged code from a pre-PR-B
+  // install is cleaned up by a one-shot effect in app/_layout.tsx
+  // or simply ignored: the key is no longer read by anyone.)
 
   // ---- Action handlers ----
 
@@ -270,18 +189,35 @@ export default function RelationshipsScreen() {
   }, [refresh]);
 
   const onPasteAccept = useCallback(async () => {
-    const code = pasteCode.trim().toUpperCase();
-    if (!code) return;
+    // Sanitizer already enforces safe alphabet + 6-char cap on input,
+    // but trim() guards against trailing whitespace from paste.
+    const code = sanitizeInviteInput(pasteCode);
+    if (code.length !== INVITE_CODE_LENGTH) {
+      Alert.alert(
+        "Hmm, that didn't work",
+        `Codes are exactly ${INVITE_CODE_LENGTH} characters. Double-check the code your partner sent.`,
+      );
+      return;
+    }
     setBusy(true);
     Haptics.selectionAsync().catch(() => {});
     const result = await api.acceptRelationshipInvite(code);
     setBusy(false);
     if ('error' in result) {
+      // PR B added explicit invite-expired and invalid-code-format
+      // states; the older invite-not-found / invite-already-claimed
+      // / cannot-accept-own-invite / already-in-relationship are
+      // preserved. rate-limit-exceeded is mapped explicitly so the
+      // user sees the actionable message rather than a generic one.
       const msg = (
         result.error === 'invite-not-found'         ? "No invite matches that code. Double-check and try again." :
-        result.error === 'invite-already-claimed'   ? "This invite has already been used." :
-        result.error === 'cannot-accept-own-invite' ? "That's your own invite code — share it with your partner instead." :
+        result.error === 'invite-expired'           ? "That code has expired. Ask your partner to generate a new one." :
+        result.error === 'invite-already-used'      ? "That code has already been used. Ask your partner for a new one." :
+        result.error === 'invite-already-claimed'   ? "This invite has already been accepted by someone else." :
+        result.error === 'cannot-accept-own-invite' ? "That's your own code — share it with your partner instead." :
+        result.error === 'invalid-code-format'      ? `Codes are exactly ${INVITE_CODE_LENGTH} characters from the safe alphabet (no O/0/I/1/L).` :
         result.error === 'already-in-relationship'  ? "You already have an active relationship." :
+        result.error === 'rate-limit-exceeded'      ? (result.message || "Too many invalid codes. Please double-check and try again later.") :
         "Couldn't accept that code. Try again."
       );
       Alert.alert("Hmm, that didn't work", msg);
@@ -292,59 +228,41 @@ export default function RelationshipsScreen() {
     await refresh();
   }, [pasteCode, refresh]);
 
-  const onShareLink = useCallback(async (link: string) => {
+  // PR B: code-only sharing. Plain-text message with the code
+  // embedded — no URL, no deep link. Recipient pastes the code into
+  // their own Partner-tab paste field. No `url` argument to Share.share
+  // (which would attach a clickable link on iOS); the message body
+  // is the entire payload.
+  const onShareCode = useCallback(async (code: string) => {
     Haptics.selectionAsync().catch(() => {});
     try {
       await Share.share({
-        message: `I'd like us to explore our relationship together on Inner Map. Tap to connect: ${link}`,
-        url: Platform.OS === 'ios' ? link : undefined,
+        message:
+          "Let's explore our relationship on Inner Map. Download the app, then enter this code: " + code,
       });
     } catch (e) {
       console.warn('[relationships] share failed:', (e as Error)?.message);
     }
   }, []);
 
-  // Note: a dedicated Copy button is intentionally omitted in this build —
-  // the iOS / Android Share sheet already exposes Copy as one of its
-  // options, and the link itself is rendered as `selectable` Text so a
-  // user can long-press to copy directly. Adding expo-clipboard would
-  // require a dependency bump that this phase doesn't need.
-
   // ---- Render branches ----
 
-  // First-time tab-intro gate. We render the carousel BEFORE running
-  // the relationship state machine — a brand-new user sees the six
-  // cinematic slides on their very first tap into the Partner tab,
-  // and only after GET STARTED do they see the connect screen.
-  // Subsequent visits skip directly to the state machine.
-  if (tabIntro === 'unknown') {
-    return (
-      <SafeAreaView style={styles.root} edges={[]}>
-        <CenteredLoader />
-      </SafeAreaView>
-    );
-  }
-  if (tabIntro === 'unseen') {
-    return (
-      <SafeAreaView style={styles.root} edges={[]}>
-        <RelationshipIntroCarousel
-          mode="informational"
-          onComplete={onTabIntroDone}
-        />
-      </SafeAreaView>
-    );
-  }
+  // PR B: the pre-pairing informational carousel is gone. The first
+  // Partner-tab visit goes straight to NoRelationshipView, which
+  // carries its own brief lede setting expectations for the consent
+  // moment that follows pairing.
 
-  // Review-mode short-circuit. While the user has the ℹ︎ panel open
-  // we replace the entire tab content with the carousel; the back
-  // chevron + GOT IT button both call closeReview() which flips
-  // back to whatever sub-state was underneath.
-  if (reviewIntroOpen) {
+  // Review-mode short-circuit — the floating ℹ button below opens
+  // the consent document any time. While the document is open we
+  // replace the entire tab content; the GOT IT button calls
+  // closeReview() which flips back to whatever sub-state was
+  // underneath.
+  if (reviewOpen) {
     return (
       <SafeAreaView style={styles.root} edges={[]}>
-        <RelationshipIntroCarousel
+        <ConsentDocument
           mode="review"
-          onComplete={closeReview}
+          onDismiss={closeReview}
           showBackButton
           onBack={closeReview}
         />
@@ -354,11 +272,11 @@ export default function RelationshipsScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
-      {/* Floating ℹ︎ — re-opens the framing carousel from anywhere
-          on the Partner tab (connect screen, pending states, all
-          three active sub-views). Absolute-positioned so it stays
-          in the same screen-corner regardless of which sub-state
-          is currently rendered below. */}
+      {/* Floating ℹ — opens the consent document in review mode from
+          anywhere on the Partner tab (connect screen, pending states,
+          all three active sub-views). Absolute-positioned so it stays
+          in the same screen-corner regardless of which sub-state is
+          currently rendered below. */}
       <Pressable
         onPress={openReview}
         hitSlop={10}
@@ -373,14 +291,14 @@ export default function RelationshipsScreen() {
         <NoRelationshipView
           busy={busy}
           pasteCode={pasteCode}
-          onPasteCodeChange={setPasteCode}
+          onPasteCodeChange={(s) => setPasteCode(sanitizeInviteInput(s))}
           onCreateInvite={onCreateInvite}
           onPasteAccept={onPasteAccept}
         />
       ) : phase.kind === 'pending-no-partner' ? (
         <PendingNoPartnerView
           rel={phase.rel}
-          onShare={onShareLink}
+          onShareCode={onShareCode}
           onRefresh={refresh}
         />
       ) : phase.kind === 'pending-intros' ? (
@@ -526,7 +444,7 @@ function NoRelationshipView({
   onCreateInvite: () => void;
   onPasteAccept: () => void;
 }) {
-  const canPaste = pasteCode.trim().length >= 6 && !busy;
+  const canPaste = pasteCode.length === INVITE_CODE_LENGTH && !busy;
   // The paste-code field sits near the bottom of the scroll list; on
   // smaller iPhones the soft keyboard can sit over the input + the
   // CONNECT button. KeyboardAvoidingView lifts the form above the
@@ -545,27 +463,34 @@ function NoRelationshipView({
       keyboardShouldPersistTaps="handled"
     >
       <Text style={styles.h1}>Connect with your partner</Text>
+      {/* PR B: lede now sets expectations for the consent moment that
+          lands after pairing. The earlier lede ended at the
+          private-vs-shared framing; the new closing sentence flags
+          that "a short consent" is coming before the shared space
+          opens, so the consent screen doesn't feel like an
+          interruption when it arrives. */}
       <Text style={styles.lede}>
         Inner Map can hold a private space for the two of you. You'll each have your own
-        chat, and the parts you both approve appear in a shared view.
+        chat, and what you both choose to share appears in a shared view. After you're
+        connected, you'll each review a short consent before the shared space opens.
       </Text>
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Send an invite</Text>
         <Text style={styles.cardBody}>
-          Generate a link to share with your partner. They'll tap it on their phone, set
-          up Inner Map, and you'll be paired.
+          Generate a code to share with your partner. Send it to them in a text or
+          message — when they enter it in their app, you'll be paired.
         </Text>
         <Pressable
           onPress={onCreateInvite}
           style={[styles.btnPrimary, busy && styles.btnDim]}
           disabled={busy}
-          accessibilityLabel="Generate invite link"
+          accessibilityLabel="Generate code"
         >
           {busy ? (
             <ActivityIndicator color={colors.background} />
           ) : (
-            <Text style={styles.btnPrimaryText}>GENERATE INVITE LINK</Text>
+            <Text style={styles.btnPrimaryText}>GENERATE CODE</Text>
           )}
         </Pressable>
       </View>
@@ -575,18 +500,29 @@ function NoRelationshipView({
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Have a code from your partner?</Text>
         <Text style={styles.cardBody}>
-          Paste the 8-character code from the link they sent.
+          Enter the 6-character code your partner sent you.
         </Text>
         <TextInput
           value={pasteCode}
-          onChangeText={(s) => onPasteCodeChange(s.toUpperCase())}
-          placeholder="ABCD1234"
+          // Sanitizer in the parent enforces uppercase + safe alphabet
+          // + 6-char cap on every keystroke. The onChangeText callback
+          // receives raw user input (paste / IME insertion / typed)
+          // and the parent runs it through sanitizeInviteInput before
+          // re-rendering this with the new value.
+          onChangeText={onPasteCodeChange}
+          placeholder="A7B9XK"
           placeholderTextColor={colors.creamFaint}
           style={styles.codeInput}
           autoCapitalize="characters"
           autoCorrect={false}
-          maxLength={12}
+          maxLength={INVITE_CODE_LENGTH}
           editable={!busy}
+          // Belt-and-braces — keyboard hint for numeric+letter ranges
+          // is platform-dependent; ascii-capable is the closest
+          // universal hint to "uppercase letters + digits, no
+          // punctuation or accents". Sanitizer still strips anything
+          // outside the safe alphabet.
+          keyboardType={Platform.OS === 'ios' ? 'ascii-capable' : 'default'}
         />
         <Pressable
           onPress={onPasteAccept}
@@ -603,34 +539,43 @@ function NoRelationshipView({
 }
 
 function PendingNoPartnerView({
-  rel, onShare, onRefresh,
+  rel, onShareCode, onRefresh,
 }: {
   rel: Relationship;
-  onShare: (link: string) => void;
+  onShareCode: (code: string) => void;
   onRefresh: () => void;
 }) {
-  const link = rel.link || '';
+  // PR B: the row used to carry both a `link` field and `inviteCode`;
+  // the link is gone, the code is the entire payload. Code is rendered
+  // large + tappable; a long-press on the displayed code copies via
+  // the OS selection menu without needing expo-clipboard.
   const code = rel.inviteCode || '';
   return (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Text style={styles.h1}>Waiting for your partner</Text>
       <Text style={styles.lede}>
-        Send them this link. They'll tap it on their phone and we'll pair you up.
+        Send them this code. Once they enter it in their app, you'll be paired.
       </Text>
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Your invite link</Text>
-        <View style={styles.codeBox}>
-          {/* selectable Text — long-press copies on iOS/Android without
-              requiring expo-clipboard as a dep. */}
-          <Text style={styles.codeBoxText} selectable numberOfLines={2}>{link}</Text>
+        <Text style={styles.cardTitle}>Your invite code</Text>
+        <View style={styles.codeBigBox}>
+          {/* selectable Text — long-press shows the OS copy menu on
+              iOS / Android without requiring expo-clipboard as a dep.
+              numberOfLines=1 because a 6-char code with letter-
+              spacing easily fits one line, and we don't want it to
+              wrap mid-code. */}
+          <Text style={styles.codeBigText} selectable numberOfLines={1}>
+            {code}
+          </Text>
         </View>
-        <Pressable onPress={() => onShare(link)} style={styles.btnPrimary} accessibilityLabel="Share invite link">
+        <Pressable
+          onPress={() => onShareCode(code)}
+          style={styles.btnPrimary}
+          accessibilityLabel="Share code"
+        >
           <Ionicons name="share-outline" size={16} color={colors.background} style={{ marginRight: 8 }} />
-          <Text style={styles.btnPrimaryText}>SHARE LINK</Text>
+          <Text style={styles.btnPrimaryText}>SHARE CODE</Text>
         </Pressable>
-        <Text style={styles.codeHint}>
-          Or share the code: <Text style={styles.codeStrong}>{code}</Text>
-        </Text>
       </View>
       <Pressable onPress={onRefresh} style={styles.refreshRow} accessibilityLabel="Refresh">
         <Ionicons name="refresh" size={14} color={colors.creamFaint} />
@@ -878,11 +823,17 @@ const styles = StyleSheet.create({
   btnRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm },
   btnDim: { opacity: 0.5 },
 
+  // 6-char invite-code TextInput. Larger font + heavier letter
+  // spacing than the previous 8-char input — the field has less
+  // content to fill and we want it to read at a glance. Centered
+  // text since the field's value is just the code itself, no
+  // surrounding language.
   codeInput: {
     color: colors.cream,
     fontFamily: fonts.sansBold,
-    fontSize: 18,
-    letterSpacing: 4,
+    fontSize: 22,
+    letterSpacing: 6,
+    textAlign: 'center',
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderRadius: 12,
     paddingHorizontal: spacing.md,
@@ -891,24 +842,35 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(230,180,122,0.2)',
     marginBottom: spacing.md,
   },
-  codeBox: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 10,
+  // (Legacy codeBox / codeBoxText / codeHint / codeStrong styles
+  // removed in PR B — they belonged to the previous URL-display
+  // version of the waiting screen. PR B renders the code itself big
+  // via codeBigBox / codeBigText below.)
+
+  // PR B: large-format display of the 6-char invite code on the
+  // pending-no-partner screen. Heavy letter-spacing + amber color +
+  // bold weight make the code the dominant visual element on the
+  // screen, since the user's main action is reading + sharing it.
+  codeBigBox: {
+    backgroundColor: 'rgba(230,180,122,0.04)',
+    borderRadius: 12,
+    paddingVertical: spacing.lg,
     paddingHorizontal: spacing.md,
-    paddingVertical: 12,
     marginBottom: spacing.md,
-    borderWidth: 0.5,
-    borderColor: 'rgba(230,180,122,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(230,180,122,0.35)',
+    alignItems: 'center',
   },
-  codeBoxText: { color: colors.cream, fontFamily: fonts.sans, fontSize: 13 },
-  codeHint: {
-    color: colors.creamFaint,
-    fontFamily: fonts.sans,
-    fontSize: 12,
-    marginTop: spacing.sm,
+  codeBigText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 34,
+    letterSpacing: 8,
     textAlign: 'center',
+    // Leading whitespace on the right balances the letter-spacing
+    // visually — without it the last character looks shifted left.
+    paddingLeft: 8,
   },
-  codeStrong: { color: colors.amber, fontFamily: fonts.sansBold, letterSpacing: 2 },
 
   statusRow: {
     flexDirection: 'row',

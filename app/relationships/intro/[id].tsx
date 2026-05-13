@@ -1,58 +1,40 @@
-// Relationship intro carousel — Phase 5 (commitment route).
+// Relationship intro / commitment route.
 //
-// Thin wrapper around RelationshipIntroCarousel. The same six-slide
-// component is used in two places:
+// Mounts the ConsentDocument in commitment mode for the relationshipId
+// in the URL segment. ConsentDocument owns the accept API call —
+// tapping "I UNDERSTAND AND ACCEPT" inside it fires
+// api.acceptRelationshipIntro(id) and routes back to /relationships,
+// where the state machine refreshes into pending-intros (waiting on
+// the other partner) or active.
 //
-//   - app/(tabs)/relationships.tsx  (mode='informational', first-time
-//     tab visit, no API call)
-//   - this screen                    (mode='commitment', after pairing,
-//     hits api.acceptRelationshipIntro)
-//
-// On accept the screen pops back to /relationships, where the tab's
-// state machine re-fetches and either shows the still-pending state
-// (if the partner hasn't read theirs yet) or transitions to active.
+// PR B history: this used to mount RelationshipIntroCarousel in
+// mode='commitment' — a 6-slide pager that duplicated the same body
+// text the user had already swiped through in informational mode
+// before pairing. The duplication was removed in PR B; the
+// commitment screen is now a single scrollable consent document.
+// See ConsentDocument for the shared body text.
 
-import React, { useCallback, useState } from 'react';
-import { Alert } from 'react-native';
+import React, { useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
 
 import { colors } from '../../../constants/theme';
-import { RelationshipIntroCarousel } from '../../../components/relationships/RelationshipIntroCarousel';
-import { api } from '../../../services/api';
+import { ConsentDocument } from '../../../components/relationships/ConsentDocument';
 
 export default function RelationshipIntroScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const relationshipId = String(id || '').trim();
   const router = useRouter();
 
-  const [accepting, setAccepting] = useState(false);
-
-  const onAccept = useCallback(async () => {
-    if (!relationshipId || accepting) return;
-    setAccepting(true);
-    const result = await api.acceptRelationshipIntro(relationshipId);
-    setAccepting(false);
-    if ('error' in result) {
-      Alert.alert(
-        'Could not save your acceptance',
-        result.message || 'Please try again in a moment.',
-      );
-      return;
-    }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    router.replace('/relationships');
-  }, [relationshipId, accepting, router]);
+  const onBack = useCallback(() => router.back(), [router]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top', 'bottom']}>
-      <RelationshipIntroCarousel
+      <ConsentDocument
         mode="commitment"
-        onComplete={onAccept}
-        accepting={accepting}
+        relationshipId={relationshipId}
         showBackButton
-        onBack={() => router.back()}
+        onBack={onBack}
       />
     </SafeAreaView>
   );

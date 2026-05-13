@@ -35,9 +35,15 @@ const base = {
       bundleIdentifier: 'com.srulischor.innermap',
       buildNumber: '2',
       supportsTablet: false,
-      associatedDomains: [
-        'applinks:inner-map-production.up.railway.app',
-      ],
+      // PR B: associatedDomains array intentionally empty.
+      // The only universal-link surface this app ever claimed was
+      // /connect/* for the deep-link invite hand-off, and that flow
+      // was retired in PR B in favor of text-based code sharing.
+      // The empty array is preserved (rather than the key being
+      // removed) so the field stays visible — when a new universal-
+      // link surface is introduced in the future, adding the entry
+      // here is a one-line change.
+      associatedDomains: [],
       infoPlist: {
         NSMicrophoneUsageDescription:
           'Inner Map uses the microphone for voice notes and voice conversations.',
@@ -62,20 +68,13 @@ const base = {
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       permissions: ['RECORD_AUDIO'],
-      intentFilters: [
-        {
-          action: 'VIEW',
-          autoVerify: true,
-          data: [
-            {
-              scheme: 'https',
-              host: 'inner-map-production.up.railway.app',
-              pathPrefix: '/connect/',
-            },
-          ],
-          category: ['BROWSABLE', 'DEFAULT'],
-        },
-      ],
+      // PR B: intentFilters left empty. The only auto-verify deep
+      // link this app declared was https://…/connect/* for the
+      // invite-link hand-off, which was retired in PR B (text-based
+      // code sharing has no link to intercept). Property kept (as an
+      // empty array) rather than removed so future deep links can
+      // be added here without re-introducing the field shape.
+      intentFilters: [],
     },
     web: {
       favicon: './assets/favicon.png',
