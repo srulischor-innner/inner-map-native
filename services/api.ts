@@ -25,6 +25,48 @@ console.log('[api] BASE_URL =', BASE_URL);
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
+// PR C — shared-space dialogue. One message in the shared thread
+// (either a partner contribution or an AI message). The server
+// returns these in a stable shape; the native client renders one
+// SharedMessageCard per row.
+export type SharedMessageKind =
+  | 'partner_contribution'
+  | 'ai_acknowledgment'
+  | 'ai_hunch'
+  | 'ai_observation'
+  | 'ai_question'
+  | 'ai_framework_explanation'
+  | 'ai_moderation';
+
+export type SharedMessageOption = {
+  id: string;
+  messageId: string;
+  label: string;
+  value: string;
+  ordering: number;
+};
+export type SharedMessageResponse = {
+  id: string;
+  messageId: string;
+  userId: string;
+  optionId: string | null;
+  otherText: string | null;
+  moderationFlag: 0 | 1;
+  createdAt: string;
+};
+export type SharedMessage = {
+  id: string;
+  relationshipId: string;
+  author: 'ai' | 'partner_a' | 'partner_b';
+  authorUserId: string | null;
+  kind: SharedMessageKind;
+  content: string;
+  referencesId: string | null;
+  createdAt: string;
+  options: SharedMessageOption[];
+  responses: SharedMessageResponse[];
+};
+
 async function authHeaders(): Promise<Record<string, string>> {
   const userId = await getUserId();
   return {
@@ -1023,102 +1065,128 @@ export const api = {
     }
   },
 
-  /** GET /api/relationships/:id/shared. Pulls published shared items
-   *  (each hydrated with reactions + comments) plus this user's
-   *  pending proposals — proposals from THIS user's chat awaiting
-   *  their own approval (scope='this-partner'), or proposals from
-   *  EITHER chat awaiting their approval (scope='both-partners'). */
-  async listRelationshipShared(relationshipId: string): Promise<{
-    sharedItems: Array<{
-      id: string; type: string; content: string; publishedAt: string;
-      reactions: Array<{ id: string; userId: string; reaction: string; createdAt: string; side: 'inviter' | 'invitee' }>;
-      comments:  Array<{ id: string; userId: string; content: string; createdAt: string; side: 'inviter' | 'invitee' }>;
-    }>;
-    myPendingProposals: Array<{
-      id: string; type: string; content: string;
-      scope: 'this-partner' | 'both-partners';
-      sourceSide: 'inviter' | 'invitee';
-      youAreSource: boolean;
-      createdAt: string;
-    }>;
-    meta: { mySide: 'inviter' | 'invitee' };
+  // ===========================================================================
+  // SHARED-SPACE DIALOGUE (PR C)
+  //
+  // Replaces the old proposal/voting wrappers. The shared space is now
+  // a structured dialogue between both partners and a shared-space AI.
+  // Four endpoints:
+  //   POST /shared/contribute   — partner posts content into the shared space
+  //   POST /shared/respond      — partner responds to an AI message
+  //   GET  /shared/messages     — full thread for the relationship
+  //   GET  /shared/since/:ts    — incremental delta since timestamp
+  // ===========================================================================
+  /** POST /api/relationships/:id/shared/contribute. Body: { content }.
+   *  Server inserts a shared_messages row of kind='partner_contribution'
+   *  authored by the calling user and fires an AI tick. Response
+   *  includes both the new contribution row and (if the tick posted
+   *  anything) the AI's reply. The AI may also skip — aiMessage is
+   *  null in that case. */
+  async contributeToSharedSpace(
+    relationshipId: string,
+    content: string,
+  ): Promise<
+    | {
+        contribution: SharedMessage;
+        aiMessage: SharedMessage | null;
+      }
+    | { error: string; message?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/contribute`,
+        { label: 'shared-contribute', method: 'POST', headers, body: JSON.stringify({ content }) },
+      );
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
+      return j;
+    } catch (e) {
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  /** POST /api/relationships/:id/shared/respond. Body: { messageId, optionId?, otherText? }.
+   *  Exactly one of optionId / otherText must be set. otherText runs
+   *  through server-side moderation first; toxic text is rejected with
+   *  a redirect message (error='moderation-rejected', redirect: '...').
+   *  If both partners have now responded to the same AI message, the
+   *  server fires an AI tick and aiMessage may be non-null. */
+  async respondInSharedSpace(
+    relationshipId: string,
+    messageId: string,
+    payload: { optionId: string } | { otherText: string },
+  ): Promise<
+    | {
+        responseId: string;
+        moderationFlag: 0 | 1;
+        aiMessage: SharedMessage | null;
+      }
+    | { error: string; message?: string; redirect?: string }
+  > {
+    try {
+      const headers = await authHeaders();
+      const body: any = { messageId };
+      if ('optionId' in payload) body.optionId = payload.optionId;
+      if ('otherText' in payload) body.otherText = payload.otherText;
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/respond`,
+        { label: 'shared-respond', method: 'POST', headers, body: JSON.stringify(body) },
+      );
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          error: j?.error || `http_${res.status}`,
+          message: j?.message,
+          redirect: j?.redirect,
+        };
+      }
+      return j;
+    } catch (e) {
+      return { error: 'transport-failed', message: (e as Error)?.message };
+    }
+  },
+
+  /** GET /api/relationships/:id/shared/messages. Full chronological
+   *  shared-thread for the relationship, with each AI message's
+   *  options + both partners' responses attached. Used by the native
+   *  SharedDialogueView on mount + every 15s poll cycle. */
+  async getSharedMessages(relationshipId: string): Promise<{
+    messages: SharedMessage[];
+    meta: { mySide: 'inviter' | 'invitee'; myAuthor: 'partner_a' | 'partner_b' };
   } | null> {
     try {
       const headers = await authHeaders();
-      const res = await apiFetch(`/api/relationships/${encodeURIComponent(relationshipId)}/shared`, {
-        label: 'rel-shared', method: 'GET', headers,
-      });
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/messages`,
+        { label: 'shared-messages', method: 'GET', headers },
+      );
       if (!res.ok) return null;
       return await res.json();
     } catch (e) {
-      console.warn('[rel-shared] threw:', (e as Error)?.message);
+      console.warn('[shared-messages] threw:', (e as Error)?.message);
       return null;
     }
   },
 
-  /** POST /api/relationships/:id/proposals/:pid/approve. Server flips
-   *  the caller's column to 'approved' and auto-promotes the proposal
-   *  to a shared item if its scope's threshold is met (this-partner
-   *  needs only the source's approval; both-partners needs both). */
-  async approveRelationshipProposal(relationshipId: string, proposalId: string): Promise<
-    | { approved: boolean; promoted: boolean; sharedItemId: string | null; already?: boolean }
-    | { error: string; message?: string }
-  > {
-    try {
-      const headers = await authHeaders();
-      const res = await apiFetch(
-        `/api/relationships/${encodeURIComponent(relationshipId)}/proposals/${encodeURIComponent(proposalId)}/approve`,
-        { label: 'rel-proposal-approve', method: 'POST', headers, body: JSON.stringify({}) },
-      );
-      const j: any = await res.json().catch(() => ({}));
-      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
-      return j;
-    } catch (e) {
-      return { error: 'transport-failed', message: (e as Error)?.message };
-    }
-  },
-
-  /** POST /api/relationships/:id/proposals/:pid/reject. Marks the
-   *  caller's column as 'rejected'. Proposal stays in the table for
-   *  audit but can never promote. */
-  async rejectRelationshipProposal(relationshipId: string, proposalId: string): Promise<
-    | { rejected: boolean }
-    | { error: string; message?: string }
-  > {
-    try {
-      const headers = await authHeaders();
-      const res = await apiFetch(
-        `/api/relationships/${encodeURIComponent(relationshipId)}/proposals/${encodeURIComponent(proposalId)}/reject`,
-        { label: 'rel-proposal-reject', method: 'POST', headers, body: JSON.stringify({}) },
-      );
-      const j: any = await res.json().catch(() => ({}));
-      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
-      return j;
-    } catch (e) {
-      return { error: 'transport-failed', message: (e as Error)?.message };
-    }
-  },
-
-  /** POST /api/relationships/:id/shared/:sid/react. Server enforces
-   *  toggle semantics — passing the same reaction the user already
-   *  has clears it; passing null clears explicitly; passing a
-   *  different one replaces. */
-  async reactToSharedItem(
+  /** GET /api/relationships/:id/shared/since/:timestamp. Incremental —
+   *  returns only messages newer than the timestamp. Native polling
+   *  uses this to avoid re-fetching the full thread on every cycle. */
+  async getSharedMessagesSince(
     relationshipId: string,
-    sharedItemId: string,
-    reaction: 'resonates' | 'unsure' | 'doesnt-fit' | null,
-  ): Promise<{ reaction: 'resonates' | 'unsure' | 'doesnt-fit' | null } | { error: string; message?: string }> {
+    sinceIso: string,
+  ): Promise<{ messages: SharedMessage[] } | null> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch(
-        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/${encodeURIComponent(sharedItemId)}/react`,
-        { label: 'rel-shared-react', method: 'POST', headers, body: JSON.stringify({ reaction }) },
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/since/${encodeURIComponent(sinceIso)}`,
+        { label: 'shared-since', method: 'GET', headers },
       );
-      const j: any = await res.json().catch(() => ({}));
-      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
-      return j;
+      if (!res.ok) return null;
+      return await res.json();
     } catch (e) {
-      return { error: 'transport-failed', message: (e as Error)?.message };
+      console.warn('[shared-since] threw:', (e as Error)?.message);
+      return null;
     }
   },
 
@@ -1157,29 +1225,10 @@ export const api = {
     }
   },
 
-  /** POST /api/relationships/:id/shared/:sid/comment. Server caps at
-   *  500 chars and 400's longer payloads — UI should mirror the cap. */
-  async commentOnSharedItem(
-    relationshipId: string,
-    sharedItemId: string,
-    content: string,
-  ): Promise<
-    | { comment: { id: string; content: string; createdAt: string; userId: string; side: 'inviter' | 'invitee' } }
-    | { error: string; message?: string }
-  > {
-    try {
-      const headers = await authHeaders();
-      const res = await apiFetch(
-        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/${encodeURIComponent(sharedItemId)}/comment`,
-        { label: 'rel-shared-comment', method: 'POST', headers, body: JSON.stringify({ content }) },
-      );
-      const j: any = await res.json().catch(() => ({}));
-      if (!res.ok) return { error: j?.error || `http_${res.status}`, message: j?.message };
-      return j;
-    } catch (e) {
-      return { error: 'transport-failed', message: (e as Error)?.message };
-    }
-  },
+  // (PR C — commentOnSharedItem was removed alongside the rest of
+  // the proposal/voting/reactions/comments surface. Cross-partner
+  // engagement now flows through contributeToSharedSpace +
+  // respondInSharedSpace above.)
 
   // ===========================================================================
   // MAP-SEEN — drives the "you have new map content" dot on the Map tab.

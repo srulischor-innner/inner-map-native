@@ -55,17 +55,13 @@ const PER_WORD_MS = 45;
 export function RelationshipChat({
   relationshipId,
   partnerName,
-  prefill,
-  onPrefillConsumed,
 }: {
   relationshipId: string;
   partnerName: string | null;
-  /** Optional prefilled draft from a Shared-feed prompt chip ("Tell me
-   *  more about this", etc). When set, the input is seeded with this
-   *  text and onPrefillConsumed fires once the local state mirrors it
-   *  so the parent can clear the prefill prop. */
-  prefill?: string | null;
-  onPrefillConsumed?: () => void;
+  // PR C: prefill / onPrefillConsumed removed. The old shared-feed
+  // "prompt chip" workflow no longer exists — the new shared-space
+  // dialogue model uses structured multiple-choice options instead
+  // of seeding the private chat with a pre-filled draft.
 }) {
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -120,10 +116,9 @@ export function RelationshipChat({
   // short-circuits.
   useEffect(() => () => { cancelTTSStream(); }, []);
 
-  // Prefill from the Shared feed is now forwarded to ChatInput via its
-  // prefillText/onPrefillConsumed props — see the <ChatInput> mount
-  // below. ChatInput tracks last-applied value internally so a parent
-  // that holds the prop steady doesn't re-seed on every render.
+  // (PR C — the old prefill path from the Shared feed was retired.
+  // ChatInput's prefillText/onPrefillConsumed props are still
+  // available for future callers but are not wired here.)
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
@@ -389,8 +384,21 @@ export function RelationshipChat({
   }, [handleSend]);
 
   const bubbleList = useMemo(
-    () => messages.map((m) => <MessageBubble key={m.id} msg={m} onRetry={handleRetry} />),
-    [messages, handleRetry],
+    () => messages.map((m) => (
+      <MessageBubble
+        key={m.id}
+        msg={m}
+        onRetry={handleRetry}
+        // PR C: pass relationshipId + partnerName so MessageBubble
+        // renders [SHARE_SUGGEST: …] markers as SharePromptCards
+        // inline. Without these props the marker is preserved in
+        // the bubble text but no card renders — desired behavior
+        // for the main chat tab; here we want the cards.
+        relationshipId={relationshipId}
+        partnerName={partnerName}
+      />
+    )),
+    [messages, handleRetry, relationshipId, partnerName],
   );
 
   return (
@@ -446,8 +454,6 @@ export function RelationshipChat({
           disabled={sending}
           onSend={handleSend}
           onSendVoice={handleSendVoice}
-          prefillText={prefill ?? null}
-          onPrefillConsumed={onPrefillConsumed}
         />
       </View>
     </KeyboardAvoidingView>

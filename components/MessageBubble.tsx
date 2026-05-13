@@ -18,8 +18,9 @@ import {
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { PartBadge } from './PartBadge';
-import { parseAddedToMapMarkers } from '../utils/markers';
+import { parseAddedToMapMarkers, parseShareSuggestMarkers } from '../utils/markers';
 import { MapPill } from './chat/MapPill';
+import { SharePromptCard } from './chat/SharePromptCard';
 
 export type ChatMsg = {
   id: string;
@@ -44,7 +45,20 @@ export type ChatMsg = {
   voice?: { uri: string; durationSec: number; transcript: string | null };
 };
 
-export function MessageBubble({ msg, onRetry }: { msg: ChatMsg; onRetry?: (text: string) => void }) {
+export function MessageBubble({
+  msg, onRetry, relationshipId, partnerName,
+}: {
+  msg: ChatMsg;
+  onRetry?: (text: string) => void;
+  /** When the bubble is in a relationship-mode private chat, these
+   *  props enable inline [SHARE_SUGGEST: …] marker rendering as
+   *  <SharePromptCard> components. Omitted in the main chat tab —
+   *  the marker is then preserved but no card renders (the marker
+   *  is also stripped from history by stripMarkers, so the model
+   *  doesn't see it echoed back). */
+  relationshipId?: string;
+  partnerName?: string | null;
+}) {
   const isUser = msg.role === 'user';
   // Daily rate-limit card — different visual treatment from a chat
   // bubble. Centered, amber-bordered, the server-prepared copy reads
@@ -72,7 +86,12 @@ export function MessageBubble({ msg, onRetry }: { msg: ChatMsg; onRetry?: (text:
             transcript={msg.voice.transcript}
           />
         ) : (
-          <AssistantBubbleBody text={msg.text} streaming={!!msg.streaming} />
+          <AssistantBubbleBody
+            text={msg.text}
+            streaming={!!msg.streaming}
+            relationshipId={relationshipId}
+            partnerName={partnerName ?? null}
+          />
         )}
         {!isUser && msg.detectedPart ? (
           <PartBadge part={msg.detectedPart} label={msg.partLabel} />
@@ -121,11 +140,53 @@ export function MessageBubble({ msg, onRetry }: { msg: ChatMsg; onRetry?: (text:
 //   - Multiple markers in one message → each gets its own pill,
 //     positioned in document order.
 // ============================================================================
-function AssistantBubbleBody({ text, streaming }: { text: string; streaming: boolean }) {
-  // useMemo on the text alone so the regex doesn't re-run every
-  // tick of the streaming-caret animation.
-  const segments = useMemo(() => parseAddedToMapMarkers(text), [text]);
-  if (segments.length === 0) {
+function AssistantBubbleBody({
+  text, streaming, relationshipId, partnerName,
+}: {
+  text: string;
+  streaming: boolean;
+  relationshipId?: string;
+  partnerName?: string | null;
+}) {
+  // Find every inline marker that has a renderable component:
+  //   - ADDED_TO_MAP    → <MapPill name=... />
+  //   - SHARE_SUGGEST   → <SharePromptCard suggestion=.../>  (only
+  //     rendered when relationshipId is set — main-chat usage
+  //     leaves the marker as plain text, but stripMarkers will
+  //     have already removed it from history so the model doesn't
+  //     see its own pill marker echoed back).
+  //
+  // Markers are merged into one sorted array so a single sweep
+  // splices the right component at the right position.
+  type Splice = { start: number; end: number; node: React.ReactNode };
+  const splices: Splice[] = useMemo(() => {
+    const out: Splice[] = [];
+    for (const m of parseAddedToMapMarkers(text)) {
+      out.push({
+        start: m.start, end: m.end,
+        node: <MapPill key={`map-${m.start}`} name={m.name} />,
+      });
+    }
+    if (relationshipId) {
+      for (const m of parseShareSuggestMarkers(text)) {
+        out.push({
+          start: m.start, end: m.end,
+          node: (
+            <SharePromptCard
+              key={`share-${m.start}`}
+              suggestion={m.suggestion}
+              relationshipId={relationshipId}
+              partnerName={partnerName ?? null}
+            />
+          ),
+        });
+      }
+    }
+    out.sort((a, b) => a.start - b.start);
+    return out;
+  }, [text, relationshipId, partnerName]);
+
+  if (splices.length === 0) {
     return (
       <Text style={styles.text}>
         {text}
@@ -133,18 +194,18 @@ function AssistantBubbleBody({ text, streaming }: { text: string; streaming: boo
       </Text>
     );
   }
-  // Build alternating chunks: text, pill, text, pill, ...
+  // Build alternating chunks: text, node, text, node, ...
   const chunks: React.ReactNode[] = [];
   let cursor = 0;
-  segments.forEach((seg, i) => {
-    const before = text.slice(cursor, seg.start);
+  splices.forEach((s, i) => {
+    const before = text.slice(cursor, s.start);
     if (before) {
       chunks.push(
         <Text key={`t-${i}`} style={styles.text}>{before}</Text>,
       );
     }
-    chunks.push(<MapPill key={`p-${i}`} name={seg.name} />);
-    cursor = seg.end;
+    chunks.push(s.node);
+    cursor = s.end;
   });
   const tail = text.slice(cursor);
   if (tail || streaming) {

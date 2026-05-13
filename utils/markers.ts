@@ -86,6 +86,17 @@ export function parseChatMeta(text: string): ChatMeta | null {
  *  name is trimmed on parse. */
 const ADDED_TO_MAP_RE = /\[ADDED_TO_MAP:\s*([^\]]+)\]/g;
 
+/** Strict SHARE_SUGGEST marker pattern. PR C — relationship-mode
+ *  private chats use this to nudge the user to share something they
+ *  just said into the shared space. The native client renders a
+ *  SharePromptCard inline at each match position; tapping the card
+ *  opens a confirmation modal with the suggestion as the editable
+ *  pre-filled content.
+ *
+ *  Same strict-match semantics as ADDED_TO_MAP — partial markers
+ *  mid-stream don't match. */
+const SHARE_SUGGEST_RE = /\[SHARE_SUGGEST:\s*([^\]]+)\]/g;
+
 export type AddedToMapMatch = {
   /** Whole match including brackets, e.g. "[ADDED_TO_MAP: anxious part]". */
   raw: string;
@@ -114,6 +125,38 @@ export function parseAddedToMapMarkers(text: string): AddedToMapMatch[] {
     out.push({
       raw: m[0],
       name,
+      start: m.index,
+      end: m.index + m[0].length,
+    });
+  }
+  return out;
+}
+
+export type ShareSuggestMatch = {
+  raw: string;
+  /** The suggestion text — pre-fills the share confirmation modal. */
+  suggestion: string;
+  start: number;
+  end: number;
+};
+
+/** Find every complete [SHARE_SUGGEST: ...] marker. Same strict-match
+ *  semantics as parseAddedToMapMarkers — partial markers mid-stream
+ *  don't match. The bubble renderer (in relationship-mode private
+ *  chats) splices a <SharePromptCard> in at each marker position;
+ *  tapping the card opens a confirmation modal pre-filled with the
+ *  suggestion text. */
+export function parseShareSuggestMarkers(text: string): ShareSuggestMatch[] {
+  if (!text) return [];
+  const out: ShareSuggestMatch[] = [];
+  const re = new RegExp(SHARE_SUGGEST_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const suggestion = String(m[1] || '').trim();
+    if (!suggestion) continue;
+    out.push({
+      raw: m[0],
+      suggestion,
       start: m.index,
       end: m.index + m[0].length,
     });
@@ -150,6 +193,10 @@ export function stripMarkers(text: string): string {
     // stripMarkersForDisplay) so the bubble renderer can splice in a
     // <MapPill> component at the marker's position.
     .replace(/\[ADDED_TO_MAP:\s*[^\]]+\]/g, '')
+    // SHARE_SUGGEST — same treatment. PR C nudge marker in
+    // relationship-mode private chats. Display path preserves it
+    // so the bubble can render a <SharePromptCard>.
+    .replace(/\[SHARE_SUGGEST:\s*[^\]]+\]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 }
@@ -170,22 +217,21 @@ export function stripMarkers(text: string): string {
 export function stripMarkersForDisplay(text: string): string {
   if (!text) return '';
   if (__DEV__) return text;
-  // Production: same as stripMarkers but RESTORE the ADDED_TO_MAP
-  // markers so MessageBubble can position pills inline. We strip
-  // first (which removes ADDED_TO_MAP among the rest), then
-  // re-insert them at their original positions by running the
-  // pre-strip regex and reconstructing.
+  // Production: same as stripMarkers but RESTORE the user-facing
+  // pill markers so MessageBubble can position pills inline.
+  // Specifically preserved here (vs stripMarkers):
+  //   - ADDED_TO_MAP   (any chat mode)
+  //   - SHARE_SUGGEST  (relationship-mode chats)
   //
-  // Simpler implementation: just re-run stripMarkers EXCEPT the
-  // ADDED_TO_MAP line — duplicate the regex chain minus that one
-  // replacement so the marker survives intact.
+  // Implementation: duplicate the regex chain minus those two
+  // replacements so the markers survive intact.
   return text
     .replace(/\[CHAT_META:[\s\S]*?\]/g, '')
     .replace(/\[(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|SUMMARY_META):[\s\S]*?\]/g, '')
     .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)(?:\s*\|\s*part:\s*[a-z-]+)?\s*\]?/gi, '')
     .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
-    // ADDED_TO_MAP intentionally NOT stripped here.
+    // ADDED_TO_MAP and SHARE_SUGGEST intentionally NOT stripped here.
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 }

@@ -46,7 +46,7 @@ import * as Haptics from 'expo-haptics';
 import { colors, fonts, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { RelationshipChat } from '../../components/relationships/RelationshipChat';
-import { SharedFeed } from '../../components/relationships/SharedFeed';
+import { SharedDialogueView } from '../../components/relationships/SharedDialogueView';
 import { RelationshipMap } from '../../components/relationships/RelationshipMap';
 import { ConsentDocument } from '../../components/relationships/ConsentDocument';
 
@@ -648,26 +648,19 @@ function PendingIntrosView({
 }
 
 // =============================================================================
-// ACTIVE — three sub-views (chat / shared / map). Chat + Shared are
-// fully implemented in this commit; Map remains a stub here and lands
-// in Phase 6 commit 2 with the two-triangle visual.
+// ACTIVE — three sub-views (chat / shared / map).
 //
-// Shared → Chat hand-off: when the user taps a prompt chip on a shared
-// item, the chat sub-view receives a prefill string. ActiveView holds
-// that prefill in local state and clears it the moment the chat view
-// has consumed it (via onPrefillConsumed) so a second chip tap
-// delivers a fresh prefill.
+// PR C: the prior shared → chat hand-off ("Tell me more about this"
+// prompt chip from the shared feed pre-filling the chat input) is
+// gone. The new shared-space dialogue model has no "prompt chip"
+// surface — both partners interact with each AI message via
+// multiple-choice options + Other. The chat sub-view's prefill prop
+// is no longer wired here.
 // =============================================================================
 type SubView = 'chat' | 'shared' | 'map';
 
 function ActiveView({ rel }: { rel: Relationship }) {
   const [view, setView] = useState<SubView>('chat');
-  const [chatPrefill, setChatPrefill] = useState<string | null>(null);
-
-  const onPromptChip = useCallback((prefill: string) => {
-    setChatPrefill(prefill);
-    setView('chat');
-  }, []);
 
   return (
     <View style={styles.activeRoot}>
@@ -688,24 +681,20 @@ function ActiveView({ rel }: { rel: Relationship }) {
           </Pressable>
         ))}
       </View>
-      {/* Both Chat and Shared mount continuously and just hide via
+      {/* All three sub-views mount continuously and just hide via
           display:'none' — keeps their state intact (chat scroll
-          position, shared feed cache) when the user toggles between
-          them. The Map sub-view is a placeholder until Phase 6
-          commit 2. */}
+          position, shared thread cache) when the user toggles
+          between them. */}
       <View style={[styles.subViewRoot, view !== 'chat' && styles.subViewHidden]}>
         <RelationshipChat
           relationshipId={rel.id}
           partnerName={rel.partnerName}
-          prefill={chatPrefill}
-          onPrefillConsumed={() => setChatPrefill(null)}
         />
       </View>
       <View style={[styles.subViewRoot, view !== 'shared' && styles.subViewHidden]}>
-        <SharedFeed
+        <SharedDialogueView
           relationshipId={rel.id}
           partnerName={rel.partnerName}
-          onPromptChip={onPromptChip}
         />
       </View>
       <View style={[styles.subViewRoot, view !== 'map' && styles.subViewHidden]}>
