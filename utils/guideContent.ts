@@ -52,6 +52,16 @@ export type GuideSlide = {
 // Same slides shown during onboarding AND in the Guide tab's WELCOME pill.
 // Single source of truth so concepts can be revisited later without
 // drifting out of sync with the first-time experience.
+//
+// History: previously 7 entries. The two map-evolution slides were
+// merged into one ("Your map starts as a sketch" + "The map changes
+// everything" → a single combined slide) to remove the redundancy.
+// The "This is not therapy" closing slide was briefly removed but
+// then restored — the redundancy with the dedicated NotTherapyScreen
+// later in onboarding is intentional. Safety messaging in
+// mental-health-adjacent apps benefits from reinforcement, and App
+// Review favors multiple disclosures over a single buried one.
+// Result: 6 slides total.
 export const WELCOME_SLIDES: GuideSlide[] = [
   {
     visual: 'intro',
@@ -75,31 +85,37 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'chatBubble',
-    title: 'Your map starts as a sketch',
-    body: [
-      'The more we talk, the more detailed and accurate it becomes. Every conversation adds a layer.',
-    ],
-  },
-  {
+    // Merged slide — keeps slide-5's nodeDetect visual (the open
+    // circle outline). The earlier chatBubble visual was discarded
+    // with its slide. Title stays "The map changes everything"; body
+    // opens with the sketch framing then flows into the impact
+    // paragraph as one continuous thought.
     visual: 'nodeDetect',
     title: 'The map changes everything',
     body: [
-      'When you can see your patterns clearly — where they come from, what drives them, what holds you back — you stop being surprised by yourself. You start to see the logic underneath what felt like chaos. And once you can see it, you can actually work with it.',
+      'Your map starts as a sketch. Every conversation adds a layer. And as it grows clearer — where your patterns come from, what drives them, what holds you back — you stop being surprised by yourself. You start to see the logic underneath what felt like chaos. And once you can see it, you can actually work with it.',
     ],
   },
   {
-    // Slide 6 spec: use the breathing full map (every node alive, lines
-    // shimmering) instead of the privacy lock — communicates "system
-    // alive over time" rather than "your data is private".
+    // Companion slide — breathing full map (every node alive, lines
+    // shimmering) communicates "system alive over time" rather than
+    // "your data is private". Two paragraphs; the sequential
+    // paragraph animation in GuideSlide makes paragraph 2 wait until
+    // paragraph 1 fully types out.
     visual: 'fullmap',
     title: 'A companion for the long journey',
     body: [
-      "Come when something is activated and you don't know what you're feeling. Come when a pattern repeated and you want to understand why. Come when you need to be heard without advice or fixing. Come when something shifted and you want to mark it. Come when you're in between therapy sessions and need somewhere to land.",
-      'The longer you come — the more it knows you. The more it knows you — the more useful it becomes.',
+      "Open the app when something is activated and you can't quite name the feeling. Return when a pattern keeps repeating and you want to understand why. Use it when you need to be heard without advice or fixing. Mark the moments when something shifts. Sit with it between therapy sessions, when you need somewhere to land.",
+      "Over time, Inner Map learns who you are and what you're moving through. The more it knows you, the more its responses can meet you where you actually are — and the deeper the work can go.",
     ],
   },
   {
+    // Closing slide — restores the "this is not therapy + come back
+    // anytime" beat that was briefly removed. Lives as the final
+    // welcome slide so the BEGIN button (onboarding) lands on this
+    // moment. The dedicated NotTherapyScreen later in onboarding
+    // reinforces the same message; the duplication is intentional
+    // safety-by-design.
     visual: 'readyToBegin',
     title: 'This is not therapy',
     body: [
@@ -232,11 +248,17 @@ export const MAP_SLIDES: GuideSlide[] = [
 //   3. Ground first — the actual work
 export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
   {
+    // Visual unchanged — the brown concentric circles still
+    // represent the safety/capacity expansion the body describes.
+    // Title + body rewritten to lead with the "healing happens
+    // from safety" framing rather than the equivalence framing
+    // (the prior title was conceptually accurate but landed as a
+    // tautology on first read).
     visual: 'safetyCapacity',
-    title: 'Safety and capacity are the same thing',
+    title: 'Healing happens from safety',
     body: [
-      "As you build safety in your life, you also build your capacity to hold painful or heavy emotions without being overwhelmed by them.",
-      "The stronger your foundation, the more you can feel — and let pass through.",
+      "Real inner work — meeting your parts, seeing what's underneath — happens from a place of relative groundedness. Not from desperation. Not in crisis. Not by force of will.",
+      "The stronger your foundation, the more you can feel — and stay yourself.",
     ],
   },
   {
@@ -260,11 +282,22 @@ export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
 ];
 
 export const HEALING_SLIDES: GuideSlide[] = [
-  // The 5 "What Holds You" slides land first — this section is the
+  // The 3 "What Holds You" slides land first — this section is the
   // foundation everything else in HEALING (the three stages + creating
   // something new) builds on. Concatenated rather than rendered as a
   // separate sub-section so the user just scrolls through one ordered
   // sequence within the HEALING pill.
+  //
+  // Current arc (9 slides total):
+  //   1. Healing happens from safety
+  //   2. When the system is in survival mode
+  //   3. Build the ground first
+  //   4. How healing actually happens
+  //   5. Stage one — Meeting your team
+  //   6. Stage one — Getting into relationship
+  //   7. Stage two — Unblending
+  //   8. Stage three — Release
+  //   9. Creating something new   (BEGIN YOUR MAP button surfaces here)
   ...WHAT_HOLDS_YOU_SLIDES,
   {
     visual: 'seed',
@@ -275,13 +308,39 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "But there is a shape to it — a direction things move when the work is genuine.",
     ],
   },
+  // Stage 1 — split into two slides. The old single "Taking
+  // responsibility" framing flattened a richer movement: outside-in →
+  // inside-out (responsibility), THEN radical acceptance of the parts
+  // one didn't choose + getting into relationship with them. The two
+  // slides below preserve that fuller arc. Both share the "Stage one"
+  // prefix so they read as paired beats in the Healing carousel.
   {
+    // Reuses the existing 'responsibility' visual (right-arrow
+    // fades / left-arrow brightens) — same outside-in → inside-out
+    // shift the body opens with. The coach-and-team metaphor is
+    // introduced here so slide 6 can lean into the relationship
+    // step that follows.
     visual: 'responsibility',
-    title: 'Stage one — Taking responsibility',
+    title: 'Stage one — Meeting your team',
     body: [
-      "The shift from outside-in to inside-out. The recognition that external things can soothe but never fill.",
-      "What's happening inside is an inside job. No relationship, achievement, or circumstance can do what only inner work can do.",
-      "This is a conceptual shift — but knowing it and living it are different things.",
+      "The first shift is from outside-in to inside-out. External things can soothe but never fill.",
+      "Imagine you're the coach of a team you didn't draft. You can't trade these players. You didn't create them. You can't fix them or shame them off. What you have is a relationship with them.",
+      "You are the coach. The parts are the players. The coach's job is twofold: individual development and team cohesion.",
+    ],
+  },
+  {
+    // Reuses 'managersFirefighters' (two dashed circles with inner
+    // dots) — the two-protector visual reads as "the players on
+    // your team", which fits the getting-into-relationship beat.
+    // Visual is otherwise only used in the MAP_SLIDES section, so
+    // reuse here doesn't create within-Healing duplication.
+    visual: 'managersFirefighters',
+    title: 'Stage one — Getting into relationship',
+    body: [
+      "It begins with recognition — accepting they're here, whether you like it or not. Coming out of the idea that you should be able to control them, or that they're your fault.",
+      "Once you accept there's no getting rid of them, getting to know them becomes the only path forward — even if begrudgingly at first. You don't have to like your players to coach them. You start to see where each part is coming from, how it sees the world, what it's trying to protect.",
+      "And once you understand a part, something shifts. You can begin to help it see things differently — not by overriding it, but by being in relationship with it.",
+      "This is where blame begins to soften. The world stops feeling like it's happening to you, and starts to look like a reflection of your internal team.",
     ],
   },
   {
@@ -292,6 +351,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "When something difficult surfaces — instead of being consumed by it — there is a moment of space. A witness. Something that can observe the fixer without being the fixer.",
       'This happens in layers. First from the part. Then from what the part believes — "I am not enough" becomes "this is something I carry, not Truth."',
       "That second layer is where the world starts to shift.",
+      "Real unblending happens on three levels at once — in your thinking, in how it feels, and in your body. All three together is the real thing.",
     ],
   },
   {
@@ -312,6 +372,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "The wound changed you. It revealed depths that wouldn't have existed without the breaking. The fixer's extraordinary drive, the skeptic's hard-won wisdom, the sensitivity that comes from having felt things deeply — none of that disappears. It transforms.",
       "What you're moving toward has never existed before. Not a restoration of something lost — a creation of something new. A version of yourself that is both shaped by everything you've been through AND no longer limited by it.",
       "This is why the work is worth doing. Not to undo your history. To become what your history was always pointing toward.",
+      "What was always whole underneath becomes available again.",
     ],
   },
   // 'Creating something new' is the last slide in the Healing arc. The

@@ -22,6 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import {
   markIntroSeen, markTermsAccepted, markIntakeComplete,
+  markPrivacyNoticeSeen, hasSeenPrivacyNotice,
 } from '../services/onboarding';
 import { api } from '../services/api';
 import { GuideSlide } from '../components/guide/GuideSlide';
@@ -36,7 +37,18 @@ import {
   ExperienceLevel, LEVEL_OPTIONS, setExperienceLevel,
 } from '../services/experienceLevel';
 
-type Phase = 'welcome' | 'terms' | 'intake' | 'experience' | 'resources' | 'notTherapy';
+// Onboarding phases (full self-explorer flow):
+//   welcome → privacy → terms → intake → experience → (resources?|notTherapy)
+//
+// Invitee flow (deep-link via a partner invite, shortened path):
+//   privacy → terms → /relationships
+//
+// The 'privacy' phase is the first-launch privacy notice — a warm
+// summary of what Inner Map stores, what it never does, and the
+// user's data rights. Inserted between Welcome (warm intro to what
+// Inner Map is) and Terms (formal accept). Persists the
+// privacyNoticeSeen flag on dismissal so re-entries skip it.
+type Phase = 'welcome' | 'privacy' | 'terms' | 'intake' | 'experience' | 'resources' | 'notTherapy';
 
 // Same key the deep-link route in app/connect/[code].tsx writes when a
 // brand-new user taps an invite link before completing onboarding.
@@ -49,21 +61,31 @@ export default function OnboardingScreen() {
   const [phase, setPhase] = useState<Phase>('welcome');
   // isInvitee — flips true on mount when AsyncStorage has a staged
   // invite code (set by app/connect/[code].tsx). Drives the shortened
-  // onboarding path: welcome slides → terms → /relationships, skipping
+  // onboarding path: privacy notice → terms → /relationships, skipping
   // intake / experience / resources / notTherapy. The relationship
   // intro slides (Phase 5) live in the relationships tab itself, so
   // the invitee lands there with their staged code in hand and the
   // tab's resume-after-onboarding effect picks it up automatically.
   //
   // Self-explorers who didn't come in through a deep link follow the
-  // full path unchanged.
+  // full path unchanged (welcome → privacy → terms → intake → …).
   const [isInvitee, setIsInvitee] = useState<boolean | null>(null);
+  // privacyNoticeAlreadySeen — resolved once on mount. If true, the
+  // privacy phase is skipped from both flows (the user already
+  // acknowledged it in a prior incomplete onboarding attempt and we
+  // don't want to nag them with it again). Null while the AsyncStorage
+  // read is in flight; we hold rendering until it settles so we don't
+  // flash through the wrong initial phase.
+  const [privacyAlreadySeen, setPrivacyAlreadySeen] = useState<boolean | null>(null);
   const router = useRouter();
 
   useEffect(() => {
     AsyncStorage.getItem(PENDING_INVITE_CODE_KEY)
       .then((v) => setIsInvitee(!!v))
       .catch(() => setIsInvitee(false));
+    hasSeenPrivacyNotice()
+      .then(setPrivacyAlreadySeen)
+      .catch(() => setPrivacyAlreadySeen(false));
   }, []);
 
   // Full-path completion (self-explorer): mark intake complete + route
@@ -88,29 +110,49 @@ export default function OnboardingScreen() {
     router.replace('/relationships');
   }
 
-  // Hold rendering until the invitee detection settles. Otherwise a
-  // brand-new invitee would flash through one frame of the welcome
-  // slide before the effect resolved and we'd skip past it.
-  if (isInvitee === null) {
+  // Hold rendering until both async reads settle. Otherwise a brand-new
+  // invitee would flash through one frame of the welcome slide before
+  // the invitee effect resolved, OR the privacy notice would
+  // momentarily double-fire while privacyAlreadySeen resolved.
+  if (isInvitee === null || privacyAlreadySeen === null) {
     return <SafeAreaView style={styles.root} edges={['top', 'bottom']} />;
   }
 
-  // INVITEE PATH — terms only. Bypasses every other onboarding phase.
+  // INVITEE PATH — privacy notice (if not already seen) → terms →
+  // /relationships. Bypasses every other onboarding phase. We piggy-
+  // back on the same Phase state machine the self-explorer path uses;
+  // we just initialize phase to 'privacy' (or skip straight to 'terms'
+  // when the user has already seen the privacy notice) on the first
+  // render where isInvitee=true.
   if (isInvitee) {
+    const inviteePhase: 'privacy' | 'terms' =
+      phase === 'terms' ? 'terms' : (privacyAlreadySeen ? 'terms' : 'privacy');
     return (
       <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-        <TermsScreen
-          onAccept={async () => {
-            await markTermsAccepted();
-            try { await api.acceptTerms(); } catch {}
-            await finishAsInvitee();
-          }}
-        />
+        {inviteePhase === 'privacy' ? (
+          <PrivacyNoticeScreen
+            onAcknowledge={async () => {
+              await markPrivacyNoticeSeen();
+              setPhase('terms');
+            }}
+          />
+        ) : (
+          <TermsScreen
+            onAccept={async () => {
+              await markTermsAccepted();
+              try { await api.acceptTerms(); } catch {}
+              await finishAsInvitee();
+            }}
+          />
+        )}
       </SafeAreaView>
     );
   }
 
-  // SELF-EXPLORER PATH — full original flow.
+  // SELF-EXPLORER PATH — full original flow with the privacy notice
+  // inserted between welcome and terms. If the user already saw the
+  // privacy notice in a prior incomplete attempt, the 'privacy' phase
+  // is short-circuited to advance straight to terms.
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       {phase === 'welcome' ? (
@@ -126,6 +168,18 @@ export default function OnboardingScreen() {
             // user's first visit, which isn't catastrophic.
             try { await AsyncStorage.setItem(HAS_SEEN_WELCOME_KEY, '1'); } catch {}
             await markIntroSeen();
+            // Jump straight to 'terms' if the privacy notice was
+            // already acknowledged in a prior pass (dev-reset of
+            // welcome+terms+intake but not privacy, mid-onboarding
+            // close + relaunch, etc). Otherwise route through the
+            // notice.
+            setPhase(privacyAlreadySeen ? 'terms' : 'privacy');
+          }}
+        />
+      ) : phase === 'privacy' ? (
+        <PrivacyNoticeScreen
+          onAcknowledge={async () => {
+            await markPrivacyNoticeSeen();
             setPhase('terms');
           }}
         />
@@ -150,6 +204,60 @@ export default function OnboardingScreen() {
         <NotTherapyScreen onContinue={finishAndEnterApp} />
       )}
     </SafeAreaView>
+  );
+}
+
+// ============================================================================
+// PRIVACY NOTICE — first-launch warm summary of Inner Map's data handling.
+// Lands between Welcome slides and Terms (or, for invitees, between app
+// open and Terms). One screen, four short paragraphs, single "Got it →"
+// primary CTA. Static rendering — no typewriter, matches Welcome's
+// post-onboarding static style. Persists privacyNoticeSeen on
+// acknowledgement so subsequent app launches skip the screen.
+//
+// Visual style matches the Welcome slides: cream serif title, sans body,
+// amber primary button. Deliberately calm — this is NOT legalese; the
+// in-app /privacy screen + the public hosted policy carry the full
+// detail. This is the friendly summary the user reads BEFORE sharing
+// anything personal.
+// ============================================================================
+function PrivacyNoticeScreen({ onAcknowledge }: { onAcknowledge: () => void }) {
+  return (
+    <ScrollView contentContainerStyle={styles.privacyNoticeRoot} showsVerticalScrollIndicator={false}>
+      <View style={{ flex: 1 }} />
+      <Text style={styles.privacyNoticeTitle}>Your privacy</Text>
+      <Text style={styles.privacyNoticeLede}>
+        Before you start, here's the short version.
+      </Text>
+      <Text style={styles.privacyNoticeBody}>
+        Your journal entries stay on your phone — encrypted, never sent
+        to our servers.
+      </Text>
+      <Text style={styles.privacyNoticeBody}>
+        Your chats and your map live on our server so you can pick up
+        where you left off. We never sell your data, never run ads, and
+        the AI providers we use (Anthropic and OpenAI) don't train their
+        models on your conversations.
+      </Text>
+      <Text style={styles.privacyNoticeBody}>
+        From Settings, you can export everything we have on you or
+        delete your account permanently. Anytime.
+      </Text>
+      <Text style={[styles.privacyNoticeBody, styles.privacyNoticeClose]}>
+        Inner work is private work. We treat it that way.
+      </Text>
+      <Pressable
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          onAcknowledge();
+        }}
+        style={[styles.beginBtn, { alignSelf: 'center', marginTop: spacing.xl }]}
+        accessibilityLabel="Got it"
+      >
+        <Text style={styles.beginText}>GOT  IT  →</Text>
+      </Pressable>
+      <View style={{ flex: 1 }} />
+    </ScrollView>
   );
 }
 
@@ -855,5 +963,53 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     textAlign: 'center',
     letterSpacing: 0.2,
+  },
+
+  // Privacy notice — sibling of notTherapy in rhythm + typography
+  // (centered, vertically padded, generous breathing). Body
+  // paragraphs are slightly tighter and left-justified so the four
+  // short statements read like a list rather than four centered
+  // declarations.
+  privacyNoticeRoot: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl,
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  privacyNoticeTitle: {
+    color: colors.cream,
+    fontFamily: fonts.serifBold,
+    fontSize: 32,
+    letterSpacing: 0.4,
+    textAlign: 'center',
+    marginBottom: spacing.md,
+  },
+  privacyNoticeLede: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  privacyNoticeBody: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    lineHeight: 24,
+    marginBottom: spacing.md,
+    letterSpacing: 0.1,
+  },
+  // Final "Inner work is private work…" line gets a slight italic
+  // serif treatment so it lands as the closing beat rather than as
+  // a fourth bullet.
+  privacyNoticeClose: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 16,
+    color: colors.amber,
+    textAlign: 'center',
+    marginTop: spacing.sm,
   },
 });

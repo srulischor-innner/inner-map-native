@@ -18,7 +18,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, ScrollView, StyleSheet,
-  Platform, KeyboardAvoidingView, Dimensions, Alert,
+  Platform, KeyboardAvoidingView, Dimensions, Alert, Keyboard,
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
@@ -121,6 +121,38 @@ export function GuideAskModal({ visible, onClose }: Props) {
 
   // Cleanup timers on unmount.
   useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current); }, []);
+
+  // Keyboard-driven auto-snap to FULL.
+  //
+  // The sheet sits inside a transparent Modal at one of three snap
+  // positions. The KeyboardAvoidingView below adds bottom padding
+  // equal to the keyboard height when it appears — but at SNAP_HALF
+  // (default) the sheet is only ~50% of the screen, so KAV padding +
+  // keyboard end up pushing the input off the top of the sheet
+  // (or hiding it behind the header). KAV inside a partial-screen
+  // Modal is a known measurement edge case on iOS that no amount
+  // of keyboardVerticalOffset tweaking fully fixes.
+  //
+  // Pragmatic fix: when the keyboard appears, expand the sheet to
+  // SNAP_FULL so the KAV has the full screen to work with. On dismiss
+  // we leave the sheet where it is — the user can drag back down
+  // manually if they want a partial view again. iOS fires
+  // keyboardWillShow before the keyboard animates; Android only emits
+  // keyboardDidShow. We attach the right one per-platform so the
+  // sheet expands in sync with the keyboard's own animation.
+  useEffect(() => {
+    if (!visible) return;
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const sub = Keyboard.addListener(showEvt, () => {
+      // Spring the sheet to full so the input sits with full
+      // breathing room above the keyboard. Idempotent — if the
+      // user already pulled the sheet to full, this is a no-op
+      // because translateY is already at SNAP_FULL.
+      translateY.value = withSpring(SNAP_FULL, SPRING);
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   function snapTo(target: number) {
     Haptics.selectionAsync().catch(() => {});
@@ -394,10 +426,19 @@ export function GuideAskModal({ visible, onClose }: Props) {
           </View>
 
           {/* Chat surface + input bar — KAV pushes the input above the
-              keyboard within the sheet bounds. */}
+              keyboard within the sheet bounds. Paired with the
+              keyboard-show effect above that snaps the sheet to FULL
+              so the KAV has the full screen height to work with. With
+              the sheet at SNAP_FULL, the KAV's bottom sits at the
+              screen bottom and offset=0 produces a padding equal to
+              the keyboard height — input lands flush above the
+              keyboard. The previous keyboardVerticalOffset={60} was
+              tuned for a sticky header that no longer applies once
+              the sheet is full-screen, and at partial-screen it was
+              fighting the modal's frame-measurement quirks. */}
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={60}
+            keyboardVerticalOffset={0}
             style={styles.flex}
           >
             <ScrollView

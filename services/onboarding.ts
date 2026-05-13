@@ -1,20 +1,29 @@
-// Onboarding flags — three booleans stored in AsyncStorage. Mirrors the web app's
+// Onboarding flags — booleans stored in AsyncStorage. Mirrors the web app's
 // dual-storage pattern but scoped to a single source on device (SecureStore is fine
 // too but these flags aren't sensitive).
 //
-//   hasSeenIntro     — viewed the welcome slides at least once
-//   termsAccepted    — tapped "I understand — continue" on the terms screen
-//   intakeComplete   — completed (or intentionally skipped) the intake form
+//   hasSeenIntro        — viewed the welcome slides at least once
+//   termsAccepted       — tapped "I understand — continue" on the terms screen
+//   intakeComplete      — completed (or intentionally skipped) the intake form
+//   privacyNoticeSeen   — tapped "Got it →" on the first-launch privacy notice
+//                         (the warm summary that runs between Welcome slides
+//                         and Terms). Not part of the boot gate — by the time
+//                         the user finishes intake the notice has been seen.
+//                         markPrivacyNoticeSeen is its own setter so the
+//                         onboarding screen can persist it the moment the
+//                         user acknowledges.
 //
-// The gate in app/_layout.tsx reads all three on mount. Only when all three are true
-// does the main app render; otherwise the user is routed to /onboarding.
+// The gate in app/_layout.tsx reads hasSeenIntro / termsAccepted / intakeComplete
+// only. Only when all three are true does the main app render; otherwise the
+// user is routed to /onboarding.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const KEYS = {
-  hasSeenIntro:   'onboarding.hasSeenIntro',
-  termsAccepted:  'onboarding.termsAccepted',
-  intakeComplete: 'onboarding.intakeComplete',
+  hasSeenIntro:       'onboarding.hasSeenIntro',
+  termsAccepted:      'onboarding.termsAccepted',
+  intakeComplete:     'onboarding.intakeComplete',
+  privacyNoticeSeen:  'onboarding.privacyNoticeSeen',
 } as const;
 
 export type OnboardingState = {
@@ -86,15 +95,26 @@ export async function getOnboardingState(): Promise<OnboardingState> {
   return { hasSeenIntro: a, termsAccepted: b, intakeComplete: c };
 }
 
-export const markIntroSeen      = () => setBool(KEYS.hasSeenIntro, true);
-export const markTermsAccepted  = () => setBool(KEYS.termsAccepted, true);
-export const markIntakeComplete = () => setBool(KEYS.intakeComplete, true);
+export const markIntroSeen          = () => setBool(KEYS.hasSeenIntro, true);
+export const markTermsAccepted      = () => setBool(KEYS.termsAccepted, true);
+export const markIntakeComplete     = () => setBool(KEYS.intakeComplete, true);
+export const markPrivacyNoticeSeen  = () => setBool(KEYS.privacyNoticeSeen, true);
 
-/** Dev-only — wipes every flag so the next launch restarts onboarding. */
+/** Read-only check used by the onboarding screen to skip the privacy
+ *  notice phase on re-entry if the user already acknowledged it in a
+ *  prior incomplete onboarding attempt. */
+export async function hasSeenPrivacyNotice(): Promise<boolean> {
+  return getBool(KEYS.privacyNoticeSeen);
+}
+
+/** Dev-only — wipes every flag so the next launch restarts onboarding.
+ *  Includes the new privacy-notice flag so a dev-reset re-runs the
+ *  full warm-onboarding experience, not a partial one. */
 export async function resetOnboarding(): Promise<void> {
   await Promise.all([
     AsyncStorage.removeItem(KEYS.hasSeenIntro),
     AsyncStorage.removeItem(KEYS.termsAccepted),
     AsyncStorage.removeItem(KEYS.intakeComplete),
+    AsyncStorage.removeItem(KEYS.privacyNoticeSeen),
   ]);
 }

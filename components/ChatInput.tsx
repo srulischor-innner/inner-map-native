@@ -54,6 +54,8 @@ export function ChatInput({
   disabled,
   onSend,
   onSendVoice,
+  prefillText,
+  onPrefillConsumed,
 }: {
   disabled?: boolean;
   onSend: (text: string) => void;
@@ -61,8 +63,27 @@ export function ChatInput({
    *  parent shows the voice-note bubble with a "Transcribing…" line, then
    *  transcribes the audio and runs the resulting text through /api/chat. */
   onSendVoice?: (opts: { uri: string; durationSec: number }) => void;
+  /** Optional external prefill — when the parent sets this to a non-null
+   *  string, ChatInput seeds its internal text state with that value
+   *  exactly once (treating each new value as a fresh prefill), then
+   *  fires onPrefillConsumed so the parent can clear its prop. Used by
+   *  the Partner chat's Shared-feed chip flow. */
+  prefillText?: string | null;
+  onPrefillConsumed?: () => void;
 }) {
   const [text, setText] = useState('');
+  // Apply each non-null prefill exactly once. We compare against the
+  // last-applied value so a parent that holds the prefill prop steady
+  // across re-renders doesn't re-seed the input on every tick — only
+  // when the value genuinely changes to a new non-null string.
+  const lastPrefillRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prefillText == null) return;
+    if (prefillText === lastPrefillRef.current) return;
+    lastPrefillRef.current = prefillText;
+    setText(prefillText);
+    onPrefillConsumed?.();
+  }, [prefillText, onPrefillConsumed]);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   // Direct ref to the TextInput. The previous version called focus()
