@@ -248,11 +248,17 @@ export const MAP_SLIDES: GuideSlide[] = [
 //   3. Ground first — the actual work
 export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
   {
+    // Visual unchanged — the brown concentric circles still
+    // represent the safety/capacity expansion the body describes.
+    // Title + body rewritten to lead with the "healing happens
+    // from safety" framing rather than the equivalence framing
+    // (the prior title was conceptually accurate but landed as a
+    // tautology on first read).
     visual: 'safetyCapacity',
-    title: 'Safety and capacity are the same thing',
+    title: 'Healing happens from safety',
     body: [
-      "As you build safety in your life, you also build your capacity to hold painful or heavy emotions without being overwhelmed by them.",
-      "The stronger your foundation, the more you can feel — and let pass through.",
+      "Real inner work — meeting your parts, seeing what's underneath — happens from a place of relative groundedness. Not from desperation. Not in crisis. Not by force of will.",
+      "The stronger your foundation, the more you can feel — and stay yourself.",
     ],
   },
   {
@@ -276,11 +282,22 @@ export const WHAT_HOLDS_YOU_SLIDES: GuideSlide[] = [
 ];
 
 export const HEALING_SLIDES: GuideSlide[] = [
-  // The 5 "What Holds You" slides land first — this section is the
+  // The 3 "What Holds You" slides land first — this section is the
   // foundation everything else in HEALING (the three stages + creating
   // something new) builds on. Concatenated rather than rendered as a
   // separate sub-section so the user just scrolls through one ordered
   // sequence within the HEALING pill.
+  //
+  // Current arc (9 slides total):
+  //   1. Healing happens from safety
+  //   2. When the system is in survival mode
+  //   3. Build the ground first
+  //   4. How healing actually happens
+  //   5. Stage one — Meeting your team
+  //   6. Stage one — Getting into relationship
+  //   7. Stage two — Unblending
+  //   8. Stage three — Release
+  //   9. Creating something new   (BEGIN YOUR MAP button surfaces here)
   ...WHAT_HOLDS_YOU_SLIDES,
   {
     visual: 'seed',
@@ -291,13 +308,39 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "But there is a shape to it — a direction things move when the work is genuine.",
     ],
   },
+  // Stage 1 — split into two slides. The old single "Taking
+  // responsibility" framing flattened a richer movement: outside-in →
+  // inside-out (responsibility), THEN radical acceptance of the parts
+  // one didn't choose + getting into relationship with them. The two
+  // slides below preserve that fuller arc. Both share the "Stage one"
+  // prefix so they read as paired beats in the Healing carousel.
   {
+    // Reuses the existing 'responsibility' visual (right-arrow
+    // fades / left-arrow brightens) — same outside-in → inside-out
+    // shift the body opens with. The coach-and-team metaphor is
+    // introduced here so slide 6 can lean into the relationship
+    // step that follows.
     visual: 'responsibility',
-    title: 'Stage one — Taking responsibility',
+    title: 'Stage one — Meeting your team',
     body: [
-      "The shift from outside-in to inside-out. The recognition that external things can soothe but never fill.",
-      "What's happening inside is an inside job. No relationship, achievement, or circumstance can do what only inner work can do.",
-      "This is a conceptual shift — but knowing it and living it are different things.",
+      "The first shift is from outside-in to inside-out. External things can soothe but never fill.",
+      "Imagine you're the coach of a team you didn't draft. You can't trade these players. You didn't create them. You can't fix them or shame them off. What you have is a relationship with them.",
+      "You are the coach. The parts are the players. The coach's job is twofold: individual development and team cohesion.",
+    ],
+  },
+  {
+    // Reuses 'managersFirefighters' (two dashed circles with inner
+    // dots) — the two-protector visual reads as "the players on
+    // your team", which fits the getting-into-relationship beat.
+    // Visual is otherwise only used in the MAP_SLIDES section, so
+    // reuse here doesn't create within-Healing duplication.
+    visual: 'managersFirefighters',
+    title: 'Stage one — Getting into relationship',
+    body: [
+      "It begins with recognition — accepting they're here, whether you like it or not. Coming out of the idea that you should be able to control them, or that they're your fault.",
+      "Once you accept there's no getting rid of them, getting to know them becomes the only path forward — even if begrudgingly at first. You don't have to like your players to coach them. You start to see where each part is coming from, how it sees the world, what it's trying to protect.",
+      "And once you understand a part, something shifts. You can begin to help it see things differently — not by overriding it, but by being in relationship with it.",
+      "This is where blame begins to soften. The world stops feeling like it's happening to you, and starts to look like a reflection of your internal team.",
     ],
   },
   {
@@ -328,6 +371,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "The wound changed you. It revealed depths that wouldn't have existed without the breaking. The fixer's extraordinary drive, the skeptic's hard-won wisdom, the sensitivity that comes from having felt things deeply — none of that disappears. It transforms.",
       "What you're moving toward has never existed before. Not a restoration of something lost — a creation of something new. A version of yourself that is both shaped by everything you've been through AND no longer limited by it.",
       "This is why the work is worth doing. Not to undo your history. To become what your history was always pointing toward.",
+      "What was always whole underneath becomes available again.",
     ],
   },
   // 'Creating something new' is the last slide in the Healing arc. The
