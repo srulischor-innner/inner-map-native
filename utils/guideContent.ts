@@ -52,6 +52,13 @@ export type GuideSlide = {
 // Same slides shown during onboarding AND in the Guide tab's WELCOME pill.
 // Single source of truth so concepts can be revisited later without
 // drifting out of sync with the first-time experience.
+//
+// History: previously 7 entries (2 separate slides for "Your map starts
+// as a sketch" + "The map changes everything", plus a closing "This is
+// not therapy" slide). The two map-evolution slides were merged into
+// one to remove the redundancy; the "This is not therapy" closing slide
+// was removed because the dedicated NotTherapyScreen later in onboarding
+// already lands that message once, cleanly. Result: 5 slides total.
 export const WELCOME_SLIDES: GuideSlide[] = [
   {
     visual: 'intro',
@@ -75,36 +82,28 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     ],
   },
   {
-    visual: 'chatBubble',
-    title: 'Your map starts as a sketch',
-    body: [
-      'The more we talk, the more detailed and accurate it becomes. Every conversation adds a layer.',
-    ],
-  },
-  {
+    // Merged slide — keeps slide-5's nodeDetect visual (the open
+    // circle outline). The earlier chatBubble visual was discarded
+    // with its slide. Title stays "The map changes everything"; body
+    // opens with the sketch framing then flows into the impact
+    // paragraph as one continuous thought.
     visual: 'nodeDetect',
     title: 'The map changes everything',
     body: [
-      'When you can see your patterns clearly — where they come from, what drives them, what holds you back — you stop being surprised by yourself. You start to see the logic underneath what felt like chaos. And once you can see it, you can actually work with it.',
+      'Your map starts as a sketch. Every conversation adds a layer. And as it grows clearer — where your patterns come from, what drives them, what holds you back — you stop being surprised by yourself. You start to see the logic underneath what felt like chaos. And once you can see it, you can actually work with it.',
     ],
   },
   {
-    // Slide 6 spec: use the breathing full map (every node alive, lines
-    // shimmering) instead of the privacy lock — communicates "system
-    // alive over time" rather than "your data is private".
+    // Final slide — breathing full map (every node alive, lines
+    // shimmering) communicates "system alive over time" rather than
+    // "your data is private". Two paragraphs; the sequential
+    // paragraph animation in GuideSlide makes paragraph 2 wait until
+    // paragraph 1 fully types out.
     visual: 'fullmap',
     title: 'A companion for the long journey',
     body: [
-      "Come when something is activated and you don't know what you're feeling. Come when a pattern repeated and you want to understand why. Come when you need to be heard without advice or fixing. Come when something shifted and you want to mark it. Come when you're in between therapy sessions and need somewhere to land.",
-      'The longer you come — the more it knows you. The more it knows you — the more useful it becomes.',
-    ],
-  },
-  {
-    visual: 'readyToBegin',
-    title: 'This is not therapy',
-    body: [
-      "It's a mirror. A space to see yourself more clearly. Nothing you share is judged.",
-      'Everything in this introduction lives in the Guide tab — come back anytime.',
+      "Open the app when something is activated and you can't quite name the feeling. Return when a pattern keeps repeating and you want to understand why. Use it when you need to be heard without advice or fixing. Mark the moments when something shifts. Sit with it between therapy sessions, when you need somewhere to land.",
+      "Over time, Inner Map learns who you are and what you're moving through. The more it knows you, the more its responses can meet you where you actually are — and the deeper the work can go.",
     ],
   },
 ];

@@ -11,7 +11,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, TextStyle } from 'react-native';
 
-const CHAR_INTERVAL_MS = 35;
+// Per-character reveal cadence. Tuned down from 35ms (~37% faster) for
+// a less plodding first-launch feel while still reading as deliberate +
+// cinematic rather than instant. Any further reduction starts to feel
+// like a text dump.
+const CHAR_INTERVAL_MS = 22;
 const CURSOR_FADE_MS = 400;
 const CURSOR_BLINK_MS = 420;
 

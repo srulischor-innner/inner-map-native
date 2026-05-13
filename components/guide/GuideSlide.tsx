@@ -1,7 +1,7 @@
 // One Guide slide. Single source of layout so every slide across every section
 // has identical rhythm: centered visual, part-colored title, body paragraphs.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import { colors, fonts, spacing } from '../../constants/theme';
 import { GuideNodeVisual } from './GuideNodeVisual';
@@ -63,22 +63,36 @@ export function GuideSlide({
     }
   }, [animateBody, isActive, hasTriggered]);
 
-  // Stagger paragraph reveals — second paragraph waits for the first
-  // to roughly finish typing so they land in sequence rather than all
-  // at once. We don't have an exact done callback chain because the
-  // welcome slides ship single-paragraph copy, but the offset keeps
-  // multi-paragraph slides clean if any are added later. Computed once
-  // per body for stability.
-  const startOffsets = useRef<number[]>([]);
-  if (startOffsets.current.length !== data.body.length) {
-    let acc = 0;
-    startOffsets.current = data.body.map((p, i) => {
-      const offset = acc;
-      // 35ms per char + a 250ms breath before the next paragraph.
-      acc += p.length * 35 + 250;
-      return i === 0 ? 0 : offset;
-    });
-  }
+  // Sequential paragraph reveal — paragraph N+1 only begins typing
+  // AFTER paragraph N has fully finished. Implemented via an
+  // index-based gate: `revealedUpTo` tracks the index of the
+  // paragraph currently mid-type. TypewriterText fires onDone when
+  // its full string lands; that callback bumps revealedUpTo and the
+  // next paragraph mounts with its typewriter.
+  //
+  // Earlier this was a pre-computed startDelayMs per paragraph based
+  // on `length * CHAR_INTERVAL_MS`. The estimate could undershoot the
+  // actual reveal time (setTimeout slop, JS thread contention), letting
+  // paragraph 2 start before paragraph 1 finished — chaotic reading.
+  // The callback chain is exact: paragraph N+1 cannot start until
+  // paragraph N's last character has rendered.
+  //
+  // Reset on text change so a re-trigger (different slide instance)
+  // starts the chain from the top.
+  const [revealedUpTo, setRevealedUpTo] = useState(0);
+  useEffect(() => {
+    // Reset whenever the slide's body changes (paragraph count or text
+    // identity). Without this a remount with new copy would skip the
+    // first paragraph because revealedUpTo was already at body.length.
+    setRevealedUpTo(0);
+  }, [data.body]);
+  // Add a small breath (~220ms) between paragraphs by delaying the
+  // next paragraph's start — feels like the reader taking a beat
+  // before continuing rather than instantly snapping to the next line.
+  const PARA_BREATH_MS = 220;
+  const advanceParagraph = useCallback((i: number) => {
+    setTimeout(() => setRevealedUpTo((cur) => Math.max(cur, i + 1)), PARA_BREATH_MS);
+  }, []);
 
   const showTypewriter = animateBody && hasTriggered && !isClosing;
   // While animateBody is in effect but this slide hasn't been
@@ -128,14 +142,33 @@ export function GuideSlide({
               ? styles.paraCinematic
               : styles.para;
           if (showTypewriter) {
-            return (
-              <TypewriterText
-                key={i}
-                text={para}
-                style={paraStyle}
-                startDelayMs={startOffsets.current[i] || 0}
-              />
-            );
+            // Sequential gate — paragraph i renders ONLY if every
+            // paragraph before it has fired its onDone (revealedUpTo
+            // strictly greater than i-1). Earlier paragraphs render
+            // as completed Text so their finished text stays on
+            // screen while later paragraphs are still typing or
+            // pending. Later paragraphs render as empty placeholders
+            // so they reserve layout height without flashing the
+            // finished string.
+            if (i < revealedUpTo) {
+              // Already finished typing — render as plain Text.
+              return <Text key={i} style={paraStyle}>{para}</Text>;
+            }
+            if (i === revealedUpTo) {
+              // Current paragraph — mount the typewriter. onDone
+              // advances the gate so paragraph i+1 can start.
+              return (
+                <TypewriterText
+                  key={i}
+                  text={para}
+                  style={paraStyle}
+                  onDone={() => advanceParagraph(i)}
+                />
+              );
+            }
+            // Future paragraph — empty placeholder so the slide
+            // doesn't reflow when this paragraph eventually mounts.
+            return <Text key={i} style={paraStyle}>{''}</Text>;
           }
           if (showEmptyPlaceholder) {
             // Empty Text — preserves layout height so the slide
