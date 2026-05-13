@@ -351,6 +351,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "When something difficult surfaces — instead of being consumed by it — there is a moment of space. A witness. Something that can observe the fixer without being the fixer.",
       'This happens in layers. First from the part. Then from what the part believes — "I am not enough" becomes "this is something I carry, not Truth."',
       "That second layer is where the world starts to shift.",
+      "Real unblending happens on three levels at once — in your thinking, in how it feels, and in your body. All three together is the real thing.",
     ],
   },
   {
