@@ -1180,4 +1180,56 @@ export const api = {
       return { error: 'transport-failed', message: (e as Error)?.message };
     }
   },
+
+  // ===========================================================================
+  // MAP-SEEN — drives the "you have new map content" dot on the Map tab.
+  // ===========================================================================
+
+  /** GET /api/map/seen-status. Returns the user's last-seen timestamp,
+   *  the current map-updated timestamp, and a precomputed hasUnseen
+   *  boolean. Polled on app foreground + tab focus; the dot service
+   *  in services/mapSeen.ts caches the result for 30s. */
+  async getMapSeenStatus(): Promise<{
+    lastSeenMapAt: string | null;
+    mapUpdatedAt: string | null;
+    hasUnseen: boolean;
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/map/seen-status', {
+        label: 'map-seen-status', method: 'GET', headers,
+      });
+      if (!res.ok) return null;
+      const j: any = await res.json().catch(() => null);
+      if (!j || typeof j !== 'object') return null;
+      return {
+        lastSeenMapAt: j.lastSeenMapAt ?? null,
+        mapUpdatedAt: j.mapUpdatedAt ?? null,
+        hasUnseen: !!j.hasUnseen,
+      };
+    } catch (e) {
+      console.warn('[map-seen-status] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** POST /api/map/mark-seen. Stamps lastSeenMapAt=NOW for the user.
+   *  Called on Map-tab entry. Returns the new timestamp on success,
+   *  null on transport failure (caller can still optimistically
+   *  clear the local dot — server will re-sync on next poll). */
+  async markMapSeen(): Promise<{ lastSeenMapAt: string } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/map/mark-seen', {
+        label: 'map-mark-seen', method: 'POST', headers, body: JSON.stringify({}),
+      });
+      if (!res.ok) return null;
+      const j: any = await res.json().catch(() => null);
+      if (!j || typeof j !== 'object' || typeof j.lastSeenMapAt !== 'string') return null;
+      return { lastSeenMapAt: j.lastSeenMapAt };
+    } catch (e) {
+      console.warn('[map-mark-seen] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
 };

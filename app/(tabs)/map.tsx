@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, Pressable, Animated, StyleSheet, Easing, PanResponder, Modal, ScrollView } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-get-random-values';
@@ -24,6 +24,7 @@ import { ProgressStrip } from '../../components/map/ProgressStrip';
 import { CircleMapCanvas, IntegrationKey } from '../../components/map/CircleMapCanvas';
 import { IntegrationPanel } from '../../components/map/IntegrationPanel';
 import { subscribeMapActivation } from '../../utils/mapActivation';
+import { markMapSeen } from '../../services/mapSeen';
 
 const INTEGRATION_VIEW_SEEN_KEY = 'integration_view_seen';
 const SECOND_LAYER_INTRODUCED_KEY = 'second_layer_introduced';
@@ -47,6 +48,20 @@ type MapLayer = {
 };
 
 export default function MapScreen() {
+  // Mark the user's map as seen every time this tab gains focus.
+  // services/mapSeen.ts handles the optimistic broadcast + the
+  // mark-seen POST + the confirmation refresh; the dot in the top
+  // tab bar clears the moment the focus event fires, before the
+  // network round-trip completes.
+  useFocusEffect(
+    useCallback(() => {
+      markMapSeen().catch((e) =>
+        console.warn('[map] markMapSeen on focus threw:', (e as Error)?.message),
+      );
+      return () => {};
+    }, []),
+  );
+
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [mapData, setMapData] = useState<any | null>(null);
   const [activePart, setActivePart] = useState<NodeKey | null>(null);

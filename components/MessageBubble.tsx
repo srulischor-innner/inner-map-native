@@ -18,6 +18,8 @@ import {
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { PartBadge } from './PartBadge';
+import { parseAddedToMapMarkers } from '../utils/markers';
+import { MapPill } from './chat/MapPill';
 
 export type ChatMsg = {
   id: string;
@@ -70,10 +72,7 @@ export function MessageBubble({ msg, onRetry }: { msg: ChatMsg; onRetry?: (text:
             transcript={msg.voice.transcript}
           />
         ) : (
-          <Text style={styles.text}>
-            {msg.text}
-            {msg.streaming ? <StreamCaret /> : null}
-          </Text>
+          <AssistantBubbleBody text={msg.text} streaming={!!msg.streaming} />
         )}
         {!isUser && msg.detectedPart ? (
           <PartBadge part={msg.detectedPart} label={msg.partLabel} />
@@ -92,6 +91,71 @@ export function MessageBubble({ msg, onRetry }: { msg: ChatMsg; onRetry?: (text:
       </View>
     </View>
   );
+}
+
+// ============================================================================
+// AssistantBubbleBody — splits the bubble text on [ADDED_TO_MAP: …]
+// markers and renders <MapPill> components inline at each marker
+// position.
+//
+// Fast path: no markers in the text → single <Text> with the
+// streaming caret tail, identical to the pre-PR-Map-Visibility
+// rendering. No layout impact on the 99% of messages that never
+// contain a pill marker.
+//
+// Slow path: markers present → split the text into segments,
+// render each text segment as its own <Text> child of a wrapping
+// <View>, and inject <MapPill /> at each marker position. The
+// streaming caret is attached only to the FINAL text segment so
+// a mid-bubble pill doesn't carry a phantom caret. If the message
+// ends with a pill marker (no trailing text), the caret is omitted
+// — the marker is the terminal element.
+//
+// Edge cases:
+//   - Empty text → render an empty <Text> (no pills can match).
+//   - Partial / malformed marker (no closing bracket yet because
+//     the AI is still streaming) → parseAddedToMapMarkers strict-
+//     matches only complete forms, so the partial marker text
+//     stays in the bubble as plain text until the closing bracket
+//     arrives. No crash; spec-required fallback behavior.
+//   - Multiple markers in one message → each gets its own pill,
+//     positioned in document order.
+// ============================================================================
+function AssistantBubbleBody({ text, streaming }: { text: string; streaming: boolean }) {
+  // useMemo on the text alone so the regex doesn't re-run every
+  // tick of the streaming-caret animation.
+  const segments = useMemo(() => parseAddedToMapMarkers(text), [text]);
+  if (segments.length === 0) {
+    return (
+      <Text style={styles.text}>
+        {text}
+        {streaming ? <StreamCaret /> : null}
+      </Text>
+    );
+  }
+  // Build alternating chunks: text, pill, text, pill, ...
+  const chunks: React.ReactNode[] = [];
+  let cursor = 0;
+  segments.forEach((seg, i) => {
+    const before = text.slice(cursor, seg.start);
+    if (before) {
+      chunks.push(
+        <Text key={`t-${i}`} style={styles.text}>{before}</Text>,
+      );
+    }
+    chunks.push(<MapPill key={`p-${i}`} name={seg.name} />);
+    cursor = seg.end;
+  });
+  const tail = text.slice(cursor);
+  if (tail || streaming) {
+    chunks.push(
+      <Text key="tail" style={styles.text}>
+        {tail}
+        {streaming ? <StreamCaret /> : null}
+      </Text>,
+    );
+  }
+  return <View>{chunks}</View>;
 }
 
 // ============================================================================

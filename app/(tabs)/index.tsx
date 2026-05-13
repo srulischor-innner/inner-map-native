@@ -102,11 +102,20 @@ export default function ChatScreen() {
   // by tapping the speaker icon in the chat header. When ON, every new AI
   // reply auto-plays via the streaming TTS pipeline. When the user mutes,
   // the in-flight stream cancels immediately. No per-message control.
-  // Chat mode — Process (default, gentle holding) vs Explore
-  // (active map-building). The server uses this to pick between
-  // HOLDING_SPACE_PROMPT and MAPPING_PROMPT. Reset to 'process' on
-  // every new session.
-  const [chatMode, setChatMode] = useState<ChatMode>('process');
+  // Chat mode — Process (gentle holding) vs Explore (active
+  // map-building, the default). The server uses this to pick
+  // between HOLDING_SPACE_PROMPT and MAPPING_PROMPT.
+  //
+  // PR-Map-Visibility: default flipped from 'process' to 'explore'.
+  // Rationale: the new mapping-acknowledgment loop (the
+  // [ADDED_TO_MAP: …] pill + conversational ack) only fires in
+  // Explore mode; landing users in Process by default hides the
+  // map-building behavior the rest of the surface advertises.
+  // The toggle is still visible; users can switch to Process any
+  // time. Session-end reset (below in continueAfterSummaryRef)
+  // re-initializes to 'explore' too — every fresh session starts
+  // in the mode most likely to surface real map content.
+  const [chatMode, setChatMode] = useState<ChatMode>('explore');
   // chatModeRef mirrors chatMode so the thread helpers below can
   // resolve the active thread synchronously from any callback,
   // without relying on stale closures over the chatMode state.
@@ -1090,7 +1099,7 @@ export default function ChatScreen() {
               setAudioEnabled(false);
               resetAttentionState();
               setSelfMode(false);
-              setChatMode('process');           // new session always starts gentle
+              setChatMode('explore');          // new session starts in active map-building mode
               setLivePart(null); setLiveConfidence(null);
               if (livePartTimerRef.current) { clearTimeout(livePartTimerRef.current); livePartTimerRef.current = null; }
               clearMapVoiceHistory();           // start map voice fresh next session

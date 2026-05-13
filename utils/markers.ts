@@ -76,11 +76,63 @@ export function parseChatMeta(text: string): ChatMeta | null {
   }
 }
 
+/** Strict ADDED_TO_MAP marker pattern. Only matches the COMPLETE form
+ *  `[ADDED_TO_MAP: <name>]` — partial markers mid-stream
+ *  (`[ADDED_TO_MAP: the`) don't match, so the partial text stays in
+ *  the bubble until the closing bracket arrives and the regex starts
+ *  catching it.
+ *
+ *  Capture group 1 is the descriptive name; whitespace around the
+ *  name is trimmed on parse. */
+const ADDED_TO_MAP_RE = /\[ADDED_TO_MAP:\s*([^\]]+)\]/g;
+
+export type AddedToMapMatch = {
+  /** Whole match including brackets, e.g. "[ADDED_TO_MAP: anxious part]". */
+  raw: string;
+  /** Trimmed descriptive name from the capture group. */
+  name: string;
+  /** Start index in the source text (inclusive). */
+  start: number;
+  /** End index in the source text (exclusive). */
+  end: number;
+};
+
+/** Find every complete [ADDED_TO_MAP: ...] marker in the input.
+ *  Returns matches in document order. The bubble renderer uses this
+ *  to splice MapPill components in at each match position. Empty
+ *  array on no matches or malformed input — never throws. */
+export function parseAddedToMapMarkers(text: string): AddedToMapMatch[] {
+  if (!text) return [];
+  const out: AddedToMapMatch[] = [];
+  // Local copy of the global regex — global state on a module-level
+  // /g regex would race between callers.
+  const re = new RegExp(ADDED_TO_MAP_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = String(m[1] || '').trim();
+    if (!name) continue;
+    out.push({
+      raw: m[0],
+      name,
+      start: m.index,
+      end: m.index + m[0].length,
+    });
+  }
+  return out;
+}
+
 /**
  * Remove every known marker from a string so it's safe to display or speak.
  * Mirrors the web app's strip list. Always strips — used for TTS, saved
  * transcripts, history sent back to the server, and any path where markers
  * leaking through would actually break something.
+ *
+ * stripMarkers also strips ADDED_TO_MAP — the user-facing pill marker
+ * MUST be removed before audio playback (so the AI doesn't speak the
+ * literal "[ADDED_TO_MAP: ...]" string out loud) and before history is
+ * sent back to the model (so the model doesn't see its own pill
+ * markers echoed back). Display path uses stripMarkersForDisplay,
+ * which leaves ADDED_TO_MAP in place.
  */
 export function stripMarkers(text: string): string {
   if (!text) return '';
@@ -93,25 +145,49 @@ export function stripMarkers(text: string): string {
     // very end of replies — same set as the bracketed versions above.
     .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
+    // ADDED_TO_MAP — user-facing pill marker. Stripped here for TTS +
+    // history + saves. The display path preserves it (see
+    // stripMarkersForDisplay) so the bubble renderer can splice in a
+    // <MapPill> component at the marker's position.
+    .replace(/\[ADDED_TO_MAP:\s*[^\]]+\]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 }
 
 /**
  * Display-time stripper used by the chat-bubble render path. In production
- * builds it behaves identically to `stripMarkers`; in __DEV__ builds it
- * returns the input unchanged so MAP_UPDATE / MAP_SECONDARY / SPECTRUM_UPDATE
- * / CHAT_META / etc. are visible in the bubble for live debugging.
+ * builds it strips most markers but PRESERVES [ADDED_TO_MAP: ...] so the
+ * bubble renderer (MessageBubble) can find the marker and splice in a
+ * <MapPill> component at that position. In __DEV__ builds it returns
+ * the input unchanged so MAP_UPDATE / MAP_SECONDARY / SPECTRUM_UPDATE /
+ * CHAT_META / etc. are visible for live debugging.
  *
  * IMPORTANT: never use this for TTS, history saves, or anything sent back to
  * the server. Only the visual bubble. Audio + persistence keep using
  * `stripMarkers` unconditionally so a dev build never speaks a marker aloud
- * or echoes one back to the model on the next turn.
+ * (or pill-marker text aloud) or echoes a marker back to the model.
  */
 export function stripMarkersForDisplay(text: string): string {
   if (!text) return '';
   if (__DEV__) return text;
-  return stripMarkers(text);
+  // Production: same as stripMarkers but RESTORE the ADDED_TO_MAP
+  // markers so MessageBubble can position pills inline. We strip
+  // first (which removes ADDED_TO_MAP among the rest), then
+  // re-insert them at their original positions by running the
+  // pre-strip regex and reconstructing.
+  //
+  // Simpler implementation: just re-run stripMarkers EXCEPT the
+  // ADDED_TO_MAP line — duplicate the regex chain minus that one
+  // replacement so the marker survives intact.
+  return text
+    .replace(/\[CHAT_META:[\s\S]*?\]/g, '')
+    .replace(/\[(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|SUMMARY_META):[\s\S]*?\]/g, '')
+    .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)(?:\s*\|\s*part:\s*[a-z-]+)?\s*\]?/gi, '')
+    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
+    .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
+    // ADDED_TO_MAP intentionally NOT stripped here.
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
 }
 
 /** Friendly display name for each part category. */

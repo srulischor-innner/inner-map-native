@@ -11,7 +11,7 @@
 // so it reads as "lit" even in bright environments.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, Animated, Easing } from 'react-native';
+import { AppState, View, Text, Pressable, StyleSheet, Platform, Animated, Easing } from 'react-native';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,6 +19,7 @@ import * as Haptics from 'expo-haptics';
 import { colors, fonts } from '../../constants/theme';
 import { HamburgerMenu } from '../../components/HamburgerMenu';
 import { subscribeMapPulse } from '../../utils/mapPulse';
+import { subscribeMapSeen, refreshMapSeenStatus } from '../../services/mapSeen';
 
 const TAB_ROUTES: { name: string; label: string; path: string }[] = [
   { name: 'index',         label: 'CHAT',    path: '/' },
@@ -59,6 +60,37 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
     });
     return unsubscribe;
   }, [mapScale, mapBrightness]);
+
+  // MAP-SEEN DOT — subscribes to the map-seen service. The dot shows
+  // when the user has new map content they haven't viewed yet (server
+  // computes the boolean from lastSeenMapAt vs mapUpdatedAt). The
+  // service caches for 30s; we refresh on every relevant event:
+  //   - mount (initial fetch)
+  //   - app foreground (AppState 'active')
+  //   - pathname change (any tab nav — captures the "switched to a
+  //     different tab and came back" case without explicit focus
+  //     listeners)
+  // Markseen happens elsewhere — in app/(tabs)/map.tsx on tab focus
+  // — so this layout just reads + renders.
+  const [mapHasUnseen, setMapHasUnseen] = useState(false);
+  useEffect(() => {
+    const unsub = subscribeMapSeen((s) => setMapHasUnseen(s.hasUnseen));
+    refreshMapSeenStatus().catch(() => {});
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') refreshMapSeenStatus().catch(() => {});
+    });
+    return () => {
+      unsub();
+      try { sub.remove(); } catch {}
+    };
+  }, []);
+  // Re-poll on pathname change. The user moving between tabs is the
+  // strongest signal that they care about the current state; this
+  // catches updates that landed while they were on Chat / Journal /
+  // etc., before they ever go look at the Map tab.
+  useEffect(() => {
+    refreshMapSeenStatus().catch(() => {});
+  }, [pathname]);
 
   return (
     <SafeAreaView edges={['top']} style={styles.safe}>
@@ -106,6 +138,17 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
                 >
                   {r.label}
                 </TextNode>
+                {/* Unseen-map dot. Only renders on the MAP tab when the
+                    user has map content they haven't viewed since the
+                    last server-side mapUpdatedAt bump. The dot clears
+                    optimistically the moment the user enters the Map
+                    tab (services/mapSeen.ts handles the optimistic
+                    broadcast + the mark-seen POST). Sits in the
+                    top-right corner of the label so it reads as a
+                    badge without crowding the typography. */}
+                {isMap && mapHasUnseen ? (
+                  <View style={styles.tabDot} pointerEvents="none" />
+                ) : null}
               </Animated.View>
               {active ? <View style={styles.underline} /> : null}
             </Pressable>
@@ -189,5 +232,25 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     // Android doesn't render iOS shadow; elevation gives a comparable soft glow.
     elevation: 5,
+  },
+  // Unseen-map dot. Small filled amber circle, anchored to the
+  // top-right of the MAP tab's label text. Absolute-positioned
+  // INSIDE the Animated.View wrapper so the existing map-pulse
+  // animation (scale 1→1.1→1) carries the dot with it without
+  // additional transform plumbing. Subtle shadow matches the
+  // active-underline visual language at smaller scale.
+  tabDot: {
+    position: 'absolute',
+    top: -3,
+    right: -8,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.amber,
+    shadowColor: colors.amber,
+    shadowOpacity: 0.9,
+    shadowRadius: Platform.OS === 'ios' ? 4 : 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
   },
 });
