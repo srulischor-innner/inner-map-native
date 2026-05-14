@@ -48,6 +48,7 @@ import {
 } from '../../utils/ttsStream';
 import { AudioToggle } from '../../components/AudioToggle';
 import { useExperienceLevel } from '../../services/experienceLevel';
+import { optimisticMarkUnseen } from '../../services/mapSeen';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { SessionSummaryModal, SessionSummary } from '../../components/session/SessionSummaryModal';
@@ -584,6 +585,12 @@ export default function ChatScreen() {
       let detectedPart: string | null = null;
       let partLabel: string | null = null;
       let partFired = false;
+      // Per-turn guard: when an [ADDED_TO_MAP: <name>] marker first
+      // lands in the streamed text, flip the bottom-tab Map dot
+      // optimistically — without waiting for the next 30s poll or
+      // tab focus. Set to true on the first match so we don't re-
+      // broadcast on every subsequent delta of the same turn.
+      let addedToMapFired = false;
       let revealTimer: any = null;
 
       // Word-by-word reveal: advance `revealed` toward target.length, one word at a time.
@@ -694,6 +701,18 @@ export default function ChatScreen() {
                   }
                 }
               } catch {}
+              // Live Map-tab dot flip — fires the moment the first
+              // complete [ADDED_TO_MAP: <name>] marker lands in the
+              // accumulated raw text. The pill renders for the user
+              // a few words later (via stripMarkersForDisplay in dev
+              // / actual stripping in prod), and we want the dot to
+              // light up at the same beat — within ~1s of the pill
+              // appearing, not on the next 30s poll. Guarded by
+              // addedToMapFired so we don't broadcast every delta.
+              if (!addedToMapFired && /\[ADDED_TO_MAP:\s*[^\]]+\]/.test(rawAccum)) {
+                addedToMapFired = true;
+                optimisticMarkUnseen();
+              }
               if (!partFired) {
                 const meta = parseChatMeta(rawAccum);
                 if (meta?.detectedPart && meta.detectedPart !== 'unknown') {

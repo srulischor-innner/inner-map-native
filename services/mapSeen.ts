@@ -80,6 +80,37 @@ export async function refreshMapSeenStatus(force = false): Promise<Status | null
   return inFlight;
 }
 
+/** Optimistic mid-chat flip — called from the chat send pipeline
+ *  when an [ADDED_TO_MAP: ...] marker first lands in the streamed
+ *  raw text. Flips hasUnseen=true locally + broadcasts, so the
+ *  bottom-tab Map dot lights up within a frame of the pill
+ *  rendering instead of waiting for the next 30-second poll cycle
+ *  or a tab-focus refresh.
+ *
+ *  Idempotent: if hasUnseen is already true (cache says the dot is
+ *  already lit), this is a no-op — no redundant broadcast. The
+ *  caller is also expected to fire this at most ONCE per turn
+ *  (see the addedToMapFired flag in app/(tabs)/index.tsx onDelta).
+ *
+ *  No immediate server round-trip: the server has already persisted
+ *  the marker by the time we see it in the stream, but its
+ *  /api/map/seen-status response can briefly lag the write. We
+ *  stay with the optimistic value; the next pathname / AppState
+ *  poll will sync if anything is off. */
+export function optimisticMarkUnseen(): void {
+  if (cached?.hasUnseen) return;
+  cached = {
+    lastSeenMapAt: cached?.lastSeenMapAt ?? null,
+    // mapUpdatedAt — best-guess "now" since the server just persisted
+    // a map write. The next poll will replace this with the
+    // authoritative server timestamp.
+    mapUpdatedAt: new Date().toISOString(),
+    hasUnseen: true,
+  };
+  cachedAt = Date.now();
+  broadcast(cached);
+}
+
 /** Mark the user's map as seen NOW. Three steps:
  *    1. Optimistic local update: broadcast hasUnseen=false
  *       immediately so the dot clears with no perceptible delay.
