@@ -20,6 +20,7 @@ import { colors, fonts } from '../../constants/theme';
 import { HamburgerMenu } from '../../components/HamburgerMenu';
 import { subscribeMapPulse } from '../../utils/mapPulse';
 import { subscribeMapSeen, refreshMapSeenStatus } from '../../services/mapSeen';
+import { subscribeChatActivity } from '../../services/chatActivity';
 
 const TAB_ROUTES: { name: string; label: string; path: string }[] = [
   { name: 'index',         label: 'CHAT',    path: '/' },
@@ -92,6 +93,50 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
     refreshMapSeenStatus().catch(() => {});
   }, [pathname]);
 
+  // MAP-TAB LISTENING PULSE — separate from the discrete pulseMapTab()
+  // flash above. This is an ambient, slow opacity oscillation
+  // (0.85 → 1.0 → 0.85, ~2s cycle) that signals "your map is
+  // listening" while a live chat session is in progress. Conditions:
+  //   - services/chatActivity says a session is active (the user has
+  //     sent at least one message and hasn't ended the session)
+  //   - the user is currently on the chat tab (pathname is '/' or
+  //     '/index'). On any other tab the pulse stops — they're not
+  //     in front of the listening surface anymore.
+  // Distinct from the unseen-content dot (services/mapSeen) — that
+  // dot is a concrete "new content waiting" signal that persists
+  // until the user opens the Map tab. The pulse is purely ambient.
+  const mapListeningOpacity = useRef(new Animated.Value(1)).current;
+  const [chatActive, setChatActive] = useState(false);
+  useEffect(() => subscribeChatActivity(setChatActive), []);
+  const isOnChatTab = pathname === '/' || pathname === '/index';
+  const shouldPulseMapListening = chatActive && isOnChatTab;
+  useEffect(() => {
+    if (shouldPulseMapListening) {
+      mapListeningOpacity.setValue(1);
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(mapListeningOpacity, {
+            toValue: 0.85, duration: 1000,
+            easing: Easing.inOut(Easing.sin), useNativeDriver: true,
+          }),
+          Animated.timing(mapListeningOpacity, {
+            toValue: 1, duration: 1000,
+            easing: Easing.inOut(Easing.sin), useNativeDriver: true,
+          }),
+        ]),
+      );
+      loop.start();
+      return () => {
+        loop.stop();
+        // Reset to full opacity so the label doesn't freeze mid-pulse
+        // when the user leaves the chat tab.
+        mapListeningOpacity.setValue(1);
+      };
+    } else {
+      mapListeningOpacity.setValue(1);
+    }
+  }, [shouldPulseMapListening, mapListeningOpacity]);
+
   return (
     <SafeAreaView edges={['top']} style={styles.safe}>
       <View style={styles.headerRow}>
@@ -115,7 +160,16 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
               })
             : undefined;
           const TextNode = isMap ? Animated.Text : Text;
-          const animatedWrapStyle = isMap ? { transform: [{ scale: mapScale }] } : undefined;
+          // For the Map tab specifically, the wrapper animates BOTH a
+          // scale (driven by mapScale → discrete pulseMapTab flash) and
+          // an opacity (mapListeningOpacity → ambient listening pulse
+          // while chat session is live). The two animated values run
+          // independently; the scale flash is rare + short, the opacity
+          // pulse is slow + continuous while shouldPulseMapListening
+          // is true. opacity stays at 1 otherwise.
+          const animatedWrapStyle = isMap
+            ? { transform: [{ scale: mapScale }], opacity: mapListeningOpacity }
+            : undefined;
           return (
             <Pressable
               key={r.name}

@@ -78,6 +78,23 @@ export default function MapScreen() {
   // (original) wound; subsequent indices are secondary wounds the AI has
   // explicitly identified. The array is empty until the first map exists.
   const [layers, setLayers] = useState<MapLayer[]>([]);
+
+  // First-session completion state — drives the Map-tab empty-state
+  // CTA. When the user has nothing mapped yet AND firstSessionCompletedAt
+  // is null, the empty state shows a "Start building" button that
+  // navigates back to the Chat tab. If they've already finished their
+  // first session and the map is somehow still empty (edge case), we
+  // show the explainer without the CTA. undefined while the
+  // /api/first-session-status poll is in flight — treated like "no
+  // CTA yet" so we don't briefly flash the button for returning users.
+  const [firstSessionDoneAt, setFirstSessionDoneAt] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    api.getFirstSessionStatus()
+      .then(({ completedAt }) => { if (!cancelled) setFirstSessionDoneAt(completedAt); })
+      .catch(() => { if (!cancelled) setFirstSessionDoneAt(null); });
+    return () => { cancelled = true; };
+  }, []);
   const [currentLayerIndex, setCurrentLayerIndex] = useState<number>(0);
 
   // Wipe activePart + activeLabel after ~8 s so the breathing node
@@ -556,6 +573,37 @@ export default function MapScreen() {
             </Pressable>
           </View>
         ) : null}
+        {/* Empty-state explainer. Renders only on the triangle view
+            when the load succeeded but there are no layers — i.e. the
+            user has not yet mapped a single wound. The faint triangle
+            from InnerMapCanvas is visible underneath (acts as the
+            "what this looks like once populated" preview), and this
+            overlay layers explanatory copy + CTA on top.
+            - First-session-not-done → show "Start building" CTA to
+              chat tab.
+            - First-session-done but map somehow empty → show the
+              explainer without a CTA (edge case; shouldn't happen). */}
+        {view === 'triangle' && loadStatus === 'loaded' && layers.length === 0 && firstSessionDoneAt !== undefined ? (
+          <View style={styles.mapEmptyOverlay} pointerEvents="box-none">
+            <Text style={styles.mapEmptyBody}>
+              Your map fills in as you have conversations.{'\n\n'}
+              Have a conversation in Chat to start building yours.
+            </Text>
+            {firstSessionDoneAt === null ? (
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  router.push('/');
+                }}
+                style={styles.mapEmptyCta}
+                accessibilityLabel="Start building your map"
+                accessibilityRole="button"
+              >
+                <Text style={styles.mapEmptyCtaText}>START BUILDING</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Layer dot indicators — only shown when multiple layers exist.
             Sit centered just above the YOUR PROGRESS strip. */}
@@ -802,6 +850,43 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansBold,
     fontSize: 11,
     letterSpacing: 2,
+  },
+
+  // Empty-state explainer (no layers mapped yet). Sits on top of the
+  // faint triangle from InnerMapCanvas — that triangle IS the "what
+  // this looks like once populated" preview. The overlay positions
+  // copy + CTA in the lower half so the triangle remains the focal
+  // point. pointerEvents="box-none" on the wrapper lets touches pass
+  // through to the canvas; only the explicit Pressable below catches
+  // taps for the CTA.
+  mapEmptyOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingBottom: 64,
+    paddingHorizontal: 32,
+  },
+  mapEmptyBody: {
+    color: colors.creamDim,
+    fontFamily: fonts.serif,
+    fontSize: 17,
+    lineHeight: 26,
+    textAlign: 'center',
+    letterSpacing: 0.2,
+    maxWidth: 320,
+  },
+  mapEmptyCta: {
+    marginTop: 18,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 28,
+    backgroundColor: colors.amber,
+  },
+  mapEmptyCtaText: {
+    color: colors.background,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+    letterSpacing: 1.4,
   },
 
   // ===== Circle-view first-time intro panel =====

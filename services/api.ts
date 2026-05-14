@@ -1262,6 +1262,31 @@ export const api = {
     }
   },
 
+  /** GET /api/first-session-status. Returns `{ completedAt: string | null }`
+   *  where completedAt is the ISO timestamp the server wrote when the
+   *  AI emitted [STARTER_MAP_COMPLETE] in the user's first session.
+   *  null = first session not done yet — the chat tab shows the
+   *  "Building your starter map" banner and the Map tab empty state
+   *  shows the "Start building" CTA. Once set, stays set forever
+   *  (it never resets). null also returned on transport failure so
+   *  the client fails closed — better to briefly show first-session
+   *  UI for a returning user than to hide it from a new one. */
+  async getFirstSessionStatus(): Promise<{ completedAt: string | null }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/first-session-status', {
+        label: 'first-session-status', method: 'GET', headers,
+      });
+      if (!res.ok) return { completedAt: null };
+      const j: any = await res.json().catch(() => null);
+      if (!j || typeof j !== 'object') return { completedAt: null };
+      return { completedAt: typeof j.completedAt === 'string' ? j.completedAt : null };
+    } catch (e) {
+      console.warn('[first-session-status] threw:', (e as Error)?.message);
+      return { completedAt: null };
+    }
+  },
+
   /** POST /api/map/mark-seen. Stamps lastSeenMapAt=NOW for the user.
    *  Called on Map-tab entry. Returns the new timestamp on success,
    *  null on transport failure (caller can still optimistically

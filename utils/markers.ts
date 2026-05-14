@@ -197,6 +197,14 @@ export function stripMarkers(text: string): string {
     // relationship-mode private chats. Display path preserves it
     // so the bubble can render a <SharePromptCard>.
     .replace(/\[SHARE_SUGGEST:\s*[^\]]+\]/g, '')
+    // STARTER_MAP_COMPLETE — first-session completion signal. Server
+    // detects it in the streamed text and writes firstSessionCompletedAt;
+    // the client uses its presence to render a "View my starter map"
+    // button below the message. Strip it from TTS / history / saves
+    // so the model doesn't speak the literal marker aloud and doesn't
+    // see its own marker echoed back next turn. Display path preserves
+    // it (see hasStarterMapComplete + stripMarkersForDisplay below).
+    .replace(/\[STARTER_MAP_COMPLETE\]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 }
@@ -232,8 +240,26 @@ export function stripMarkersForDisplay(text: string): string {
     .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
     // ADDED_TO_MAP and SHARE_SUGGEST intentionally NOT stripped here.
+    // STARTER_MAP_COMPLETE — UNLIKE the pill markers, this one IS
+    // stripped from the display path too. The marker is a pure
+    // structured signal: the UI renders a "View my starter map"
+    // button beside the bubble (not inline at the marker's position),
+    // so leaving the literal "[STARTER_MAP_COMPLETE]" string in the
+    // bubble would just be noise. Detection is done separately via
+    // hasStarterMapComplete(rawText) before this strip runs.
+    .replace(/\[STARTER_MAP_COMPLETE\]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
+}
+
+/** Returns true if the raw assistant text contains the
+ *  [STARTER_MAP_COMPLETE] marker. The chat tab uses this to decide
+ *  whether to render a "View my starter map" button below the
+ *  bubble. Detect BEFORE calling stripMarkers/stripMarkersForDisplay
+ *  — those both strip the marker. */
+export function hasStarterMapComplete(text: string): boolean {
+  if (!text) return false;
+  return /\[STARTER_MAP_COMPLETE\]/.test(text);
 }
 
 /** Friendly display name for each part category. */

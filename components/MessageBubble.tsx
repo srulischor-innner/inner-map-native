@@ -43,13 +43,24 @@ export type ChatMsg = {
    *  the transcript is still being produced, `transcript` is null and the
    *  bubble shows a "Transcribing…" line instead. */
   voice?: { uri: string; durationSec: number; transcript: string | null };
+  /** Set on the final assistant bubble of a first-session conversation
+   *  when the AI emitted [STARTER_MAP_COMPLETE]. The bubble renders a
+   *  "View my starter map" CTA below the text — tapping it navigates
+   *  to the Map tab. Set by the chat send pipeline in app/(tabs)/index.tsx
+   *  on the streamed rawAccum BEFORE markers are stripped for display. */
+  starterMapComplete?: boolean;
 };
 
 export function MessageBubble({
-  msg, onRetry, relationshipId, partnerName,
+  msg, onRetry, onViewStarterMap, relationshipId, partnerName,
 }: {
   msg: ChatMsg;
   onRetry?: (text: string) => void;
+  /** Fires when the user taps "View my starter map" on a first-session
+   *  completion bubble (msg.starterMapComplete=true). The chat tab
+   *  wires this to a router.push('/map') so the moment lands on the
+   *  Map tab where the user can see what just got built. */
+  onViewStarterMap?: () => void;
   /** When the bubble is in a relationship-mode private chat, these
    *  props enable inline [SHARE_SUGGEST: …] marker rendering as
    *  <SharePromptCard> components. Omitted in the main chat tab —
@@ -105,6 +116,27 @@ export function MessageBubble({
           >
             <Ionicons name="refresh" size={12} color={colors.amber} />
             <Text style={styles.retryPillText}>RETRY</Text>
+          </Pressable>
+        ) : null}
+        {/* First-session "View my starter map" CTA. Renders only on the
+            single assistant bubble that carried [STARTER_MAP_COMPLETE] —
+            the chat tab sets msg.starterMapComplete=true when it sees
+            the marker in the streamed rawAccum. Sits beneath the bubble
+            text + part badge, full-width within the bubble, amber pill
+            in DM Sans (UI affordance, not chat body — keeps the chat-
+            font / pill-font distinction consistent with the rest of
+            the app). Tapping fires the parent-supplied navigation;
+            after the tap the parent typically clears the flag so the
+            button doesn't re-render on re-mount. */}
+        {!isUser && msg.starterMapComplete && onViewStarterMap ? (
+          <Pressable
+            onPress={onViewStarterMap}
+            style={styles.starterMapBtn}
+            accessibilityLabel="View my starter map"
+            accessibilityRole="button"
+          >
+            <Ionicons name="map-outline" size={16} color={colors.background} style={{ marginRight: 8 }} />
+            <Text style={styles.starterMapBtnText}>VIEW MY STARTER MAP</Text>
           </Pressable>
         ) : null}
       </View>
@@ -603,6 +635,28 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansBold,
     fontSize: 10,
     letterSpacing: 1.4,
+  },
+  // First-session "View my starter map" CTA — full-width amber pill
+  // beneath the AI bubble. DM Sans not Cormorant: this is a UI
+  // affordance (a button), not chat content. Mirrors the existing
+  // primary-button pattern used on connect / commitment screens so
+  // the visual language stays consistent.
+  starterMapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.amber,
+    borderRadius: 28,
+  },
+  starterMapBtnText: {
+    color: colors.background,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+    letterSpacing: 1,
   },
   speakerWrap: {
     position: 'absolute',

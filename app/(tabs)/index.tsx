@@ -29,8 +29,10 @@ import * as Haptics from 'expo-haptics';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
+import { useRouter } from 'expo-router';
+
 import { api, ChatMessage } from '../../services/api';
-import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay } from '../../utils/markers';
+import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
 import { clearMapVoiceHistory } from '../../services/mapVoiceHistory';
 import { ChatModeToggle, ChatModeIndicator, ChatMode } from '../../components/ChatModeToggle';
@@ -49,6 +51,7 @@ import {
 import { AudioToggle } from '../../components/AudioToggle';
 import { useExperienceLevel } from '../../services/experienceLevel';
 import { optimisticMarkUnseen } from '../../services/mapSeen';
+import { setChatSessionActive } from '../../services/chatActivity';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { SessionSummaryModal, SessionSummary } from '../../components/session/SessionSummaryModal';
@@ -287,6 +290,34 @@ export default function ChatScreen() {
   const [summaryVisible, setSummaryVisible] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [summaryFailed, setSummaryFailed] = useState(false);
+
+  // First-session state. Tri-state:
+  //   undefined  — initial / loading from /api/first-session-status
+  //   true       — server says firstSessionCompletedAt is null → show
+  //                "Building your starter map" banner, route through
+  //                FIRST_SESSION_PROMPT, listen for [STARTER_MAP_COMPLETE]
+  //   false      — server says first session is done → regular UI,
+  //                regular prompt routing
+  // The router is also stashed here because it's used by the
+  // "View my starter map" CTA on the completion bubble.
+  const [firstSessionPending, setFirstSessionPending] = useState<boolean | undefined>(undefined);
+  const router = useRouter();
+  useEffect(() => {
+    let cancelled = false;
+    api.getFirstSessionStatus()
+      .then(({ completedAt }) => {
+        if (!cancelled) setFirstSessionPending(completedAt === null);
+      })
+      .catch(() => { if (!cancelled) setFirstSessionPending(false); });
+    return () => { cancelled = true; };
+  }, []);
+  // Wired to the "View my starter map" button on the completion bubble.
+  // Just a tab nav — the Map tab's own mount logic refreshes its data
+  // when it becomes the active route.
+  const handleViewStarterMap = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    router.push('/map');
+  }, [router]);
   // Held continuation that runs the actual reset when the user dismisses
   // the summary modal. Captured inside the EndSession onEnd handler so
   // it has access to the closure (snapshots of cancelTTSStream / etc).
@@ -794,15 +825,48 @@ export default function ChatScreen() {
               } else {
                 console.log('[marker] reply contained no map/part markers');
               }
+              // First-session completion marker. When [STARTER_MAP_COMPLETE]
+              // lands in the final assistant text, attach starterMapComplete
+              // to the streamed bubble so MessageBubble renders the
+              // "View my starter map" CTA, and clear the chat-tab banner.
+              // We don't fire this in onDelta because the marker is a
+              // session-ending signal — only meaningful once the full
+              // message has landed.
+              const starterMapDone = hasStarterMapComplete(rawAccum);
               if (!revealTimer) {
                 // Flush synchronously — no pending reveal loop running.
                 turnThread.setMessages((prev) =>
                   prev.map((m) =>
                     m.id === streamId
-                      ? { ...m, text: target, streaming: false, detectedPart: detectedPart || m.detectedPart, partLabel: partLabel ?? m.partLabel }
+                      ? {
+                          ...m,
+                          text: target, streaming: false,
+                          detectedPart: detectedPart || m.detectedPart,
+                          partLabel: partLabel ?? m.partLabel,
+                          ...(starterMapDone ? { starterMapComplete: true } : {}),
+                        }
                       : m,
                   ),
                 );
+              } else if (starterMapDone) {
+                // tickReveal is still walking forward. Attach the flag
+                // now so MessageBubble can render the CTA as soon as the
+                // reveal completes; the next setMessages inside tickReveal
+                // preserves it.
+                turnThread.setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === streamId ? { ...m, starterMapComplete: true } : m,
+                  ),
+                );
+              }
+              if (starterMapDone) {
+                // Banner disappears the moment we know the starter map
+                // is complete. The server has already written
+                // firstSessionCompletedAt; the next chat-tab mount will
+                // see it via /api/first-session-status anyway, but
+                // flipping locally avoids waiting for a refresh.
+                setFirstSessionPending(false);
+                console.log('[first-session] STARTER_MAP_COMPLETE — banner cleared, CTA on');
               }
               // History gets the FULLY-stripped text regardless of
                // __DEV__ — it's sent back to the model as conversation
@@ -921,10 +985,21 @@ export default function ChatScreen() {
       t.setMessages((prev) => [...prev, { id, role: 'user', text }]);
       scrollToBottom();
       t.historyRef.current.push({ role: 'user', content: text });
+      // Mark the chat session as live so the Map tab icon renders its
+      // subtle "alive" pulse (services/chatActivity). Idempotent — fires
+      // on every send but the service no-ops if the state matches. The
+      // pulse is killed in the session-end / reset paths and on
+      // component unmount below.
+      setChatSessionActive(true);
       runAssistantTurn(turnMode);
     },
     [sending, runAssistantTurn],
   );
+
+  // Unmount cleanup: clear the chat-active pulse so a stranded "true"
+  // doesn't leak past the chat tab's lifetime. Doesn't cancel an
+  // in-flight turn — that's the user's intent if they navigate away.
+  useEffect(() => () => { setChatSessionActive(false); }, []);
 
   // ===== RENDER =====
   // Retry handler — removes the failed assistant bubble (in the active
@@ -937,7 +1012,14 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
-    () => activeMessages.map((m) => <MessageBubble key={m.id} msg={m} onRetry={handleRetry} />),
+    () => activeMessages.map((m) => (
+      <MessageBubble
+        key={m.id}
+        msg={m}
+        onRetry={handleRetry}
+        onViewStarterMap={handleViewStarterMap}
+      />
+    )),
     [activeMessages],
   );
 
@@ -962,6 +1044,21 @@ export default function ChatScreen() {
           the two pills. Selection drives which system prompt the
           server uses on /api/chat. Reset to 'process' on every new
           session. */}
+      {/* First-session ambient banner. Renders only while
+          firstSessionPending===true (i.e. the server's
+          firstSessionCompletedAt is still null). Disappears the
+          moment [STARTER_MAP_COMPLETE] lands in a reply (see onDone
+          in runAssistantTurn) or when the next chat-tab mount polls
+          /api/first-session-status and gets a non-null value back.
+          Visual: thin italic pill in dim amber — ambient, not heavy
+          header. */}
+      {firstSessionPending === true ? (
+        <View style={styles.firstSessionBanner} pointerEvents="none">
+          <Text style={styles.firstSessionBannerText}>
+            Building your starter map
+          </Text>
+        </View>
+      ) : null}
       <ChatModeToggle
         mode={chatMode}
         onChange={setChatMode}
@@ -1117,6 +1214,9 @@ export default function ChatScreen() {
               cancelTTSStream();
               setAudioEnabled(false);
               resetAttentionState();
+              // Session ended — clear the chat-active pulse on the Map
+              // tab icon. Next user send re-arms it.
+              setChatSessionActive(false);
               setSelfMode(false);
               setChatMode('explore');          // new session starts in active map-building mode
               setLivePart(null); setLiveConfidence(null);
@@ -1168,6 +1268,28 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { padding: spacing.md, paddingBottom: spacing.md },
+  // First-session ambient banner. Thin centered strip in dim amber
+  // with italic Cormorant text — feels like an ambient indicator,
+  // not a heavy header. Renders only while firstSessionPending===true;
+  // disappears on [STARTER_MAP_COMPLETE] or when the next mount sees
+  // a non-null firstSessionCompletedAt from the server.
+  firstSessionBanner: {
+    alignSelf: 'center',
+    marginTop: 4,
+    marginBottom: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(230,180,122,0.08)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.25)',
+  },
+  firstSessionBannerText: {
+    color: colors.amber,
+    fontFamily: 'CormorantGaramond_400Regular_Italic',
+    fontSize: 12,
+    letterSpacing: 0.4,
+  },
   // Holds the audio mute toggle on the left and the attention indicator
   // on the right. 48px tall to host both 48x48 tap targets.
   headerStrip: {
