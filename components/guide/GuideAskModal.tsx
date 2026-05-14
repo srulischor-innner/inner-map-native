@@ -640,20 +640,26 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   aiText: {
-    // v1.1.0 typography: serif (Cormorant Garamond) to match the main
-    // Chat tab's bubble text and the Welcome-slide aesthetic. Sized
-    // 17/26 — same as MessageBubble.styles.text so the two surfaces
-    // feel like one chat in two contexts. The amber left-border on
-    // the bubble is the only intentional visual difference.
+    // v1.1.0 typography (round 2): match the main Chat tab's bubble
+    // text — same Cormorant Regular at 20/30 with letterSpacing 0.2,
+    // mirroring Welcome slide cinematic body (GuideSlide.paraCinematic)
+    // so the Ask modal feels like a continuation of the same voice
+    // surface. The amber left-border on the bubble is the only
+    // intentional visual difference from the main chat.
     color: colors.cream,
     fontFamily: fonts.serif,
-    fontSize: 17,
-    lineHeight: 26,
+    fontSize: 20,
+    lineHeight: 30,
+    letterSpacing: 0.2,
   },
   aiTextOpening: {
+    // Opening greeting was already serif; nudge the size up to keep
+    // it visually distinct from the regular AI body while staying
+    // on the same Welcome-slide scale.
     fontFamily: fonts.serif,
-    fontSize: 17,
-    lineHeight: 28,
+    fontSize: 22,
+    lineHeight: 32,
+    letterSpacing: 0.2,
     color: '#E8D8B8',
   },
 
@@ -671,8 +677,9 @@ const styles = StyleSheet.create({
   userText: {
     color: colors.cream,
     fontFamily: fonts.serif,
-    fontSize: 17,
-    lineHeight: 26,
+    fontSize: 20,
+    lineHeight: 30,
+    letterSpacing: 0.2,
   },
 
   // Conversation starters.
@@ -686,11 +693,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(230,180,122,0.08)',
     alignSelf: 'flex-start',
   },
+  // v1.1.0 typography (round 2): starter pills are conversational
+  // content on the Ask chat surface, not UI chrome — switch to the
+  // chat bubble typeface so a starter and the AI's opening message
+  // feel like one continuous voice. Pill geometry unchanged.
   chipText: {
     color: '#F0EDE8',
-    fontFamily: fonts.sans,
-    fontSize: 14,
-    lineHeight: 20,
+    fontFamily: fonts.serif,
+    fontSize: 17,
+    lineHeight: 24,
   },
 
   loadingRow: {

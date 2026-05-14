@@ -225,15 +225,17 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   contribAuthorMine: { color: colors.amberDim },
-  // v1.1.0 typography: dialogue-card body in serif (Cormorant
-  // Garamond), matching the main chat bubble + Ask bubble. Labels
+  // v1.1.0 typography (round 2): dialogue-card body now matches the
+  // main chat bubble exactly — Cormorant Regular 20/30 with
+  // letterSpacing 0.2, mirroring Welcome slide paraCinematic. Labels
   // above (contribAuthor) stay sans — those are UI chrome, not
   // dialogue content.
   contribBody: {
     color: colors.cream,
     fontFamily: fonts.serif,
-    fontSize: 17,
-    lineHeight: 26,
+    fontSize: 20,
+    lineHeight: 30,
+    letterSpacing: 0.2,
   },
 
   // AI message card — distinct from chat bubbles by an amber left
@@ -274,8 +276,9 @@ const styles = StyleSheet.create({
   aiBody: {
     color: colors.cream,
     fontFamily: fonts.serif,
-    fontSize: 17,
-    lineHeight: 26,
+    fontSize: 20,
+    lineHeight: 30,
+    letterSpacing: 0.2,
   },
 
   // Response display — mine vs partner's.

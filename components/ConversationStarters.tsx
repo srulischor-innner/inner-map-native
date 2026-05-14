@@ -62,10 +62,17 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(230,180,122,0.08)',
     alignSelf: 'flex-start',
   },
+  // v1.1.0 typography (round 2): starter pills are conversational
+  // content on a chat surface, not UI affordances — they sit
+  // alongside the AI's opening bubble and should read in the same
+  // typeface. Cormorant Garamond at the same parameters as the
+  // chat bubble text below so a starter and an AI bubble feel like
+  // continuous voice. Pill geometry (border, padding, tap target)
+  // unchanged.
   chipText: {
     color: '#F0EDE8',
-    fontFamily: fonts.sans,
-    fontSize: 14,
-    lineHeight: 20,
+    fontFamily: fonts.serif,
+    fontSize: 17,
+    lineHeight: 24,
   },
 });
