@@ -1,9 +1,10 @@
-// Chat tab mode toggle — Process vs Explore.
+// Chat tab mode toggle — Explore vs Process.
 //
 // Two separate pill-shaped buttons, one on each side of the bar.
-// Process on the left, Explore on the right. Each pill carries a small
-// circular i button on the right side of its label that opens a per-
-// mode info modal. Tapping the pill body switches modes (no-op when
+// Explore on the left (the active default since the map-visibility
+// PR), Process on the right. Each pill carries a small circular
+// i button on the right side of its label that opens a per-mode
+// info modal. Tapping the pill body switches modes (no-op when
 // already active). Active pill: gold border, gold text, subtle dark
 // gold background. Inactive pill: dim border + dim text.
 //
@@ -54,10 +55,10 @@ export function ChatModeToggle({ mode, onChange, centerSlot }: Props) {
     <>
       <View style={styles.bar}>
         <ModePill
-          label="Process"
-          active={mode === 'process'}
-          onPress={() => pick('process')}
-          onInfoPress={() => openInfo('process')}
+          label="Explore"
+          active={mode === 'explore'}
+          onPress={() => pick('explore')}
+          onInfoPress={() => openInfo('explore')}
         />
         {/* Center slot — flex:1 wrapper centers whatever the parent
             passes in, so the indicator floats midway between the
@@ -68,10 +69,10 @@ export function ChatModeToggle({ mode, onChange, centerSlot }: Props) {
           {centerSlot}
         </View>
         <ModePill
-          label="Explore"
-          active={mode === 'explore'}
-          onPress={() => pick('explore')}
-          onInfoPress={() => openInfo('explore')}
+          label="Process"
+          active={mode === 'process'}
+          onPress={() => pick('process')}
+          onInfoPress={() => openInfo('process')}
         />
       </View>
 

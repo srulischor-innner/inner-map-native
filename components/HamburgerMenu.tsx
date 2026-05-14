@@ -110,10 +110,24 @@ export function HamburgerMenu({
       <Pressable style={styles.backdrop} onPress={onClose} />
       <SafeAreaView style={styles.drawer} edges={['top', 'bottom']}>
         <View style={styles.topRow}>
-          <Text style={styles.heyName}>
+          {/* Full greeting: prior version was truncating to "Hey Y" because
+              the parent's space-between layout gave heyName whatever space
+              remained after the close button. flex:1 + numberOfLines=1 +
+              flexShrink lets the text take the full available width and
+              degrade with ellipsis only on absurdly long names. */}
+          <Text style={styles.heyName} numberOfLines={1} ellipsizeMode="tail">
             {name ? `Hey ${name}` : 'Menu'}
           </Text>
-          <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Close menu">
+          {/* X close — moved 6px down from the top edge via the
+              styles.closeBtn paddingTop so a thumb landing near the
+              status bar / notch doesn't fight the safe-area inset.
+              hitSlop expanded from 10 → 16 for the same reason. */}
+          <Pressable
+            onPress={onClose}
+            hitSlop={16}
+            accessibilityLabel="Close menu"
+            style={styles.closeBtn}
+          >
             <Ionicons name="close" size={22} color={colors.creamDim} />
           </Pressable>
         </View>
@@ -394,16 +408,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingTop: spacing.sm,
     paddingBottom: spacing.lg,
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
     marginBottom: spacing.md,
+    gap: spacing.md,
   },
   heyName: {
     color: colors.amber,
     fontSize: 20,
     fontWeight: '500',
     letterSpacing: 0.3,
+    // flex:1 so the greeting takes the full row width minus the close
+    // button. Without this, space-between let the X push the greeting
+    // text to a single-character-wide slot on long names.
+    flex: 1,
+    flexShrink: 1,
+  },
+  closeBtn: {
+    // Nudge the X down a few pixels from the safe-area top so a thumb
+    // tap doesn't fight the notch / status-bar overlap. The Pressable
+    // itself is 44x44 (the Ionicons "close" renders centered) so the
+    // visible icon sits slightly below the heyName's vertical center
+    // — matches Apple's standard for top-bar close affordances.
+    width: 44,
+    height: 44,
+    paddingTop: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   sectionLabel: {

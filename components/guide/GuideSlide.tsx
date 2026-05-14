@@ -219,23 +219,31 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
     marginBottom: spacing.lg,
   },
+  // v1.1.0 typography: Guide-tab slide bodies use Cormorant Garamond
+  // (serif) so reference-material reading lands in the same typeface
+  // as chat bubbles, the Ask modal, and the closing/onboarding
+  // cinematic slides. Sizes are bumped up slightly (15→17, 18→20)
+  // and line-height tightened, because Cormorant reads denser per
+  // character than DM Sans at the same point size — these ratios
+  // preserve the prior visual rhythm without making the slides look
+  // "smaller" after the swap.
   body: { width: '100%', maxWidth: 560 },
   para: {
     color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 15,
-    lineHeight: 24,
+    fontFamily: fonts.serif,
+    fontSize: 17,
+    lineHeight: 26,
     marginBottom: spacing.sm,
   },
-  // Cinematic body — ~20% larger and stepped up to weight 600 (DMSans
-  // SemiBold) so the words land with more presence on first launch.
-  // Used by the onboarding WelcomeSlides only; Guide-tab Welcome
-  // section keeps `para` for reference-material rhythm.
+  // Cinematic body — same Cormorant family as `para` so the
+  // typography is consistent everywhere. Larger size + letter-
+  // spacing carry the "presence" the previous sansBold weight used
+  // to provide on first-launch onboarding.
   paraCinematic: {
     color: colors.cream,
-    fontFamily: fonts.sansBold,
-    fontSize: 18,
-    lineHeight: 28,
+    fontFamily: fonts.serif,
+    fontSize: 20,
+    lineHeight: 30,
     marginBottom: spacing.md,
     letterSpacing: 0.2,
   },

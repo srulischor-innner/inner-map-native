@@ -16,14 +16,17 @@
 //   active                   → both intros done → three sub-views
 //                              (chat / shared / map)
 //
-// PR B: the pre-pairing informational carousel was removed entirely.
-// The first Partner-tab visit now goes straight to NoRelationshipView,
-// which has its own brief lede setting expectations for the upcoming
-// consent moment. The floating ℹ button still re-opens the consent
-// content, but now in review mode of the new ConsentDocument single
-// scrollable page (not the prior 6-slide carousel).
+// v1.1.0 TestFlight polish: the pre-pairing informational carousel
+// is BACK (PR B removed it, this round restores it). First-time
+// visitors see a 6-slide cinematic intro before the NoRelationshipView
+// connect screen. We track "have they seen it yet" in AsyncStorage
+// under TAB_INTRO_SEEN_KEY; once flipped true it never plays again.
+// The floating ℹ button on the tab also opens the carousel in REVIEW
+// mode (was: ConsentDocument review mode). The single-page
+// ConsentDocument now serves the commitment moment only (route file
+// app/relationships/intro/[id].tsx).
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -37,11 +40,17 @@ import {
   Platform,
   Modal,
   KeyboardAvoidingView,
+  FlatList,
+  useWindowDimensions,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { colors, fonts, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
@@ -49,6 +58,13 @@ import { RelationshipChat } from '../../components/relationships/RelationshipCha
 import { SharedDialogueView } from '../../components/relationships/SharedDialogueView';
 import { RelationshipMap } from '../../components/relationships/RelationshipMap';
 import { ConsentDocument } from '../../components/relationships/ConsentDocument';
+import { RelationshipIntroCarousel } from '../../components/relationships/RelationshipIntroCarousel';
+
+// AsyncStorage key for the one-time informational carousel. Set on
+// first GET-STARTED tap; once present, the carousel never plays
+// again in informational mode. Review mode (ℹ button) is always
+// reachable regardless.
+const TAB_INTRO_SEEN_KEY = '@inner_map/partner_tab_intro_seen_v1';
 
 // Safe alphabet for the 6-char invite codes (PR B). Mirrors the server
 // constant in prompts/relationships logic (server.js INVITE_CODE_ALPHABET).
@@ -122,20 +138,41 @@ export default function RelationshipsScreen() {
   const [pasteCode, setPasteCode] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Review-mode consent re-open — driven by the floating ℹ︎ button
-  // in the top-right corner. Lets the user revisit the consent
-  // document any time without disturbing whichever sub-state they
-  // were on. On dismiss (GOT IT button), state flips back and the
-  // underlying screen re-renders unchanged.
-  //
-  // PR B: this used to open the 6-slide RelationshipIntroCarousel.
-  // Now opens the new single-page ConsentDocument component in its
-  // 'review' mode.
+  // Review-mode re-open — driven by the floating ℹ︎ button in the
+  // top-right corner. Lets the user revisit the framing any time
+  // without disturbing whichever sub-state they were on. On dismiss
+  // (GOT IT button or the close X), state flips back and the
+  // underlying screen re-renders unchanged. v1.1.0 polish: this now
+  // opens the 6-slide RelationshipIntroCarousel (review mode), not
+  // the ConsentDocument — the carousel is the canonical content
+  // surface; ConsentDocument is reserved for the commitment moment.
   const [reviewOpen, setReviewOpen] = useState(false);
   const closeReview = useCallback(() => setReviewOpen(false), []);
   const openReview = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
     setReviewOpen(true);
+  }, []);
+
+  // First-visit informational carousel. Tri-state: undefined until
+  // the AsyncStorage read resolves (so we can avoid a flash of the
+  // connect screen for first-time users), then true (already seen,
+  // skip) or false (play it). After the user taps GET STARTED on
+  // the last slide we set true + persist to storage.
+  const [introSeen, setIntroSeen] = useState<boolean | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(TAB_INTRO_SEEN_KEY)
+      .then((v) => { if (!cancelled) setIntroSeen(v === '1'); })
+      .catch(() => { if (!cancelled) setIntroSeen(true); });
+    return () => { cancelled = true; };
+  }, []);
+  const completeIntro = useCallback(() => {
+    setIntroSeen(true);
+    AsyncStorage.setItem(TAB_INTRO_SEEN_KEY, '1').catch(() => {
+      // Failure is non-fatal — the flag will retry on the next
+      // launch's completion. Worst case the user sees the carousel
+      // again, which is benign for an informational surface.
+    });
   }, []);
 
   // Navigate to the per-partner intro carousel (Phase 5).
@@ -247,24 +284,36 @@ export default function RelationshipsScreen() {
 
   // ---- Render branches ----
 
-  // PR B: the pre-pairing informational carousel is gone. The first
-  // Partner-tab visit goes straight to NoRelationshipView, which
-  // carries its own brief lede setting expectations for the consent
-  // moment that follows pairing.
-
   // Review-mode short-circuit — the floating ℹ button below opens
-  // the consent document any time. While the document is open we
-  // replace the entire tab content; the GOT IT button calls
-  // closeReview() which flips back to whatever sub-state was
-  // underneath.
+  // the 6-slide carousel in review mode any time. While the carousel
+  // is up we replace the entire tab content; the GOT IT button (or
+  // the close X in the header) flips reviewOpen back to false and
+  // returns the user to whatever sub-state was underneath.
   if (reviewOpen) {
     return (
       <SafeAreaView style={styles.root} edges={[]}>
-        <ConsentDocument
+        <RelationshipIntroCarousel
           mode="review"
-          onDismiss={closeReview}
-          showBackButton
-          onBack={closeReview}
+          onComplete={closeReview}
+          showCloseButton
+          onClose={closeReview}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // First-visit informational carousel. Plays exactly once per
+  // device, before the user ever sees the connect screen. After
+  // GET STARTED, completeIntro() persists the seen-flag + flips
+  // local state, falling through to the normal phase render below.
+  // We wait for the storage read to resolve (introSeen === undefined)
+  // to avoid a flash of the connect screen for first-time users.
+  if (introSeen === false) {
+    return (
+      <SafeAreaView style={styles.root} edges={[]}>
+        <RelationshipIntroCarousel
+          mode="informational"
+          onComplete={completeIntro}
         />
       </SafeAreaView>
     );
@@ -285,7 +334,7 @@ export default function RelationshipsScreen() {
       >
         <Ionicons name="information-circle-outline" size={22} color={colors.amber} />
       </Pressable>
-      {phase.kind === 'loading' ? (
+      {phase.kind === 'loading' || introSeen === undefined ? (
         <CenteredLoader />
       ) : phase.kind === 'none' ? (
         <NoRelationshipView
@@ -648,7 +697,23 @@ function PendingIntrosView({
 }
 
 // =============================================================================
-// ACTIVE — three sub-views (chat / shared / map).
+// ACTIVE — three sub-views (chat / shared / map), wrapped in a
+// horizontal pager so users can swipe between them.
+//
+// v1.1.0 TestFlight polish: the prior implementation rendered all
+// three sub-views continuously and hid the inactive ones via
+// display:'none'. The segments at the top were the only way to
+// switch, which felt jarring — the user reported that the map
+// view's two-triangle visual needed "smooth pager-like transitions."
+// Wrapping the three sub-views in a horizontal paging FlatList
+// gives them that: horizontal swipes page between sub-views with
+// proper snap physics; vertical pans still belong to whichever
+// inner ScrollView the user starts on (RN's gesture system routes
+// the first pan based on direction so the two axes don't fight).
+//
+// All three pages stay mounted (windowSize=3, removeClippedSubviews
+// =false) so each sub-view's internal state (chat scroll position,
+// shared thread cache, map data) is preserved across swipes.
 //
 // PR C: the prior shared → chat hand-off ("Tell me more about this"
 // prompt chip from the shared feed pre-filling the chat input) is
@@ -658,20 +723,71 @@ function PendingIntrosView({
 // is no longer wired here.
 // =============================================================================
 type SubView = 'chat' | 'shared' | 'map';
+const SUB_VIEWS: SubView[] = ['chat', 'shared', 'map'];
 
 function ActiveView({ rel }: { rel: Relationship }) {
-  const [view, setView] = useState<SubView>('chat');
+  const { width } = useWindowDimensions();
+  const [index, setIndex] = useState(0);
+  const listRef = useRef<FlatList<SubView>>(null);
+
+  const view: SubView = SUB_VIEWS[index];
+
+  // Segment tap → programmatically page to the tapped view. Triggers
+  // the same snap animation a swipe would, so the two input paths
+  // look identical to the user.
+  const onSegmentTap = useCallback((v: SubView) => {
+    const i = SUB_VIEWS.indexOf(v);
+    if (i === index) return;
+    Haptics.selectionAsync().catch(() => {});
+    listRef.current?.scrollToIndex({ index: i, animated: true });
+    // Index will be confirmed by onMomentumScrollEnd; setting it now
+    // makes the active-segment indicator update immediately rather
+    // than waiting for the scroll animation to land.
+    setIndex(i);
+  }, [index]);
+
+  // Swipe end → sync the active-segment indicator to whichever page
+  // the user landed on. Round-to-nearest in case decelerationRate
+  // leaves us a sub-pixel off the snap boundary.
+  const onMomentumScrollEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const i = Math.round(e.nativeEvent.contentOffset.x / width);
+      if (i !== index) {
+        Haptics.selectionAsync().catch(() => {});
+        setIndex(i);
+      }
+    },
+    [width, index],
+  );
+
+  const renderItem = useCallback(({ item }: { item: SubView }) => (
+    <View style={{ width }}>
+      {item === 'chat' ? (
+        <RelationshipChat
+          relationshipId={rel.id}
+          partnerName={rel.partnerName}
+        />
+      ) : item === 'shared' ? (
+        <SharedDialogueView
+          relationshipId={rel.id}
+          partnerName={rel.partnerName}
+        />
+      ) : (
+        <RelationshipMap
+          relationshipId={rel.id}
+          partnerName={rel.partnerName}
+        />
+      )}
+    </View>
+  ), [width, rel.id, rel.partnerName]);
 
   return (
     <View style={styles.activeRoot}>
       <View style={styles.segments}>
-        {(['chat', 'shared', 'map'] as SubView[]).map((v) => (
+        {SUB_VIEWS.map((v) => (
           <Pressable
             key={v}
-            onPress={() => {
-              Haptics.selectionAsync().catch(() => {});
-              setView(v);
-            }}
+            onPress={() => onSegmentTap(v)}
             style={[styles.segment, view === v && styles.segmentActive]}
             accessibilityLabel={`Switch to ${v}`}
           >
@@ -681,28 +797,28 @@ function ActiveView({ rel }: { rel: Relationship }) {
           </Pressable>
         ))}
       </View>
-      {/* All three sub-views mount continuously and just hide via
-          display:'none' — keeps their state intact (chat scroll
-          position, shared thread cache) when the user toggles
-          between them. */}
-      <View style={[styles.subViewRoot, view !== 'chat' && styles.subViewHidden]}>
-        <RelationshipChat
-          relationshipId={rel.id}
-          partnerName={rel.partnerName}
-        />
-      </View>
-      <View style={[styles.subViewRoot, view !== 'shared' && styles.subViewHidden]}>
-        <SharedDialogueView
-          relationshipId={rel.id}
-          partnerName={rel.partnerName}
-        />
-      </View>
-      <View style={[styles.subViewRoot, view !== 'map' && styles.subViewHidden]}>
-        <RelationshipMap
-          relationshipId={rel.id}
-          partnerName={rel.partnerName}
-        />
-      </View>
+      <FlatList
+        ref={listRef}
+        data={SUB_VIEWS}
+        keyExtractor={(v) => v}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        // Pre-compute layout so scrollToIndex from segment taps lands
+        // on the exact pixel boundary every time — same pattern the
+        // GuideSlides + RelationshipIntroCarousel use.
+        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+        // Keep all three pages mounted so internal scroll state /
+        // network caches survive the swipe between them.
+        windowSize={3}
+        initialNumToRender={3}
+        maxToRenderPerBatch={3}
+        removeClippedSubviews={false}
+        decelerationRate="fast"
+        renderItem={renderItem}
+        style={styles.pager}
+      />
     </View>
   );
 }
@@ -921,12 +1037,15 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   segmentTextActive: { color: colors.amber },
-  // subViewRoot — fills the remaining tab area beneath the segmented
-  // control. flex:1 + display='none' on the inactive view keeps both
-  // chat + shared continuously mounted (state preserved) without
-  // re-creating their tree on every toggle.
-  subViewRoot: { flex: 1 },
-  subViewHidden: { display: 'none' },
+  // Horizontal pager wrapping the three sub-views. flex:1 so the
+  // FlatList itself fills the area below the segmented control;
+  // each rendered page is sized to the window width inline (see
+  // ActiveView.renderItem). The three sub-views' own ScrollViews
+  // continue to handle vertical scrolling — RN's gesture system
+  // hands the first pan to whichever axis the user starts on, so
+  // horizontal swipes page the FlatList and vertical drags scroll
+  // the inner view without contention.
+  pager: { flex: 1 },
   stubBody: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   stubHeadline: {
     color: colors.cream,

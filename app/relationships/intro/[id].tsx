@@ -1,18 +1,20 @@
 // Relationship intro / commitment route.
 //
-// Mounts the ConsentDocument in commitment mode for the relationshipId
-// in the URL segment. ConsentDocument owns the accept API call —
-// tapping "I UNDERSTAND AND ACCEPT" inside it fires
+// Mounts the ConsentDocument for the relationshipId in the URL
+// segment. ConsentDocument owns the accept API call — tapping
+// "I UNDERSTAND AND ACCEPT" inside it fires
 // api.acceptRelationshipIntro(id) and routes back to /relationships,
 // where the state machine refreshes into pending-intros (waiting on
 // the other partner) or active.
 //
-// PR B history: this used to mount RelationshipIntroCarousel in
+// History note: this used to mount RelationshipIntroCarousel in
 // mode='commitment' — a 6-slide pager that duplicated the same body
 // text the user had already swiped through in informational mode
-// before pairing. The duplication was removed in PR B; the
-// commitment screen is now a single scrollable consent document.
-// See ConsentDocument for the shared body text.
+// before pairing. PR B replaced that with a single scrollable
+// consent document. The v1.1.0 TestFlight polish kept the
+// commitment surface here as a document and brought the carousel
+// back ONLY for informational + review surfaces on the Partner
+// tab. See ConsentDocument for the shared body text.
 
 import React, { useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -31,7 +33,6 @@ export default function RelationshipIntroScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top', 'bottom']}>
       <ConsentDocument
-        mode="commitment"
         relationshipId={relationshipId}
         showBackButton
         onBack={onBack}

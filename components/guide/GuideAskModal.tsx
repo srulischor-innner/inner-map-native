@@ -18,7 +18,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, ScrollView, StyleSheet,
-  Platform, KeyboardAvoidingView, Dimensions, Alert, Keyboard,
+  Platform, Dimensions, Alert, Keyboard,
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
@@ -101,6 +101,23 @@ export function GuideAskModal({ visible, onClose }: Props) {
   // Sheet translateY — driven by gesture and snap target.
   const translateY = useSharedValue(SNAP_HALF);
 
+  // Manual keyboard-height tracking. We bypass KeyboardAvoidingView
+  // because KAV's frame measurement is unreliable inside a transparent
+  // Modal that hosts an absolute-positioned, animated sheet — the iOS
+  // implementation reads the sheet's static layout frame (not its
+  // animated transform), and the keyboardVerticalOffset/`padding`
+  // combo lands the input either too high (above the keyboard with a
+  // gap) or too low (still partially covered). Instead we read the
+  // keyboard height straight from the Keyboard event payload and
+  // apply it as bottom padding on the chat wrapper — that lifts the
+  // input bar by exactly the keyboard height, every time, on every
+  // device. iOS uses keyboardWillShow/Hide so the lift animates in
+  // sync with the keyboard's own animation; Android only emits *Did*
+  // events, which fire after the keyboard finishes animating — still
+  // smooth enough in practice because the system adjustResize would
+  // otherwise leave the bar covered.
+  const [kbHeight, setKbHeight] = useState(0);
+
   // When the modal opens fresh (visible flips false→true), reset to half
   // and wipe the conversation. While the user just collapses the sheet
   // the modal stays mounted (visible stays true), so this effect doesn't
@@ -122,35 +139,24 @@ export function GuideAskModal({ visible, onClose }: Props) {
   // Cleanup timers on unmount.
   useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current); }, []);
 
-  // Keyboard-driven auto-snap to FULL.
-  //
-  // The sheet sits inside a transparent Modal at one of three snap
-  // positions. The KeyboardAvoidingView below adds bottom padding
-  // equal to the keyboard height when it appears — but at SNAP_HALF
-  // (default) the sheet is only ~50% of the screen, so KAV padding +
-  // keyboard end up pushing the input off the top of the sheet
-  // (or hiding it behind the header). KAV inside a partial-screen
-  // Modal is a known measurement edge case on iOS that no amount
-  // of keyboardVerticalOffset tweaking fully fixes.
-  //
-  // Pragmatic fix: when the keyboard appears, expand the sheet to
-  // SNAP_FULL so the KAV has the full screen to work with. On dismiss
-  // we leave the sheet where it is — the user can drag back down
-  // manually if they want a partial view again. iOS fires
-  // keyboardWillShow before the keyboard animates; Android only emits
-  // keyboardDidShow. We attach the right one per-platform so the
-  // sheet expands in sync with the keyboard's own animation.
+  // Keyboard show/hide listeners — track keyboard height + snap sheet
+  // to FULL so there's room above the keyboard for the input bar to
+  // rise. We need both: kbHeight drives the manual lift (paddingBottom
+  // on the chat wrapper), and SNAP_FULL guarantees the sheet itself is
+  // tall enough that the input bar isn't pushed above the sheet's top.
   useEffect(() => {
     if (!visible) return;
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const sub = Keyboard.addListener(showEvt, () => {
-      // Spring the sheet to full so the input sits with full
-      // breathing room above the keyboard. Idempotent — if the
-      // user already pulled the sheet to full, this is a no-op
-      // because translateY is already at SNAP_FULL.
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      const h = e.endCoordinates?.height ?? 0;
+      setKbHeight(h);
       translateY.value = withSpring(SNAP_FULL, SPRING);
     });
-    return () => sub.remove();
+    const hideSub = Keyboard.addListener(hideEvt, () => {
+      setKbHeight(0);
+    });
+    return () => { showSub.remove(); hideSub.remove(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
@@ -425,22 +431,17 @@ export function GuideAskModal({ visible, onClose }: Props) {
             </Pressable>
           </View>
 
-          {/* Chat surface + input bar — KAV pushes the input above the
-              keyboard within the sheet bounds. Paired with the
-              keyboard-show effect above that snaps the sheet to FULL
-              so the KAV has the full screen height to work with. With
-              the sheet at SNAP_FULL, the KAV's bottom sits at the
-              screen bottom and offset=0 produces a padding equal to
-              the keyboard height — input lands flush above the
-              keyboard. The previous keyboardVerticalOffset={60} was
-              tuned for a sticky header that no longer applies once
-              the sheet is full-screen, and at partial-screen it was
-              fighting the modal's frame-measurement quirks. */}
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={0}
-            style={styles.flex}
-          >
+          {/* Chat surface + input bar — paddingBottom: kbHeight lifts
+              the input bar by exactly the keyboard height when the
+              keyboard appears. Paired with the keyboard-show listener
+              above that snaps the sheet to SNAP_FULL so there's
+              vertical room for the bar to rise. Replaces the previous
+              KeyboardAvoidingView, which was unreliable inside a
+              transparent Modal hosting an absolute-positioned animated
+              sheet (KAV measures static layout frames, not animated
+              transforms, so its keyboard-avoidance padding landed
+              wrong on iOS even with keyboardVerticalOffset={0}). */}
+          <View style={[styles.flex, { paddingBottom: kbHeight }]}>
             <ScrollView
               ref={scrollRef}
               style={styles.flex}
@@ -532,7 +533,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
                 </Pressable>
               )}
             </View>
-          </KeyboardAvoidingView>
+          </View>
         </Animated.View>
       </GestureHandlerRootView>
     </Modal>
@@ -639,14 +640,15 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   aiText: {
-    // Identical to the regular Chat tab's AI bubble text style
-    // (components/MessageBubble.tsx) so the two surfaces feel like the
-    // same chat in two contexts. The only intentional visual
-    // difference is the amber left-border on the bubble.
+    // v1.1.0 typography: serif (Cormorant Garamond) to match the main
+    // Chat tab's bubble text and the Welcome-slide aesthetic. Sized
+    // 17/26 — same as MessageBubble.styles.text so the two surfaces
+    // feel like one chat in two contexts. The amber left-border on
+    // the bubble is the only intentional visual difference.
     color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 15,
-    lineHeight: 22,
+    fontFamily: fonts.serif,
+    fontSize: 17,
+    lineHeight: 26,
   },
   aiTextOpening: {
     fontFamily: fonts.serif,
@@ -668,9 +670,9 @@ const styles = StyleSheet.create({
   },
   userText: {
     color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 15,
-    lineHeight: 22,
+    fontFamily: fonts.serif,
+    fontSize: 17,
+    lineHeight: 26,
   },
 
   // Conversation starters.

@@ -1,32 +1,27 @@
-// Consent document — single-page replacement for the 6-slide
-// RelationshipIntroCarousel (deleted in PR B).
+// Consent document — single-page commitment moment for the Partner
+// tab. Used ONLY for the gated "I UNDERSTAND AND ACCEPT" step after
+// both partners are bound (route: app/relationships/intro/[id].tsx).
+//
+// The pre-pairing informational tour and the post-pairing review
+// loop both use the 6-slide RelationshipIntroCarousel — those are
+// content surfaces, not commitment surfaces, and the carousel's
+// paced reading + cinematic visuals serve them better. The
+// commitment moment stays a single document because crossing an
+// explicit consent threshold reads better as one continuous page
+// than six discrete slides.
 //
 // Renders as a scrollable column of section blocks (header + body)
-// with a single primary action button anchored at the bottom. Two
-// modes:
-//
-//   commitment — used by app/relationships/intro/[id].tsx. Primary
-//                button reads "I UNDERSTAND AND ACCEPT" and tapping
-//                it fires api.acceptRelationshipIntro(relationshipId)
-//                then navigates back to /relationships (where the
-//                state machine refreshes into pending-intros if the
-//                partner hasn't finished theirs, or active if they
-//                have). Same trigger logic as the old commitment
-//                carousel — the only thing that changed is the
-//                view layer.
-//
-//   review     — used by the floating ℹ button on the Partner tab.
-//                Primary button reads "GOT IT". No API call. Tapping
-//                dismisses back to the underlying sub-view.
+// with a primary "I UNDERSTAND AND ACCEPT" button anchored at the
+// bottom. Tapping it fires api.acceptRelationshipIntro(relationshipId)
+// then navigates back to /relationships (state machine refreshes
+// into pending-intros if the partner hasn't finished theirs, or
+// active if they have).
 //
 // Visual style intentionally matches the first-launch PrivacyNotice
 // screen (in app/onboarding.tsx) — same calm, readable, low-
 // decoration aesthetic. Section headers in caps + amber, body in
 // cream sans, button anchored at the bottom in the existing pill
 // style.
-//
-// Body content is single source of truth here. Both modes show the
-// exact same text — only the bottom button and tap behavior differ.
 
 import React, { useCallback, useState } from 'react';
 import {
@@ -42,9 +37,12 @@ import { api } from '../../services/api';
 
 type Section = { header: string; body: string };
 
-// Section content — verbatim from the PR B spec. Keep the array
-// shape so future sections can be added/reordered without touching
-// the render loop below.
+// Section content — verbatim from the v1.1.0 TestFlight-polish spec.
+// MAP VIEW and WHAT THE AI SEES AND DOES were rewritten in this pass
+// to match the carousel slides (the carousel is the canonical content
+// surface; this document mirrors it for the commitment moment). Keep
+// the array shape so future sections can be added/reordered without
+// touching the render loop below.
 const SECTIONS: Section[] = [
   {
     header: 'ENTERING THIS TOGETHER',
@@ -64,21 +62,25 @@ const SECTIONS: Section[] = [
   {
     header: 'THE MAP VIEW',
     body:
-      'You\'ll see a Map view showing both of your individual maps side by side — ' +
-      'a structural view of each person\'s parts and patterns, so you can see ' +
-      'how your dynamics interact. Each partner controls what shows up on their ' +
-      'own map.',
+      'You\'ll see a Map view showing both of your individual maps side by ' +
+      'side — a structural view of each person\'s parts and patterns, so you ' +
+      'can see how your dynamics interact. Once you and your partner have both ' +
+      'completed this consent, your maps become visible to each other in the ' +
+      'shared Map view.',
   },
   {
-    header: 'WHAT THE AI SEES',
+    header: 'WHAT THE AI SEES AND DOES',
     body:
       'To help you both, the AI sees both of your private conversations and ' +
-      'your individual maps. It uses that to surface insights about the ' +
-      'relationship. But it never tells either of you what the other has said ' +
-      '— and nothing crosses to the shared space without your consent.\n\n' +
-      'For insights that involve only you, you decide what to share. For ' +
-      'insights that involve both of you, both partners have to confirm before ' +
-      'anything appears in the shared space.',
+      'your individual maps. It uses that as background context — but it ' +
+      'never tells either of you what the other has said in private.\n\n' +
+      'In your private chats, the AI might notice something significant emerging ' +
+      'for you and suggest sharing it with your partner. The decision is always ' +
+      'yours.\n\n' +
+      'In the shared space, the AI engages freely with what you\'ve both ' +
+      'chosen to share. As your contributions accumulate, it may notice patterns ' +
+      'connecting them and bring them into the conversation. You can respond, ' +
+      'push back, or take it deeper using the response options it offers.',
   },
   {
     header: "IF SOMETHING DOESN'T FEEL SAFE",
@@ -96,8 +98,7 @@ const SECTIONS: Section[] = [
   },
 ];
 
-type CommitmentProps = {
-  mode: 'commitment';
+type Props = {
   /** Relationship id passed through to api.acceptRelationshipIntro on
    *  primary-button tap. After a successful accept the component
    *  navigates back to /relationships, where the state machine
@@ -110,49 +111,26 @@ type CommitmentProps = {
   onBack?: () => void;
 };
 
-type ReviewProps = {
-  mode: 'review';
-  /** No API call. Tapping the bottom button calls onDismiss. The
-   *  parent (Partner tab's review-mode short-circuit) flips its
-   *  reviewOpen state back to false. */
-  onDismiss: () => void;
-  showBackButton?: boolean;
-  onBack?: () => void;
-};
-
-type Props = CommitmentProps | ReviewProps;
-
 export function ConsentDocument(props: Props) {
   const router = useRouter();
-  // commitment-mode in-flight state for the accept API call. The
-  // review-mode path never sets this — its button is synchronous.
   const [accepting, setAccepting] = useState(false);
-
-  const buttonLabel =
-    props.mode === 'commitment' ? 'I UNDERSTAND AND ACCEPT' : 'GOT IT';
-  const a11yLabel =
-    props.mode === 'commitment' ? 'I understand and accept' : 'Got it';
 
   const handlePrimary = useCallback(async () => {
     if (accepting) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    if (props.mode === 'commitment') {
-      setAccepting(true);
-      const result = await api.acceptRelationshipIntro(props.relationshipId);
-      setAccepting(false);
-      if ('error' in result) {
-        Alert.alert(
-          'Could not save your acceptance',
-          result.message || 'Please try again in a moment.',
-        );
-        return;
-      }
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      router.replace('/relationships');
-    } else {
-      props.onDismiss();
+    setAccepting(true);
+    const result = await api.acceptRelationshipIntro(props.relationshipId);
+    setAccepting(false);
+    if ('error' in result) {
+      Alert.alert(
+        'Could not save your acceptance',
+        result.message || 'Please try again in a moment.',
+      );
+      return;
     }
-  }, [props, router, accepting]);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    router.replace('/relationships');
+  }, [props.relationshipId, router, accepting]);
 
   return (
     <View style={styles.root}>
@@ -192,12 +170,12 @@ export function ConsentDocument(props: Props) {
           onPress={handlePrimary}
           disabled={accepting}
           style={[styles.btn, accepting && styles.btnDim]}
-          accessibilityLabel={a11yLabel}
+          accessibilityLabel="I understand and accept"
         >
           {accepting ? (
             <ActivityIndicator color={colors.background} />
           ) : (
-            <Text style={styles.btnText}>{buttonLabel}</Text>
+            <Text style={styles.btnText}>I UNDERSTAND AND ACCEPT</Text>
           )}
         </Pressable>
       </View>

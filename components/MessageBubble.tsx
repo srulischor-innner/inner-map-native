@@ -565,11 +565,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderBottomRightRadius: 2,
   },
+  // v1.1.0 typography: chat bubbles use Cormorant Garamond (serif) to
+  // match the Welcome-slide aesthetic across the app. Slightly larger
+  // size + tighter line-height than the sans variant — Cormorant reads
+  // denser per character, so 17/26 matches the optical weight of the
+  // prior 15/22 sans block. Caret color/size unchanged; it sits on
+  // the same baseline so the inline render is visually identical to
+  // the pre-serif version aside from the typeface itself.
   text: {
     color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 15,
-    lineHeight: 22,
+    fontFamily: fonts.serif,
+    fontSize: 17,
+    lineHeight: 26,
   },
   caret: { color: colors.amber, fontSize: 14 },
   // Retry pill for failed assistant messages — small inline affordance
