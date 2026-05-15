@@ -597,23 +597,30 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderBottomRightRadius: 2,
   },
-  // v1.1.0 typography (round 2): match chat bubbles to the Welcome-
-  // slide cinematic body (GuideSlide.paraCinematic) on every axis —
-  // fontFamily / fontSize / lineHeight / letterSpacing — so the
-  // strokes feel the same weight everywhere we use Cormorant. The
-  // earlier round only matched the family (both CormorantGaramond_-
-  // 400Regular); chat at 17pt visibly rendered thinner strokes than
-  // Welcome at 20pt because the glyphs were ~18% smaller. Now they
-  // share the exact same scale + tracking, so a chat bubble feels
-  // like the same voice as the Welcome onboarding text it sits
-  // alongside. Caret color/size unchanged — it inherits the body
-  // baseline.
+  // v1.1.0 typography (round 3): the round-2 bump to 20/30 ls 0.2
+  // (matching Welcome paraCinematic) made single chat messages
+  // dominate the screen. Chat needs more conversational density than
+  // display-style onboarding text. New target: same heavier-stroke
+  // feel the user asked for in round 2, but at chat-bubble scale.
+  //
+  // The round-3 spec asked for CormorantGaramond_500Medium at 17/26
+  // ls 0.15. The Medium variant ttf is NOT in assets/fonts/ (only
+  // 400Regular, 400Italic, and 600SemiBold are loaded in
+  // app/_layout.tsx). The next-best already-loaded variant for
+  // matching Welcome's perceived stroke weight at smaller size is
+  // 600SemiBold (CormorantGaramond_600SemiBold = fonts.serifBold).
+  // SemiBold is one step heavier than Medium would have been, so we
+  // pair it with a slightly smaller size (17/26) and 0.15 letter-
+  // spacing to keep the optical density close to Welcome's
+  // 400Regular@20pt without overshooting. If Medium is added to the
+  // bundle later, this can swap to a true 500 weight without other
+  // changes.
   text: {
     color: colors.cream,
-    fontFamily: fonts.serif,
-    fontSize: 20,
-    lineHeight: 30,
-    letterSpacing: 0.2,
+    fontFamily: fonts.serifBold,
+    fontSize: 17,
+    lineHeight: 26,
+    letterSpacing: 0.15,
   },
   caret: { color: colors.amber, fontSize: 14 },
   // Retry pill for failed assistant messages — small inline affordance

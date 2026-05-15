@@ -225,17 +225,18 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   contribAuthorMine: { color: colors.amberDim },
-  // v1.1.0 typography (round 2): dialogue-card body now matches the
-  // main chat bubble exactly — Cormorant Regular 20/30 with
-  // letterSpacing 0.2, mirroring Welcome slide paraCinematic. Labels
-  // above (contribAuthor) stay sans — those are UI chrome, not
-  // dialogue content.
+  // v1.1.0 typography (round 3): dialogue-card body matches the main
+  // chat bubble — Cormorant SemiBold 17/26 ls 0.15. See
+  // components/MessageBubble.styles.text for the round-3 rationale
+  // (heavier weight at smaller size, since the round-2 20/30 Regular
+  // dominated the bubble at chat density). Labels above
+  // (contribAuthor) stay sans — those are UI chrome, not dialogue.
   contribBody: {
     color: colors.cream,
-    fontFamily: fonts.serif,
-    fontSize: 20,
-    lineHeight: 30,
-    letterSpacing: 0.2,
+    fontFamily: fonts.serifBold,
+    fontSize: 17,
+    lineHeight: 26,
+    letterSpacing: 0.15,
   },
 
   // AI message card — distinct from chat bubbles by an amber left
@@ -275,10 +276,10 @@ const styles = StyleSheet.create({
   },
   aiBody: {
     color: colors.cream,
-    fontFamily: fonts.serif,
-    fontSize: 20,
-    lineHeight: 30,
-    letterSpacing: 0.2,
+    fontFamily: fonts.serifBold,
+    fontSize: 17,
+    lineHeight: 26,
+    letterSpacing: 0.15,
   },
 
   // Response display — mine vs partner's.

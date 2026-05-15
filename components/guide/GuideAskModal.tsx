@@ -640,25 +640,29 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   aiText: {
-    // v1.1.0 typography (round 2): match the main Chat tab's bubble
-    // text — same Cormorant Regular at 20/30 with letterSpacing 0.2,
-    // mirroring Welcome slide cinematic body (GuideSlide.paraCinematic)
-    // so the Ask modal feels like a continuation of the same voice
-    // surface. The amber left-border on the bubble is the only
-    // intentional visual difference from the main chat.
+    // v1.1.0 typography (round 3): same params as the main Chat tab's
+    // bubble text (components/MessageBubble.styles.text) — Cormorant
+    // SemiBold at 17/26 ls 0.15 — so the Ask modal feels like a
+    // continuation of the same voice surface. Round 2 used 20/30
+    // Regular to match Welcome paraCinematic, but that dominated the
+    // bubble at chat-tab density; round 3 swaps to a heavier weight
+    // at smaller size for the same "thick-stroke" perception without
+    // the size cost.
     color: colors.cream,
-    fontFamily: fonts.serif,
-    fontSize: 20,
-    lineHeight: 30,
-    letterSpacing: 0.2,
+    fontFamily: fonts.serifBold,
+    fontSize: 17,
+    lineHeight: 26,
+    letterSpacing: 0.15,
   },
   aiTextOpening: {
-    // Opening greeting was already serif; nudge the size up to keep
-    // it visually distinct from the regular AI body while staying
-    // on the same Welcome-slide scale.
+    // Opening greeting reads as a distinct welcoming moment — keep it
+    // visibly LIGHTER and SLIGHTLY LARGER than the regular AI body so
+    // the contrast (Regular @ 19 vs SemiBold @ 17) signals "this is
+    // an intro, not a reply." Same letter-spacing as Welcome
+    // paraCinematic so the cinematic register survives.
     fontFamily: fonts.serif,
-    fontSize: 22,
-    lineHeight: 32,
+    fontSize: 19,
+    lineHeight: 28,
     letterSpacing: 0.2,
     color: '#E8D8B8',
   },
@@ -676,10 +680,10 @@ const styles = StyleSheet.create({
   },
   userText: {
     color: colors.cream,
-    fontFamily: fonts.serif,
-    fontSize: 20,
-    lineHeight: 30,
-    letterSpacing: 0.2,
+    fontFamily: fonts.serifBold,
+    fontSize: 17,
+    lineHeight: 26,
+    letterSpacing: 0.15,
   },
 
   // Conversation starters.

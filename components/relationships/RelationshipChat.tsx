@@ -29,7 +29,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, KeyboardAvoidingView,
+  View, Text, ScrollView,
   Platform, StyleSheet, ActivityIndicator, Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,6 +42,26 @@ import { MessageBubble, ChatMsg } from '../MessageBubble';
 import { stripMarkers, stripMarkersForDisplay } from '../../utils/markers';
 import { ChatInput } from '../ChatInput';
 import { AudioToggle } from '../AudioToggle';
+import { ConversationStarters } from '../ConversationStarters';
+
+// Opening AI message rendered when the partner chat history is empty
+// — gives the user a starting point so they're not staring at a blank
+// surface. Parallel to the main Chat tab's returning-greeting opener.
+// Built with a {{partner}} placeholder so the same string handles
+// "your partner" and a named partner uniformly at render time.
+const OPENING_TEMPLATE =
+  "What's been on your mind about you and {{partner}}?";
+
+// Partner-chat-specific starter pills shown below the opening. Each
+// is a short user-voice opener — distinct from the main chat tab's
+// "Something's been on my mind lately" starters because the
+// relationship surface invites different conversational entry points.
+const RELATIONSHIP_STARTERS: string[] = [
+  'Something has been weighing on me',
+  'I noticed myself shutting down recently',
+  'Want to think through something that happened',
+  'Just want to talk through something on my mind',
+];
 import {
   startStream as startTTSStream, appendStreamText as appendTTSStream,
   finishStream as finishTTSStream, cancelStream as cancelTTSStream,
@@ -401,12 +421,38 @@ export function RelationshipChat({
     [messages, handleRetry, relationshipId, partnerName],
   );
 
+  // Partner-display name resolved once per render. The opening message
+  // uses "your partner" as a friendly fallback when the partner's
+  // display name isn't yet on the relationship row (e.g. accepted but
+  // no name set).
+  const partnerDisplay = partnerName || 'your partner';
+  const openingText = OPENING_TEMPLATE.replace('{{partner}}', partnerDisplay);
+
+  // Manual keyboard-height lift. The previous KeyboardAvoidingView
+  // tuning (keyboardVerticalOffset = insets.top + 60) consistently
+  // left the input bar under the iOS keyboard's autocomplete
+  // suggestion bar on real devices. Same fix the Ask modal got in
+  // polish round 1 (commit 41cb4bc): listen for keyboardWillShow /
+  // keyboardWillHide on iOS (keyboardDidShow/Hide on Android — those
+  // are the only events Android emits) and pull the keyboard height
+  // directly from the event payload. We apply that height as
+  // paddingBottom on the input wrapper so the bar lifts in lockstep
+  // with the keyboard's own animation and clears the suggestion bar
+  // automatically (the height OS reports includes the suggestion
+  // strip when it's visible).
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      setKbHeight(e.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 60 : 0}
-    >
+    <View style={styles.flex}>
       {/* Header strip — hosts the session audio mute/unmute toggle.
           Default OFF; tapping enables auto-play for every new AI
           reply via utils/ttsStream. Tapping again kills any in-flight
@@ -428,12 +474,28 @@ export function RelationshipChat({
           keyboardShouldPersistTaps="handled"
           onScrollBeginDrag={() => Keyboard.dismiss()}
         >
+          {/* First-visit opening. Renders only when the partner chat
+              has no prior turns. The opening AI message goes through
+              MessageBubble (same typeface + styling as a real reply
+              so the user doesn't read it as a separate kind of UI).
+              The privacy hint below it is the existing italic empty-
+              state copy, kept as quieter secondary text. Starter
+              prompt pills sit beneath both. */}
           {messages.length === 0 ? (
-            <Text style={styles.emptyHint}>
-              Your private space about you and {partnerName || 'your partner'}. Anything you write
-              here stays between you and the AI — your partner only sees what you both choose to
-              share.
-            </Text>
+            <>
+              <MessageBubble
+                msg={{ id: 'partner-chat-opening', role: 'assistant', text: openingText }}
+              />
+              <Text style={styles.emptyHint}>
+                Your private space about you and {partnerDisplay}. Anything you write
+                here stays between you and the AI — your partner only sees what you both choose to
+                share.
+              </Text>
+              <ConversationStarters
+                onPick={handleSend}
+                starters={RELATIONSHIP_STARTERS}
+              />
+            </>
           ) : null}
           {bubbleList}
           {sending ? (
@@ -445,18 +507,19 @@ export function RelationshipChat({
       {/* ChatInput — same component the main chat tab uses, so we
           inherit press-and-hold voice notes, the recording pill
           overlay, the min-duration guard, and the input clearing
-          fix. onSendVoice handles transcription via /api/transcribe;
-          onSend handles the text path. The "Share what feels true…"
-          placeholder inside ChatInput already matches the previous
-          inline-bar placeholder. */}
-      <View style={{ paddingBottom: Math.max(insets.bottom, 6) }}>
+          fix. The wrapper's paddingBottom lifts the bar above the
+          keyboard (kbHeight) plus the safe-area home-indicator gap
+          (insets.bottom) when the keyboard is hidden. When the
+          keyboard is up, kbHeight already covers the home-indicator
+          area so we don't double-pad. */}
+      <View style={{ paddingBottom: kbHeight > 0 ? kbHeight : Math.max(insets.bottom, 6) }}>
         <ChatInput
           disabled={sending}
           onSend={handleSend}
           onSendVoice={handleSendVoice}
         />
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
