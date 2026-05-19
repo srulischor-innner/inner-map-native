@@ -35,7 +35,7 @@ import { api, ChatMessage } from '../../services/api';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
 import { clearMapVoiceHistory } from '../../services/mapVoiceHistory';
-import { ChatModeToggle, ChatModeIndicator, ChatMode } from '../../components/ChatModeToggle';
+import { ChatModeToggle, ChatMode } from '../../components/ChatModeToggle';
 import { PartConfidenceIndicator, PartConfidence } from '../../components/PartConfidenceIndicator';
 import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
@@ -64,6 +64,24 @@ import { EndSessionButton } from '../../components/EndSessionButton';
 const PER_WORD_MS = 45;
 // Default friendly greeting if the /api/returning-greeting endpoint doesn't respond.
 const FALLBACK_GREETING = "Something went quiet on my end — but I'm here. What's on your mind?";
+
+// First-session orientation message (polish round 4, Part 3). Shown
+// as the opening AI bubble for users whose firstSessionCompletedAt is
+// still null — replaces the old hardcoded "I'm here to help you
+// explore…" welcome. Once the user sends their first message the
+// server's FIRST_SESSION_PROMPT takes over and the AI's generated
+// replies continue the first-session work. After completion this is
+// never shown again (the returning greeting takes its place).
+const ORIENTATION_MESSAGE =
+  "Welcome. Quick orientation:\n\n" +
+  "Two modes up top. Explore is for active inner work — naming patterns, " +
+  "identifying parts. Process is for being heard, working through something, " +
+  "or just talking it out. Both build your map; Process just doesn't make " +
+  "that the focus.\n\n" +
+  "At first I'll be a bit more directive while we build a starter map for " +
+  "you. After that, it gets more conversational. You can pick whichever mode " +
+  "feels right.\n\n" +
+  "Would you like to begin?";
 
 export default function ChatScreen() {
   // Persistent session id for this app launch (a fresh one per "session" like the web app).
@@ -363,14 +381,20 @@ export default function ChatScreen() {
     (async () => {
       let greetingRes: { greeting: string | null; suggestions: string[] } = { greeting: null, suggestions: [] };
       let map: any = null;
+      // First-session status is fetched alongside the greeting + map
+      // so the opening bubble can be the orientation message (Part 3)
+      // without a second round-trip or a flash of the wrong copy.
+      let firstStatus: { completedAt: string | null } = { completedAt: null };
       try {
-        [greetingRes, map] = await Promise.all([
+        [greetingRes, map, firstStatus] = await Promise.all([
           api.getReturningGreeting(),
           api.getLatestMap(),
+          api.getFirstSessionStatus(),
         ]);
       } catch (err) {
         console.warn('[chat] boot fetch failed:', (err as Error)?.message);
       }
+      const isFirstSession = firstStatus?.completedAt == null;
 
       const md = map?.mapData || map || {};
       // Onboarding-vs-ongoing decision: "any core node filled" means
@@ -440,7 +464,15 @@ export default function ChatScreen() {
       // landing mode; the Explore thread stays empty until the user
       // first switches to Explore (see the chatMode change effect
       // below), at which point its own opener is injected.
-      const finalGreeting = (greetingRes.greeting && greetingRes.greeting.trim()) || FALLBACK_GREETING;
+      //
+      // First-session users get the orientation message as the
+      // opening bubble on BOTH threads — whichever mode they land on
+      // or switch to, the first AI message is the orientation. After
+      // they send anything the server's FIRST_SESSION_PROMPT takes
+      // over and generates the real first-session work.
+      const finalGreeting = isFirstSession
+        ? ORIENTATION_MESSAGE
+        : ((greetingRes.greeting && greetingRes.greeting.trim()) || FALLBACK_GREETING);
       addAssistantMessageToProcess(finalGreeting);
       processHistoryRef.current.push({ role: 'assistant', content: finalGreeting });
       setTyping(false);
@@ -458,18 +490,29 @@ export default function ChatScreen() {
     if (chatMode !== 'explore') return;
     if (exploreGreetedRef.current) return;
     if (exploreMessages.length > 0) return;
+    // Wait for the first-session status to resolve before seeding —
+    // a first-session user must get the orientation message, not the
+    // regular explore opener. Returning early WITHOUT flipping
+    // exploreGreetedRef means the effect re-runs (and seeds) once
+    // firstSessionPending lands.
+    if (firstSessionPending === undefined) return;
     exploreGreetedRef.current = true;
     const recent = mostRecentPartRef.current;
-    const opener = recent
-      ? `Last time we explored ${recent}. What would you like to understand better today?`
-      : "I'm here to help you explore what's happening inside. What would you like to understand better about yourself today?";
-    console.log(`[chat] seeding Explore thread — ${recent ? 'subsequent' : 'first'} session opener`);
+    // First-session users get the orientation message (Part 3) —
+    // overrides both the "last time we explored…" and the generic
+    // first-ever opener.
+    const opener = firstSessionPending === true
+      ? ORIENTATION_MESSAGE
+      : recent
+        ? `Last time we explored ${recent}. What would you like to understand better today?`
+        : "I'm here to help you explore what's happening inside. What would you like to understand better about yourself today?";
+    console.log(`[chat] seeding Explore thread — ${firstSessionPending ? 'first-session orientation' : recent ? 'subsequent' : 'first'} opener`);
     const id = uuidv4();
     setExploreMessages((prev) => [...prev, { id, role: 'assistant', text: opener }]);
     exploreHistoryRef.current.push({ role: 'assistant', content: opener });
     scrollToBottom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatMode]);
+  }, [chatMode, firstSessionPending]);
 
   // When the keyboard opens, snap the scroll to the latest message so the user
   // sees what they're responding to. iOS emits keyboardWillShow before it's
@@ -1101,7 +1144,11 @@ export default function ChatScreen() {
             keyboardShouldPersistTaps="handled"
             onScrollBeginDrag={() => Keyboard.dismiss()}
           >
-            <ChatModeIndicator mode={chatMode} />
+            {/* The "Explore mode — building your map" micro-label was
+                removed in polish round 4 — it pushed chat content
+                further down the screen and was redundant: the active
+                ChatModeToggle pill already shows the mode, and the
+                first-session banner already says "building your map". */}
             {bubbleList}
             {typing ? <TypingIndicator /> : null}
             {/* Starter chips appear only before the user has said anything in
@@ -1267,7 +1314,14 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { padding: spacing.md, paddingBottom: spacing.md },
+  // polish round 4: paddingTop trimmed (spacing.md → spacing.xs) so
+  // the AI opening message + starter pills sit higher on the screen.
+  // Horizontal + bottom padding keep spacing.md.
+  scrollContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.md,
+  },
   // First-session ambient banner. Thin centered strip in dim amber
   // with italic Cormorant text — feels like an ambient indicator,
   // not a heavy header. Renders only while firstSessionPending===true;
@@ -1290,10 +1344,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 0.4,
   },
-  // Holds the audio mute toggle on the left and the attention indicator
-  // on the right. 48px tall to host both 48x48 tap targets.
+  // Holds the audio mute toggle on the left. polish round 4: height
+  // trimmed 48 → 34 so the chat content starts higher on the screen.
+  // The AudioToggle keeps its own internal hit-area + hitSlop so the
+  // shorter strip doesn't shrink the actual tap target.
   headerStrip: {
-    height: 48,
+    height: 34,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',

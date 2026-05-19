@@ -1287,6 +1287,87 @@ export const api = {
     }
   },
 
+  /** POST /api/voice-usage/session — start a Map Voice session. The
+   *  server checks the monthly $10 cap first. Returns the session
+   *  handle on success, or { error: 'monthly_cap_reached', periodEnd }
+   *  when the user is over budget for the calendar month. null on
+   *  transport failure (caller should treat that as "couldn't start"
+   *  rather than silently proceeding — Map Voice is metered). */
+  async startVoiceSession(): Promise<
+    | { sessionId: string; periodEnd: string; maxSessionSeconds: number }
+    | { error: 'monthly_cap_reached'; periodEnd: string }
+    | null
+  > {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/voice-usage/session', {
+        label: 'voice-usage-session', method: 'POST', headers, body: JSON.stringify({}),
+      });
+      const j: any = await res.json().catch(() => null);
+      if (res.status === 403 && j && j.error === 'monthly_cap_reached') {
+        return { error: 'monthly_cap_reached', periodEnd: String(j.periodEnd || '') };
+      }
+      if (!res.ok || !j || typeof j.sessionId !== 'string') return null;
+      return {
+        sessionId: j.sessionId,
+        periodEnd: String(j.periodEnd || ''),
+        maxSessionSeconds: Number(j.maxSessionSeconds) || 600,
+      };
+    } catch (e) {
+      console.warn('[voice-usage-session] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** POST /api/voice-usage/session/:id/end — report a Map Voice
+   *  session's elapsed duration. The server computes + records the
+   *  cost (duration clamped to the 10-min ceiling server-side).
+   *  Fire-and-forget from the caller's perspective; failures are
+   *  logged, not surfaced (the session already happened). */
+  async endVoiceSession(sessionId: string, durationSeconds: number): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/voice-usage/session/${encodeURIComponent(sessionId)}/end`, {
+        label: 'voice-usage-end', method: 'POST', headers,
+        body: JSON.stringify({ durationSeconds }),
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[voice-usage-end] threw:', (e as Error)?.message);
+      return false;
+    }
+  },
+
+  /** GET /api/voice-usage/current-period — usage summary for the Map
+   *  Voice entry screen. The balance indicator only renders when
+   *  usedUsd / capUsd >= 0.80, so a null return (transport failure)
+   *  just hides the indicator — safe degradation. */
+  async getVoiceUsageCurrentPeriod(): Promise<{
+    usedUsd: number;
+    capUsd: number;
+    periodEnd: string;
+    approxMinutesRemaining: number;
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/voice-usage/current-period', {
+        label: 'voice-usage-period', method: 'GET', headers,
+      });
+      if (!res.ok) return null;
+      const j: any = await res.json().catch(() => null);
+      if (!j || typeof j !== 'object') return null;
+      return {
+        usedUsd: Number(j.usedUsd) || 0,
+        capUsd: Number(j.capUsd) || 10,
+        periodEnd: String(j.periodEnd || ''),
+        approxMinutesRemaining: Number(j.approxMinutesRemaining) || 0,
+      };
+    } catch (e) {
+      console.warn('[voice-usage-period] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   /** POST /api/map/mark-seen. Stamps lastSeenMapAt=NOW for the user.
    *  Called on Map-tab entry. Returns the new timestamp on success,
    *  null on transport failure (caller can still optimistically

@@ -19,7 +19,7 @@ import { armSelfMode } from '../../utils/selfMode';
 import { computeMapGeometry, MapGeometry } from '../../utils/mapLayout';
 import { InnerMapCanvas, NodeKey } from '../../components/map/InnerMapCanvas';
 import { PartFolderModal } from '../../components/map/PartFolderModal';
-import { MapVoiceButton } from '../../components/map/MapVoiceButton';
+import { MapVoicePanel } from '../../components/map/MapVoicePanel';
 import { ProgressStrip } from '../../components/map/ProgressStrip';
 import { CircleMapCanvas, IntegrationKey } from '../../components/map/CircleMapCanvas';
 import { IntegrationPanel } from '../../components/map/IntegrationPanel';
@@ -655,7 +655,7 @@ export default function MapScreen() {
         </View>
       </View>
 
-      <MapVoiceButton
+      <MapVoicePanel
         sessionId={sessionIdRef.current}
         onDetectedPart={(part) => {
           // Narrowing the string to NodeKey — guarded by the known part list so a

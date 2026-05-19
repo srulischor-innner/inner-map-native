@@ -47,7 +47,10 @@ const styles = StyleSheet.create({
   wrap: {
     flexDirection: 'column',
     gap: 8,
-    marginTop: spacing.sm,
+    // polish round 4: marginTop trimmed (spacing.sm → spacing.xs) so
+    // the starter pills sit closer to the AI opening message instead
+    // of a wide gap between them.
+    marginTop: spacing.xs,
     marginBottom: spacing.xs,
     paddingHorizontal: 0,
   },

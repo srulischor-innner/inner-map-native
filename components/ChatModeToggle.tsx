@@ -181,10 +181,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     // Symmetric vertical padding so the pills sit on the optical
-    // center of the bar. Previously paddingTop:0 / paddingBottom:4
-    // pushed everything slightly upward.
-    paddingTop: 6,
-    paddingBottom: 6,
+    // center of the bar. polish round 4: trimmed 6 → 3 each side to
+    // pull chat content higher up the screen.
+    paddingTop: 3,
+    paddingBottom: 3,
     paddingHorizontal: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: 'rgba(230,180,122,0.1)',

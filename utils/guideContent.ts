@@ -288,16 +288,17 @@ export const HEALING_SLIDES: GuideSlide[] = [
   // separate sub-section so the user just scrolls through one ordered
   // sequence within the HEALING pill.
   //
-  // Current arc (9 slides total):
+  // Current arc (10 slides total):
   //   1. Healing happens from safety
   //   2. When the system is in survival mode
   //   3. Build the ground first
   //   4. How healing actually happens
   //   5. Stage one — Meeting your team
   //   6. Stage one — Getting into relationship
-  //   7. Stage two — Unblending
-  //   8. Stage three — Release
-  //   9. Creating something new   (BEGIN YOUR MAP button surfaces here)
+  //   7. Stage one — Leading from your own ground
+  //   8. Stage two — Unblending
+  //   9. Stage three — Release
+  //  10. Creating something new   (BEGIN YOUR MAP button surfaces here)
   ...WHAT_HOLDS_YOU_SLIDES,
   {
     visual: 'seed',
@@ -341,6 +342,20 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "Once you accept there's no getting rid of them, getting to know them becomes the only path forward — even if begrudgingly at first. You don't have to like your players to coach them. You start to see where each part is coming from, how it sees the world, what it's trying to protect.",
       "And once you understand a part, something shifts. You can begin to help it see things differently — not by overriding it, but by being in relationship with it.",
       "This is where blame begins to soften. The world stops feeling like it's happening to you, and starts to look like a reflection of your internal team.",
+    ],
+  },
+  {
+    // Polish round 4 — new Stage one slide. Closes the gap between
+    // "getting into relationship with the parts" and "unblending":
+    // before you can unblend you need a place to stand. Reuses the
+    // 'self' visual (SelfSteady — a calm, centered presence), which
+    // isn't otherwise used in the Healing arc, so no within-section
+    // duplication. The body is a single paragraph by design — it
+    // reads as one continuous movement.
+    visual: 'self',
+    title: 'Stage one — Leading from your own ground',
+    body: [
+      "Knowing the parts are there isn't enough. To lead them, you need your own ground — your own sense of who you are, separate from any part's story. Not against the parts. Just yours. From there, you can hold the line — hear what a part says without believing it, honor what it feels without doing what it demands. Held this way, parts settle. Finally there's someone here.",
     ],
   },
   {
