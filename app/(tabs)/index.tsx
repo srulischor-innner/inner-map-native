@@ -1329,10 +1329,15 @@ const styles = StyleSheet.create({
   // a non-null firstSessionCompletedAt from the server.
   firstSessionBanner: {
     alignSelf: 'center',
-    marginTop: 4,
-    marginBottom: 4,
+    // Round 5 — margins trimmed to 0/2 + paddingVertical 3 so the
+    // banner adds the minimum possible vertical footprint when
+    // shown. When it's NOT shown (firstSessionPending !== true,
+    // which is the common case post-migration) it doesn't render
+    // at all.
+    marginTop: 0,
+    marginBottom: 2,
     paddingHorizontal: 14,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 999,
     backgroundColor: 'rgba(230,180,122,0.08)',
     borderWidth: 0.5,
@@ -1344,12 +1349,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 0.4,
   },
-  // Holds the audio mute toggle on the left. polish round 4: height
-  // trimmed 48 → 34 so the chat content starts higher on the screen.
-  // The AudioToggle keeps its own internal hit-area + hitSlop so the
-  // shorter strip doesn't shrink the actual tap target.
+  // Holds the audio mute toggle on the left. Round 4 took it from
+  // 48 → 34; round 5 (build 8 feedback) trims further to 24 because
+  // the band still pushed the AI opening message below the
+  // viewport's first paint on small iPhones. AudioToggle's own
+  // 44x44 tap target is unchanged — it just visually centers across
+  // the now-shorter strip; touches in the overlap area still hit
+  // because RN doesn't clip children. The icon is 22px, comfortably
+  // centered in 24px.
   headerStrip: {
-    height: 34,
+    height: 24,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
