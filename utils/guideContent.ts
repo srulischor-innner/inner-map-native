@@ -22,6 +22,12 @@ export type NodeVisualKind =
   | 'unblending'           // two overlapping circles drift apart and back
   | 'release'              // wound with outer ring expanding + fading
   | 'newCreation'          // full map with golden glow from Self center
+  // ----- Healing Stage one (1A / 1B / 1C). Three animated visuals
+  //       that form a related family — same orb / glow language, same
+  //       deep-navy + warm-amber palette. Added polish round 6. -----
+  | 'observerDrift'        // steady center orb + 3 colored orbs drifting across
+  | 'coachOrbits'          // central coach orb + 3 smaller orbs orbiting + cycling connection line
+  | 'steadyPillar'         // static pillar of warm light + active orbs swirling around it
   // ----- onboarding / welcome -----
   | 'mapDrawing'           // triangle draws itself, then nodes bloom in
   | 'chatBubble'           // chat bubble silhouette with breathing triangle inside
@@ -293,9 +299,9 @@ export const HEALING_SLIDES: GuideSlide[] = [
   //   2. When the system is in survival mode
   //   3. Build the ground first
   //   4. How healing actually happens
-  //   5. Stage one — Meeting your team
-  //   6. Stage one — Getting into relationship
-  //   7. Stage one — Leading from your own ground
+  //   5. Stage one — A: Realizing you have parts
+  //   6. Stage one — B: Becoming the coach
+  //   7. Stage one — C: Leading from your own ground
   //   8. Stage two — Unblending
   //   9. Stage three — Release
   //  10. Creating something new   (BEGIN YOUR MAP button surfaces here)
@@ -316,46 +322,46 @@ export const HEALING_SLIDES: GuideSlide[] = [
   // slides below preserve that fuller arc. Both share the "Stage one"
   // prefix so they read as paired beats in the Healing carousel.
   {
-    // Reuses the existing 'responsibility' visual (right-arrow
-    // fades / left-arrow brightens) — same outside-in → inside-out
-    // shift the body opens with. The coach-and-team metaphor is
-    // introduced here so slide 6 can lean into the relationship
-    // step that follows.
-    visual: 'responsibility',
-    title: 'Stage one — Meeting your team',
+    // Polish round 6 — rewrote the three Stage one slides (1A / 1B /
+    // 1C) with new body text + new animated visuals that form a
+    // related family. 1A: a steady observer with parts drifting
+    // across the field — the foundational "I'm not this thought,
+    // I'm watching it" move.
+    visual: 'observerDrift',
+    title: 'Stage one — A: Realizing you have parts',
     body: [
-      "The first shift is from outside-in to inside-out. External things can soothe but never fill.",
-      "Imagine you're the coach of a team you didn't draft. You can't trade these players. You didn't create them. You can't fix them or shame them off. What you have is a relationship with them.",
-      "You are the coach. The parts are the players. The coach's job is twofold: individual development and team cohesion.",
+      "A lot of what we call \"feeling anxious\" or \"being self-critical\" is really a part of us speaking. Most of the time we don't notice. The thought just feels like us — I'm not enough. I have to fix this. Just give up.",
+      "When something starts to shift, it's usually small. A moment of noticing that the voice in your head isn't quite the same as you. Just hearing it from a step back. You're not silencing anything. You're not arguing with it. You're just starting to see it.",
+      "For many people, this is where everything begins.",
     ],
   },
   {
-    // Reuses 'managersFirefighters' (two dashed circles with inner
-    // dots) — the two-protector visual reads as "the players on
-    // your team", which fits the getting-into-relationship beat.
-    // Visual is otherwise only used in the MAP_SLIDES section, so
-    // reuse here doesn't create within-Healing duplication.
-    visual: 'managersFirefighters',
-    title: 'Stage one — Getting into relationship',
+    // 1B: the shift from fighting parts to being in relationship
+    // with them. Coach metaphor. Coach at center, three players
+    // orbiting at different rhythms, with a connection line cycling
+    // through them.
+    visual: 'coachOrbits',
+    title: 'Stage one — B: Becoming the coach',
     body: [
-      "It begins with recognition — accepting they're here, whether you like it or not. Coming out of the idea that you should be able to control them, or that they're your fault.",
-      "Once you accept there's no getting rid of them, getting to know them becomes the only path forward — even if begrudgingly at first. You don't have to like your players to coach them. You start to see where each part is coming from, how it sees the world, what it's trying to protect.",
-      "And once you understand a part, something shifts. You can begin to help it see things differently — not by overriding it, but by being in relationship with it.",
-      "This is where blame begins to soften. The world stops feeling like it's happening to you, and starts to look like a reflection of your internal team.",
+      "When you first start seeing your parts clearly, there's often something painful in it. The wish that they weren't there. The shame that they are. The quiet sense that something about you must be wrong for them to exist.",
+      "A lot of healing begins with letting that go.",
+      "Not by forcing acceptance, but by quietly noticing what's true: these parts are here. They came online for reasons that made sense at the time. You didn't create them. You don't really control them. What you have, what you've always had, is a relationship with them.",
+      "A coach didn't draft his players. He can't trade them, can't shame them off the roster, can't make them into different players. But he can be in real relationship with them — meet each one where they are, get to know what they need, help them grow over time. And slowly, he can help them work together as a team.",
+      "The shift is from how things should be to how they actually are. From fighting parts to being with them.",
     ],
   },
   {
-    // Polish round 4 — new Stage one slide. Closes the gap between
-    // "getting into relationship with the parts" and "unblending":
-    // before you can unblend you need a place to stand. Reuses the
-    // 'self' visual (SelfSteady — a calm, centered presence), which
-    // isn't otherwise used in the Healing arc, so no within-section
-    // duplication. The body is a single paragraph by design — it
-    // reads as one continuous movement.
-    visual: 'self',
-    title: 'Stage one — Leading from your own ground',
+    // 1C: leading from one's own ground. Static pillar of warm
+    // light at the base (the ground that doesn't move) + active
+    // orbs swirling around it. The contrast IS the visual.
+    visual: 'steadyPillar',
+    title: 'Stage one — C: Leading from your own ground',
     body: [
-      "Knowing the parts are there isn't enough. To lead them, you need your own ground — your own sense of who you are, separate from any part's story. Not against the parts. Just yours. From there, you can hold the line — hear what a part says without believing it, honor what it feels without doing what it demands. Held this way, parts settle. Finally there's someone here.",
+      "Knowing the parts are there is one thing. Leading them is something else. For that, you need your own ground — your own sense of who you are, separate from any single part's story.",
+      "Not against the parts. Just yours.",
+      "When a part comes online with its certainty — \"I have to fix this,\" \"I'm not enough,\" \"Shut down, this is too much\" — there can be space to hear it without becoming it. To honor what it feels without doing what it demands. Something like: \"I see why you feel that way. I'm still going a different way.\"",
+      "That \"no\" usually isn't rejection. It comes with the validation, not against it. The coach holding their own ground while still being with the player.",
+      "When parts are met this way, they often begin to settle. There starts to be someone home.",
     ],
   },
   {

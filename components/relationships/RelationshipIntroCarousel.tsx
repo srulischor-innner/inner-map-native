@@ -27,7 +27,7 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, FlatList, StyleSheet,
+  View, Text, Pressable, FlatList, ScrollView, StyleSheet,
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -217,10 +217,30 @@ function IntroSlide({
       <View style={[styles.visualWrap, { width: visualSize, height: visualSize }]}>
         <RelationshipIntroVisual slide={slideNumber} size={visualSize} />
       </View>
-      <Text style={styles.title}>{data.title}</Text>
-      <View style={styles.body}>
-        <Text style={styles.bodyText}>{data.body}</Text>
-      </View>
+      {/* Per-slide vertical scroll for the title + body. Polish round
+          6 fix: slide 4 ("What the AI sees and does") has the longest
+          body and was getting cut off above the pagination dots on
+          shorter iPhones with no way to scroll. Wrapping title+body
+          in a ScrollView lets long slides scroll vertically while
+          horizontal swipe between slides still works (the parent
+          FlatList catches horizontal pans; this inner ScrollView only
+          eats vertical ones). showsVerticalScrollIndicator gives the
+          user a visible signal that there's more to read. */}
+      <ScrollView
+        style={styles.bodyScroll}
+        contentContainerStyle={styles.bodyScrollContent}
+        showsVerticalScrollIndicator
+        // Don't let a vertical scroll on the body swallow the
+        // horizontal swipe — directional locking on iOS gives the
+        // initial gesture direction priority + lets the FlatList
+        // win on near-horizontal drags.
+        directionalLockEnabled
+      >
+        <Text style={styles.title}>{data.title}</Text>
+        <View style={styles.body}>
+          <Text style={styles.bodyText}>{data.body}</Text>
+        </View>
+      </ScrollView>
       {isLast ? (
         <Pressable
           onPress={onComplete}
@@ -269,6 +289,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: spacing.lg,
   },
+  // Polish round 6 — per-slide ScrollView wrapping title + body. The
+  // ScrollView itself takes the remaining vertical space inside the
+  // slide (between the visual at the top and either the button or
+  // the slide's bottom padding); contentContainerStyle centers the
+  // text horizontally and adds bottom padding so the final line
+  // clears the GuideDots/button area when the body is long.
+  bodyScroll: { flex: 1, alignSelf: 'stretch', width: '100%' },
+  bodyScrollContent: {
+    alignItems: 'center',
+    paddingBottom: spacing.lg,
+  },
+
   // Serif body so the carousel matches the Welcome-slide aesthetic
   // applied across Guide slide bodies + chat bubbles in this polish
   // round. Slightly larger size and tighter line-height than the

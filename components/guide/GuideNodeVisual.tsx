@@ -64,6 +64,12 @@ export function GuideNodeVisual({ kind, size = 140 }: Props) {
       {kind === 'unblending'           ? <Unblending cx={cx} cy={cy} W={W} /> : null}
       {kind === 'release'              ? <Release cx={cx} cy={cy} W={W} /> : null}
       {kind === 'newCreation'          ? <NewCreation W={W} H={H} /> : null}
+      {/* Healing Stage one (1A / 1B / 1C) — three visuals in one
+          family: same orb / glow language, same palette, different
+          motion to match each slide's beat. Polish round 6. */}
+      {kind === 'observerDrift'        ? <ObserverDrift cx={cx} cy={cy} W={W} H={H} /> : null}
+      {kind === 'coachOrbits'          ? <CoachOrbits cx={cx} cy={cy} W={W} H={H} /> : null}
+      {kind === 'steadyPillar'         ? <SteadyPillar W={W} H={H} /> : null}
       {kind === 'mapDrawing'           ? <MapDrawing W={W} H={H} /> : null}
       {kind === 'chatBubble'           ? <ChatBubbleListening W={W} H={H} /> : null}
       {kind === 'nodeDetect'           ? <NodeDetect cx={cx} cy={cy} W={W} /> : null}
@@ -1994,6 +2000,359 @@ function EnergyMoves({ W, H }: { W: number; H: number }) {
       <Rect x={0} y={bandTop} width={W} height={bandH}>
         <LinearGradient start={start} end={end} colors={colors} positions={positions} />
       </Rect>
+    </Group>
+  );
+}
+
+// =============================================================================
+// HEALING STAGE ONE — A, B, C (polish round 6).
+//
+// Three visuals share the same visual language: warm amber palette,
+// soft orbs with halo + core, deep-navy background already provided
+// by GuideSlide. Together they form a family — same physics, same
+// color register, different motion to match each beat:
+//
+//   1A  ObserverDrift — a steady center watches parts drift past
+//   1B  CoachOrbits   — center engages each orbiting part in turn
+//   1C  SteadyPillar  — a still ground while everything else moves
+//
+// Phase math: each uses a single shared 0→1 value driven by withRepeat
+// + withTiming, linear easing, false (so it wraps 1→0 cleanly without
+// reversing). All derived values are pure functions of phase so the
+// loop is seamless. Skia primitives read the derived values directly
+// on the UI thread — no React re-render per frame.
+// =============================================================================
+
+// ----- 1A — ObserverDrift -------------------------------------------------
+// Steady observer dot at the center. Three colored orbs (warm amber,
+// soft red, dim grey) drift horizontally across the canvas at three
+// vertical levels, fading in on the left and out on the right. Each
+// orb is at a different y so they read as three separate things, not
+// a single drifting shape.
+function ObserverDrift({
+  cx, cy, W, H,
+}: { cx: number; cy: number; W: number; H: number }) {
+  const phase = useSharedValue(0);
+  useEffect(() => {
+    phase.value = withRepeat(
+      withTiming(1, { duration: 5000, easing: Easing.linear }),
+      -1, false,
+    );
+  }, [phase]);
+  // Each drifting orb starts off the left edge, peaks in the middle,
+  // exits off the right. margin lets the orb fully fade out before /
+  // after the canvas edges.
+  const margin = W * 0.16;
+  const travelW = W + margin * 2;
+  // Three drifting orbs — color, vertical level (relative to cy), and
+  // a phase offset so they don't all cross at the same moment.
+  const drifters: Array<{
+    color: string;
+    y: number;
+    offset: number;
+    r: number;
+  }> = [
+    { color: '#E6B47A', y: cy - H * 0.22, offset: 0.00, r: W * 0.05 },  // warm amber
+    { color: '#E05050', y: cy,             offset: 0.33, r: W * 0.05 },  // soft red
+    { color: 'rgba(180,180,200,0.85)', y: cy + H * 0.22, offset: 0.66, r: W * 0.045 }, // dim grey
+  ];
+  return (
+    <Group>
+      {/* Center observer — static, warmly lit. The point is that this
+          doesn't move while everything else does. */}
+      <Circle cx={cx} cy={cy} r={W * 0.16} opacity={0.45}>
+        <RadialGradient
+          c={vec(cx, cy)}
+          r={W * 0.16}
+          colors={['rgba(230,180,122,0.55)', 'rgba(230,180,122,0)']}
+        />
+      </Circle>
+      <Circle cx={cx} cy={cy} r={W * 0.045} color={colors.amberLight} />
+
+      {drifters.map((d, i) => (
+        <DriftOrb
+          key={i}
+          phase={phase}
+          offset={d.offset}
+          y={d.y}
+          color={d.color}
+          r={d.r}
+          margin={margin}
+          travelW={travelW}
+        />
+      ))}
+    </Group>
+  );
+}
+function DriftOrb({
+  phase, offset, y, color, r, margin, travelW,
+}: {
+  phase: ReturnType<typeof useSharedValue<number>>;
+  offset: number;
+  y: number;
+  color: string;
+  r: number;
+  margin: number;
+  travelW: number;
+}) {
+  // (phase + offset) wraps in [0, 1). x walks from -margin to
+  // W+margin across the canvas; opacity is a sine that fades in /
+  // out so the orb never pops on or off.
+  const x = useDerivedValue(() => {
+    const t = (phase.value + offset) % 1;
+    return -margin + t * travelW;
+  }, [phase]);
+  const op = useDerivedValue(() => {
+    const t = (phase.value + offset) % 1;
+    // sin(π t) peaks at 0.5 with value 1; fades to 0 at endpoints.
+    return 0.7 * Math.sin(Math.PI * t);
+  }, [phase]);
+  return (
+    <Group opacity={op}>
+      <Circle cx={x} cy={y} r={r * 2.4}>
+        <RadialGradient
+          c={vec(0, 0)}
+          r={r * 2.4}
+          colors={[color, color.replace(/[\d.]+\)$/, '0)').replace('rgb(', 'rgba(').replace(/^#([0-9a-fA-F]{6})$/, 'rgba($1,0)')]}
+        />
+      </Circle>
+      <Circle cx={x} cy={y} r={r} color={color} />
+    </Group>
+  );
+}
+
+// ----- 1B — CoachOrbits ---------------------------------------------------
+// A central coach orb (larger, steady) with three smaller orbs
+// orbiting at different radii / speeds. Each orb pulses at its own
+// rhythm. The "connection line" cycles through the three orbs over
+// the 5-second loop — at any moment one orb is being engaged.
+function CoachOrbits({
+  cx, cy, W, H,
+}: { cx: number; cy: number; W: number; H: number }) {
+  const phase = useSharedValue(0);
+  useEffect(() => {
+    phase.value = withRepeat(
+      withTiming(1, { duration: 5000, easing: Easing.linear }),
+      -1, false,
+    );
+  }, [phase]);
+  // Three orbiting orbs, each parameterized by orbit speed, base
+  // angle, radius, color, and pulse frequency. Different values mean
+  // the three never line up — the scene always reads as a system in
+  // motion.
+  const orbits: Array<{
+    radius: number;
+    speed: number;
+    base: number;
+    color: string;
+    r: number;
+    pulseFreq: number;
+    slot: number; // 0,1,2 — which third of the cycle this orb is "engaged"
+  }> = [
+    { radius: W * 0.28, speed: 1.0, base: 0,           color: '#E6B47A', r: W * 0.05, pulseFreq: 2.0, slot: 0 },
+    { radius: W * 0.36, speed: 0.7, base: 2 * Math.PI / 3, color: '#F0C890', r: W * 0.045, pulseFreq: 1.4, slot: 1 },
+    { radius: W * 0.32, speed: 1.3, base: 4 * Math.PI / 3, color: '#D9A06A', r: W * 0.048, pulseFreq: 1.7, slot: 2 },
+  ];
+  return (
+    <Group>
+      {/* Coach orb — center, larger, steady. Soft halo + brighter core. */}
+      <Circle cx={cx} cy={cy} r={W * 0.20} opacity={0.55}>
+        <RadialGradient
+          c={vec(cx, cy)}
+          r={W * 0.20}
+          colors={['rgba(230,180,122,0.70)', 'rgba(230,180,122,0)']}
+        />
+      </Circle>
+      <Circle cx={cx} cy={cy} r={W * 0.07} color={colors.amberLight} />
+
+      {orbits.map((o, i) => (
+        <OrbitingOrb key={i} phase={phase} cx={cx} cy={cy} orbit={o} />
+      ))}
+    </Group>
+  );
+}
+function OrbitingOrb({
+  phase, cx, cy, orbit,
+}: {
+  phase: ReturnType<typeof useSharedValue<number>>;
+  cx: number;
+  cy: number;
+  orbit: {
+    radius: number; speed: number; base: number; color: string;
+    r: number; pulseFreq: number; slot: number;
+  };
+}) {
+  // Position — orbits the coach at its own speed/phase offset.
+  const ox = useDerivedValue(() => {
+    const angle = orbit.base + phase.value * Math.PI * 2 * orbit.speed;
+    return cx + orbit.radius * Math.cos(angle);
+  }, [phase]);
+  const oy = useDerivedValue(() => {
+    const angle = orbit.base + phase.value * Math.PI * 2 * orbit.speed;
+    return cy + orbit.radius * Math.sin(angle);
+  }, [phase]);
+  // Pulsing radius — the orb breathes on its own rhythm independent
+  // of the orbit speed.
+  const orbR = useDerivedValue(() => {
+    return orbit.r * (0.85 + 0.18 * Math.sin(phase.value * Math.PI * 2 * orbit.pulseFreq));
+  }, [phase]);
+  const orbHaloR = useDerivedValue(() => orbR.value * 2.4, [orbR]);
+  // Engagement slot — line + brightness peak when phase is inside
+  // this orb's third of the cycle. sin(π t) within the slot, 0
+  // elsewhere — clean fade in / out, no pop.
+  const slotOp = useDerivedValue(() => {
+    const t = phase.value - orbit.slot / 3;
+    if (t < 0 || t >= 1 / 3) return 0;
+    return Math.sin(Math.PI * t * 3);
+  }, [phase]);
+  // Line endpoint — same orbit math. Drawn as a Skia path rebuilt on
+  // the UI thread via useDerivedValue; the path is short (one
+  // moveTo + one lineTo), so the per-frame cost is negligible.
+  const linePath = useDerivedValue(() => {
+    const p = Skia.Path.Make();
+    p.moveTo(cx, cy);
+    p.lineTo(ox.value, oy.value);
+    return p;
+  }, [ox, oy]);
+  // Orb brightness adds to its own light during its engagement slot.
+  const coreOp = useDerivedValue(() => 0.85 + 0.15 * slotOp.value, [slotOp]);
+  return (
+    <Group>
+      {/* Connection line — only visible during this orb's engagement
+          slot. The line opacity carries the cycling beat. */}
+      <Path
+        path={linePath}
+        color={colors.amber}
+        style="stroke"
+        strokeWidth={1.2}
+        opacity={slotOp}
+      />
+      {/* Halo + core for the orb. */}
+      <Circle cx={ox} cy={oy} r={orbHaloR} opacity={0.5}>
+        <RadialGradient
+          c={vec(0, 0)}
+          r={orbit.r * 2.4}
+          colors={[orbit.color, 'rgba(230,180,122,0)']}
+        />
+      </Circle>
+      <Circle cx={ox} cy={oy} r={orbR} color={orbit.color} opacity={coreOp} />
+    </Group>
+  );
+}
+
+// ----- 1C — SteadyPillar --------------------------------------------------
+// A static pillar of warm light at bottom-center — the "own ground"
+// — does NOT animate. Above and around it, smaller orbs swirl, pulse,
+// occasionally flare. The contrast (still center, active periphery)
+// is the visual idea.
+function SteadyPillar({ W, H }: { W: number; H: number }) {
+  const phase = useSharedValue(0);
+  useEffect(() => {
+    phase.value = withRepeat(
+      withTiming(1, { duration: 5000, easing: Easing.linear }),
+      -1, false,
+    );
+  }, [phase]);
+  // Pillar geometry — narrow vertical column from ~45% down to the
+  // bottom of the canvas. Width is a small fraction of W; the glow
+  // halo on either side gives it presence without taking up the
+  // whole canvas.
+  const pillarCx = W / 2;
+  const pillarTop = H * 0.45;
+  const pillarBottom = H * 0.94;
+  const pillarW = W * 0.06;
+  // Four swirling orbs at different anchor points in the upper area.
+  // Each wobbles around its anchor on a small ellipse — so they read
+  // as "active" but don't fly off-canvas. Phases and rhythms differ
+  // per orb so the scene never feels coordinated.
+  const swirlers: Array<{
+    ax: number; ay: number;
+    rx: number; ry: number;
+    speed: number; base: number;
+    color: string; r: number;
+    pulseFreq: number; pulseAmp: number;
+  }> = [
+    { ax: W * 0.22, ay: H * 0.20, rx: W * 0.06, ry: H * 0.05, speed: 1.0, base: 0,           color: '#E6B47A', r: W * 0.038, pulseFreq: 1.8, pulseAmp: 0.25 },
+    { ax: W * 0.78, ay: H * 0.18, rx: W * 0.05, ry: H * 0.07, speed: 0.8, base: 2,           color: '#E05050', r: W * 0.034, pulseFreq: 1.3, pulseAmp: 0.35 },
+    { ax: W * 0.30, ay: H * 0.36, rx: W * 0.04, ry: H * 0.04, speed: 1.4, base: 1,           color: '#F0C890', r: W * 0.032, pulseFreq: 2.2, pulseAmp: 0.20 },
+    { ax: W * 0.72, ay: H * 0.34, rx: W * 0.05, ry: H * 0.05, speed: 0.6, base: 3,           color: 'rgba(180,180,200,0.85)', r: W * 0.030, pulseFreq: 1.0, pulseAmp: 0.30 },
+  ];
+  return (
+    <Group>
+      {/* Pillar halo — a vertical RadialGradient centered on the
+          pillar's midline. Wider near the bottom, narrower near the
+          top, so the light reads as "rising from the ground". */}
+      <Rect
+        x={pillarCx - pillarW * 2.5}
+        y={pillarTop - H * 0.04}
+        width={pillarW * 5}
+        height={pillarBottom - pillarTop + H * 0.04}
+      >
+        <LinearGradient
+          start={vec(pillarCx, pillarTop - H * 0.04)}
+          end={vec(pillarCx, pillarBottom)}
+          colors={[
+            'rgba(230,180,122,0.0)',
+            'rgba(230,180,122,0.15)',
+            'rgba(230,180,122,0.32)',
+          ]}
+        />
+      </Rect>
+      {/* Pillar core — a narrow bright column. Solid amber at the
+          base, fading to translucent at the top. Static — the
+          steadiness is the point. */}
+      <Rect
+        x={pillarCx - pillarW / 2}
+        y={pillarTop}
+        width={pillarW}
+        height={pillarBottom - pillarTop}
+      >
+        <LinearGradient
+          start={vec(pillarCx, pillarTop)}
+          end={vec(pillarCx, pillarBottom)}
+          colors={['rgba(240,200,144,0.0)', 'rgba(240,200,144,0.95)']}
+        />
+      </Rect>
+
+      {swirlers.map((s, i) => (
+        <SwirlOrb key={i} phase={phase} swirl={s} />
+      ))}
+    </Group>
+  );
+}
+function SwirlOrb({
+  phase, swirl,
+}: {
+  phase: ReturnType<typeof useSharedValue<number>>;
+  swirl: {
+    ax: number; ay: number; rx: number; ry: number;
+    speed: number; base: number; color: string; r: number;
+    pulseFreq: number; pulseAmp: number;
+  };
+}) {
+  const ox = useDerivedValue(() => {
+    const a = swirl.base + phase.value * Math.PI * 2 * swirl.speed;
+    return swirl.ax + swirl.rx * Math.cos(a);
+  }, [phase]);
+  const oy = useDerivedValue(() => {
+    const a = swirl.base + phase.value * Math.PI * 2 * swirl.speed;
+    return swirl.ay + swirl.ry * Math.sin(a);
+  }, [phase]);
+  const orbR = useDerivedValue(() => {
+    return swirl.r * (1 - swirl.pulseAmp + 2 * swirl.pulseAmp * (0.5 + 0.5 * Math.sin(phase.value * Math.PI * 2 * swirl.pulseFreq)));
+  }, [phase]);
+  const haloR = useDerivedValue(() => orbR.value * 2.4, [orbR]);
+  const haloOp = useDerivedValue(() => 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(phase.value * Math.PI * 2 * swirl.pulseFreq)), [phase]);
+  return (
+    <Group>
+      <Circle cx={ox} cy={oy} r={haloR} opacity={haloOp}>
+        <RadialGradient
+          c={vec(0, 0)}
+          r={swirl.r * 2.4}
+          colors={[swirl.color, 'rgba(230,180,122,0)']}
+        />
+      </Circle>
+      <Circle cx={ox} cy={oy} r={orbR} color={swirl.color} />
     </Group>
   );
 }
