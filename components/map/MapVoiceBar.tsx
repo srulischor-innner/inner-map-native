@@ -46,6 +46,14 @@ import { api } from '../../services/api';
 
 type VoiceState = 'idle' | 'recording' | 'thinking' | 'speaking';
 type ModalKind = null | 'explainer' | 'selfInfo' | 'selfLikeInfo' | 'selfLikeDisabled';
+type ActiveMic = 'self' | 'self-like';
+
+// Phase 2 (polish round 8) — small toast shown when the server returns
+// fallback="missing_belief" (the user spoke to a part they haven't yet
+// established a belief for) or fallback="no_part_detected" (no part
+// was detected with confidence). The audio still plays in both cases;
+// the toast is purely informational and dismisses on its own.
+type FallbackToast = { kind: 'missing_belief' | 'no_part_detected'; partName?: string | null } | null;
 
 const MIN_HOLD_MS = 300;          // discard accidental taps shorter than this
 const SELF_LABEL = 'SELF';
@@ -82,6 +90,16 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   const [modal, setModal] = useState<ModalKind>(null);
   const [explainerSeen, setExplainerSeen] = useState<boolean | undefined>(undefined);
   const [holdSec, setHoldSec] = useState(0);
+  // Phase 2 (polish round 8) — Self-like activation gate. True when
+  // the user has at least one part with an established belief. Drives
+  // the Self-like mic styling (enabled vs. disabled placeholder) and
+  // the tap-vs-hold behavior. Loaded once on mount; refreshed each
+  // time the user dismisses the explainer or finishes a self-like
+  // turn (a SAVE_BELIEF flow in chat could land a new belief while
+  // the user is here).
+  const [selfLikeEnabled, setSelfLikeEnabled] = useState(false);
+  const [activeMic, setActiveMic] = useState<ActiveMic | null>(null);
+  const [fallbackToast, setFallbackToast] = useState<FallbackToast>(null);
 
   // Recording infra — same expo-audio hook the chat tab voice-note
   // path uses. HIGH_QUALITY gives m4a on iOS / mp4 on Android, both
@@ -91,6 +109,10 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   const wantRecordingRef = useRef(false);
   const pressStartTimeRef = useRef<number>(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Locks which mic the current recording belongs to, so a mid-record
+  // state change can't redirect dispatch into the wrong branch.
+  const recordingModeRef = useRef<ActiveMic | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fetch the explainer-seen flag once on mount. Result is cached
   // for this session; the POST/dismiss path updates it locally so
@@ -103,6 +125,20 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     return () => { cancelled = true; };
   }, []);
 
+  // Refresh the parts-with-beliefs list. Called on mount and after
+  // any self-like turn to pick up freshly-established beliefs.
+  const refreshBeliefStatus = useCallback(async () => {
+    try {
+      const { parts } = await api.getPartsWithBeliefs();
+      const any = parts.some((p) => !!(p.belief && p.belief.trim()));
+      setSelfLikeEnabled(any);
+    } catch {
+      setSelfLikeEnabled(false);
+    }
+  }, []);
+
+  useEffect(() => { refreshBeliefStatus(); }, [refreshBeliefStatus]);
+
   // Unmount cleanup — make sure no recorder / player is left running.
   useEffect(() => () => {
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
@@ -111,8 +147,30 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     playerRef.current = null;
   }, [recorder]);
 
-  // -------- Self mic — press-and-hold --------
-  const startRecording = useCallback(async () => {
+  // Show a fallback toast for ~4s, then auto-dismiss. The toast is
+  // additive — the audio still plays underneath; the toast just gives
+  // the user the next step ("Open this folder to establish belief").
+  const showFallbackToast = useCallback((toast: FallbackToast) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setFallbackToast(toast);
+    if (toast) {
+      toastTimerRef.current = setTimeout(() => setFallbackToast(null), 4500);
+    }
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
+
+  // -------- Unified press-and-hold lifecycle (Self + Self-like) --------
+  // The Self mic and the Self-like mic share the same record / stop /
+  // send pipeline; only the mode arg + post-turn handling differ. The
+  // mode for the in-flight recording is held in recordingModeRef so a
+  // mid-record state shuffle can't crosswire branches.
+  const startRecording = useCallback(async (mode: ActiveMic) => {
     if (state !== 'idle') return;
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
@@ -128,6 +186,8 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       } catch {}
       await recorder.prepareToRecordAsync();
       recorder.record();
+      recordingModeRef.current = mode;
+      setActiveMic(mode);
       setState('recording');
       setHoldSec(0);
       pressStartTimeRef.current = Date.now();
@@ -138,64 +198,101 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     } catch (e) {
       console.warn('[map-voice-bar] startRecording failed:', (e as Error)?.message);
       setState('idle');
+      setActiveMic(null);
+      recordingModeRef.current = null;
     }
   }, [state, recorder]);
 
-  const sendAudio = useCallback(async (uri: string, mime: string) => {
+  // Decode + play the base64 MP3 returned by /api/map-voice/turn.
+  // Reused across all four outcome branches (self / self-like
+  // success / missing_belief / no_part_detected) so the audio path
+  // is identical regardless of what the LLM produced. Returns
+  // a cleanup promise that resolves when playback finishes — the
+  // state machine transitions idle on its own via the poll below.
+  const playReplyAudio = useCallback(async (base64: string) => {
+    const tmpUri = `${FileSystem.cacheDirectory ?? ''}map-voice-${Date.now()}.mp3`;
+    await FileSystem.writeAsStringAsync(tmpUri, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
+    const player = createAudioPlayer({ uri: tmpUri });
+    playerRef.current = player;
+    setState('speaking');
+    player.play();
+    const playCheck = setInterval(() => {
+      try {
+        const s = player.currentStatus;
+        if (s?.didJustFinish || (s && s.duration > 0 && s.currentTime >= s.duration - 0.05)) {
+          clearInterval(playCheck);
+          setState('idle');
+          setActiveMic(null);
+          try { player.remove(); } catch {}
+          playerRef.current = null;
+          FileSystem.deleteAsync(tmpUri, { idempotent: true }).catch(() => {});
+        }
+      } catch {}
+    }, 200);
+  }, []);
+
+  const sendAudio = useCallback(async (uri: string, mime: string, mode: ActiveMic) => {
     setState('thinking');
     try {
-      const result = await api.mapVoiceTurn(uri, mime);
+      const result = await api.mapVoiceTurn(uri, mime, mode);
       if (!result) {
         console.warn('[map-voice-bar] turn returned null');
         setState('idle');
+        setActiveMic(null);
         return;
       }
       if ('error' in result) {
         console.warn('[map-voice-bar] turn error:', result.error, result.message);
         setState('idle');
+        setActiveMic(null);
         return;
       }
+
+      // Branch on (mode, fallback). Self mode never returns a
+      // fallback. Self-like has two: missing_belief (a part was
+      // detected but the user hasn't articulated their belief for
+      // it yet) and no_part_detected (the detection LLM couldn't
+      // commit to a single part with confidence). In BOTH self-like
+      // fallback branches we still play the server's audio reply
+      // — the LLM crafts a gentle nudge — and skip the part-lighting
+      // so the visual doesn't claim a detection that didn't happen.
+      if (mode === 'self-like' && result.fallback === 'missing_belief') {
+        showFallbackToast({ kind: 'missing_belief', partName: result.part_name || result.detected_part });
+        await playReplyAudio(result.audio_base64);
+        // Refresh belief status — the user may establish belief in
+        // a follow-up, and the next mount/refresh re-enables this
+        // flag without a manual remount.
+        refreshBeliefStatus();
+        return;
+      }
+      if (mode === 'self-like' && result.fallback === 'no_part_detected') {
+        showFallbackToast({ kind: 'no_part_detected' });
+        await playReplyAudio(result.audio_base64);
+        return;
+      }
+
+      // Happy path — Self always, or Self-like with a part + belief.
       // Light up the detected part on the map before audio starts —
       // the visual hits at the same beat the user starts hearing the
       // reply, which is the whole point of the unblending moment.
       try { onDetectedPart?.(result.detected_part, result.part_label); } catch {}
-
-      // Decode the base64 MP3 into a temp file, then play. data: URIs
-      // work on iOS but not reliably on Android; the file-based path
-      // is cross-platform.
-      const tmpUri = `${FileSystem.cacheDirectory ?? ''}map-voice-${Date.now()}.mp3`;
-      await FileSystem.writeAsStringAsync(tmpUri, result.audio_base64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
-      const player = createAudioPlayer({ uri: tmpUri });
-      playerRef.current = player;
-      setState('speaking');
-      player.play();
-      // Poll for completion — when the audio ends, drop back to idle.
-      // expo-audio's status callbacks are inconsistent across versions
-      // so a small interval is the most robust signal.
-      const playCheck = setInterval(() => {
-        try {
-          const s = player.currentStatus;
-          if (s?.didJustFinish || (s && s.duration > 0 && s.currentTime >= s.duration - 0.05)) {
-            clearInterval(playCheck);
-            setState('idle');
-            try { player.remove(); } catch {}
-            playerRef.current = null;
-            FileSystem.deleteAsync(tmpUri, { idempotent: true }).catch(() => {});
-          }
-        } catch {}
-      }, 200);
+      await playReplyAudio(result.audio_base64);
+      if (mode === 'self-like') refreshBeliefStatus();
     } catch (e) {
       console.warn('[map-voice-bar] sendAudio threw:', (e as Error)?.message);
       setState('idle');
+      setActiveMic(null);
     }
-  }, [onDetectedPart]);
+  }, [onDetectedPart, playReplyAudio, refreshBeliefStatus, showFallbackToast]);
 
   const stopAndDispatch = useCallback(async () => {
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     const heldMs = Date.now() - pressStartTimeRef.current;
+    const mode = recordingModeRef.current;
+    recordingModeRef.current = null;
     try {
       await recorder.stop();
       try {
@@ -210,16 +307,18 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     if (heldMs < MIN_HOLD_MS) {
       console.log('[map-voice-bar] hold too short — discarding');
       setState('idle');
+      setActiveMic(null);
       return;
     }
     const uri = recorder.uri;
     if (!uri) {
       console.warn('[map-voice-bar] no recording uri');
       setState('idle');
+      setActiveMic(null);
       return;
     }
     const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/mp4';
-    sendAudio(uri, mime);
+    sendAudio(uri, mime, mode || 'self');
   }, [recorder, sendAudio]);
 
   const onSelfPressIn = useCallback(() => {
@@ -233,10 +332,37 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       wantRecordingRef.current = false;
       return;
     }
-    startRecording();
+    startRecording('self');
   }, [state, explainerSeen, startRecording]);
 
   const onSelfPressOut = useCallback(() => {
+    if (!wantRecordingRef.current) return;
+    wantRecordingRef.current = false;
+    if (state === 'recording') stopAndDispatch();
+  }, [state, stopAndDispatch]);
+
+  const onSelfLikePressIn = useCallback(() => {
+    if (state !== 'idle') return;
+    // Disabled tooltip path — no belief established yet. Fire the
+    // info modal and bail out before any recording infra is touched.
+    if (!selfLikeEnabled) {
+      Haptics.selectionAsync().catch(() => {});
+      setModal('selfLikeDisabled');
+      return;
+    }
+    wantRecordingRef.current = true;
+    if (explainerSeen === false) {
+      // Same first-time gate as Self — the explainer covers both
+      // mics in a single modal, so the first tap (whichever mic)
+      // surfaces it.
+      setModal('explainer');
+      wantRecordingRef.current = false;
+      return;
+    }
+    startRecording('self-like');
+  }, [state, selfLikeEnabled, explainerSeen, startRecording]);
+
+  const onSelfLikePressOut = useCallback(() => {
     if (!wantRecordingRef.current) return;
     wantRecordingRef.current = false;
     if (state === 'recording') stopAndDispatch();
@@ -249,9 +375,13 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   }, []);
 
   // -------- Render --------
-  const selfMicActive = state === 'recording';
+  const recording = state === 'recording';
   const thinking = state === 'thinking';
   const speaking = state === 'speaking';
+  const selfMicRecording = recording && activeMic === 'self';
+  const selfLikeMicRecording = recording && activeMic === 'self-like';
+  const selfMicBusy = (thinking || speaking) && activeMic === 'self';
+  const selfLikeMicBusy = (thinking || speaking) && activeMic === 'self-like';
 
   return (
     <>
@@ -264,20 +394,20 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
             hitSlop={8}
             style={[
               styles.mic,
-              selfMicActive && styles.micRecording,
-              thinking && styles.micThinking,
-              speaking && styles.micSpeaking,
+              selfMicRecording && styles.micRecording,
+              selfMicBusy && thinking && styles.micThinking,
+              selfMicBusy && speaking && styles.micSpeaking,
             ]}
             accessibilityLabel="Self — hold to speak"
             accessibilityRole="button"
           >
-            {thinking ? (
+            {selfMicBusy && thinking ? (
               <ActivityIndicator color={colors.amber} />
             ) : (
               <Ionicons
                 name="mic"
                 size={22}
-                color={selfMicActive || speaking ? '#fff' : colors.amber}
+                color={selfMicRecording || (selfMicBusy && speaking) ? '#fff' : colors.amber}
               />
             )}
           </Pressable>
@@ -292,24 +422,54 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
               <Ionicons name="information-circle-outline" size={14} color={colors.creamDim} />
             </Pressable>
           </View>
-          {selfMicActive ? (
+          {selfMicRecording ? (
             <Text style={styles.hint}>recording… {holdSec}s</Text>
           ) : null}
         </View>
 
-        <View style={[styles.col, styles.colDisabled]}>
-          <Text style={[styles.glyph, styles.glyphDim]}>◆</Text>
+        {/* Self-like mic. When `selfLikeEnabled` is false (no part has
+            a belief yet), tap → 'selfLikeDisabled' tooltip and no
+            recording. When enabled, behavior mirrors Self: press-and-
+            hold to record, release to dispatch with mode='self-like'.
+            Visual: same amber styling as Self when enabled, dimmed
+            cream placeholder when disabled — same hierarchy as the
+            Phase 1 design but the column is no longer permanently
+            faded. */}
+        <View style={[styles.col, !selfLikeEnabled && styles.colDisabled]}>
+          <Text style={[styles.glyph, !selfLikeEnabled && styles.glyphDim]}>◆</Text>
           <Pressable
-            onPress={() => {
-              Haptics.selectionAsync().catch(() => {});
-              setModal('selfLikeDisabled');
-            }}
+            onPressIn={onSelfLikePressIn}
+            onPressOut={onSelfLikePressOut}
             hitSlop={8}
-            style={[styles.mic, styles.micDisabled]}
-            accessibilityLabel="Self-like part — not yet available"
+            style={[
+              styles.mic,
+              !selfLikeEnabled && styles.micDisabled,
+              selfLikeMicRecording && styles.micRecording,
+              selfLikeMicBusy && thinking && styles.micThinking,
+              selfLikeMicBusy && speaking && styles.micSpeaking,
+            ]}
+            accessibilityLabel={
+              selfLikeEnabled
+                ? 'Self-like part — hold to speak'
+                : 'Self-like part — not yet available'
+            }
             accessibilityRole="button"
           >
-            <Ionicons name="mic" size={22} color={colors.creamFaint} />
+            {selfLikeMicBusy && thinking ? (
+              <ActivityIndicator color={colors.amber} />
+            ) : (
+              <Ionicons
+                name="mic"
+                size={22}
+                color={
+                  !selfLikeEnabled
+                    ? colors.creamFaint
+                    : selfLikeMicRecording || (selfLikeMicBusy && speaking)
+                      ? '#fff'
+                      : colors.amber
+                }
+              />
+            )}
           </Pressable>
           <View style={styles.labelRow}>
             <Pressable
@@ -318,12 +478,40 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
               style={styles.infoBtn}
               accessibilityLabel="What does Self-like part do"
             >
-              <Ionicons name="information-circle-outline" size={14} color={colors.creamFaint} />
+              <Ionicons
+                name="information-circle-outline"
+                size={14}
+                color={selfLikeEnabled ? colors.creamDim : colors.creamFaint}
+              />
             </Pressable>
-            <Text style={[styles.label, styles.labelDim]}>{SELF_LIKE_LABEL}</Text>
+            <Text style={[styles.label, !selfLikeEnabled && styles.labelDim]}>
+              {SELF_LIKE_LABEL}
+            </Text>
           </View>
+          {selfLikeMicRecording ? (
+            <Text style={styles.hint}>recording… {holdSec}s</Text>
+          ) : null}
         </View>
       </View>
+
+      {/* Fallback toast — sits above the mics, auto-dismisses ~4.5s
+          after appearing. Two variants:
+            • missing_belief: "{part_name} — open this folder and
+              establish your belief." Audio (the LLM's gentle nudge)
+              is already playing underneath.
+            • no_part_detected: "Couldn’t identify a single part —
+              try again with one specific situation." */}
+      {fallbackToast ? (
+        <View style={styles.toastWrap} pointerEvents="none">
+          <View style={styles.toast}>
+            <Text style={styles.toastText}>
+              {fallbackToast.kind === 'missing_belief'
+                ? `${fallbackToast.partName || 'This part'} — open the folder to establish your belief.`
+                : 'Couldn’t identify a single part — try again with one specific situation.'}
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
       {/* First-time explainer modal. */}
       <Modal
@@ -469,6 +657,34 @@ const styles = StyleSheet.create({
     color: colors.creamDim,
     fontFamily: fonts.sans,
     fontSize: 11,
+  },
+
+  // Fallback toast — pinned just above the mic bar. Self-aligned
+  // wrap with absolute positioning so it overlays without affecting
+  // mic-row layout. Pointer-events disabled so taps pass through.
+  toastWrap: {
+    position: 'absolute',
+    left: 0, right: 0,
+    bottom: 140,
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  toast: {
+    maxWidth: 360,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    backgroundColor: 'rgba(20,19,26,0.92)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.35)',
+  },
+  toastText: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+    letterSpacing: 0.2,
   },
 
   // Modals — shared backdrop + card styling. Single GOT IT button on

@@ -205,6 +205,15 @@ export function stripMarkers(text: string): string {
     // see its own marker echoed back next turn. Display path preserves
     // it (see hasStarterMapComplete + stripMarkersForDisplay below).
     .replace(/\[STARTER_MAP_COMPLETE\]/g, '')
+    // SAVE_BELIEF — Phase 2 (polish round 8) belief-work marker. The
+    // server parses + strips this from /api/chat replies before they
+    // hit the client and emits the parsed records via savedBeliefs[]
+    // on the response payload (cleanedText is what arrives in the
+    // streamed text). Adding the strip rule here is defensive — a
+    // streaming-mid-flush could let a partial marker leak through,
+    // and we never want the literal "[SAVE_BELIEF:{...}]" string to
+    // be spoken by TTS or echoed back into the model's next turn.
+    .replace(/\[SAVE_BELIEF:\s*\{[\s\S]*?\}\s*\]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 }
@@ -248,6 +257,10 @@ export function stripMarkersForDisplay(text: string): string {
     // bubble would just be noise. Detection is done separately via
     // hasStarterMapComplete(rawText) before this strip runs.
     .replace(/\[STARTER_MAP_COMPLETE\]/g, '')
+    // SAVE_BELIEF — see note in stripMarkers(). The server normally
+    // strips this before the response reaches us; the rule here is
+    // a defensive catch for streaming partials that slipped through.
+    .replace(/\[SAVE_BELIEF:\s*\{[\s\S]*?\}\s*\]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 }

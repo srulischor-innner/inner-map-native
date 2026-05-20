@@ -24,23 +24,36 @@
 // "still emerging" line — identical to the web app's pattern, so the
 // folder still feels valuable empty.
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Modal,
   View,
   Text,
+  TextInput,
   ScrollView,
   Pressable,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { playPreFetchedAudio } from '../../utils/ttsStream';
+import { armPendingChatMessage } from '../../utils/pendingChatMessage';
 import type { NodeKey } from './InnerMapCanvas';
+
+// Phase 2 (polish round 8). Belief section renders for the three
+// canonical single-row part types — wound, fixer, skeptic — where a
+// user's articulated belief unlocks the Self-like voice for that
+// part. Managers + firefighters can grow belief support in a later
+// phase (each row would carry its own belief). Self / self-like
+// folders intentionally don't get a belief field (Self IS the
+// leader; self-like is the operator, not the part being addressed).
+const BELIEF_PART_TYPES = new Set(['wound', 'fixer', 'skeptic']);
 
 type Props = {
   visible: boolean;
@@ -250,6 +263,16 @@ export function PartFolderModal({
           ) : null}
           <Text style={styles.description}>{meta.description}</Text>
 
+          {/* User's articulated belief for this part — Phase 2 (polish
+              round 8). Renders for wound/fixer/skeptic only. Gated on
+              having a part row so we know which id to save against;
+              early in the user's journey there may be no row yet, in
+              which case the section is hidden until the AI files the
+              part for the first time. */}
+          {part?.id && BELIEF_PART_TYPES.has(String(partKey)) ? (
+            <BeliefSection part={part} color={meta.color} />
+          ) : null}
+
           {/* Per-part section rendering. Every section is ALWAYS visible —
               empty fields show a quiet italic placeholder so the user can
               see what the map is building toward, instead of a missing row.
@@ -297,6 +320,224 @@ function Section({
         {has ? value : placeholder}
       </Text>
       <View style={styles.sectionDivider} />
+    </View>
+  );
+}
+
+// ============================================================================
+// Belief section — Phase 2 (polish round 8). Renders inside the part
+// folder body for wound/fixer/skeptic. Three render states:
+//
+//   1. EMPTY  → "Establish belief for this part" button. Arms a pre-
+//      filled chat message via utils/pendingChatMessage, then routes
+//      to the chat tab where the index screen consumes the prefill
+//      on mount and sends it in Explore mode.
+//
+//   2. FILLED → belief text + Edit + Clear actions. Clear shows a
+//      confirmation Alert (the user just spent real effort articulating
+//      this — destructive action gets a guardrail).
+//
+//   3. EDITING → multi-line TextInput + Save + Cancel. Save calls
+//      /api/parts/:id/belief; failure leaves the editor open so the
+//      user doesn't lose their draft on a transient network blip.
+//
+// The component owns its own state and doesn't bubble changes to the
+// modal's parent — re-reading the parts list happens at the map-tab
+// level on the next /api/parts pull. The local state is what the user
+// sees within this session of the folder being open.
+// ============================================================================
+function BeliefSection({ part, color }: { part: any; color: string }) {
+  const router = useRouter();
+  const [belief, setBelief] = useState<string>(typeof part?.belief === 'string' ? part.belief : '');
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // If the modal switches part rows while open, resync local state from
+  // the new row's belief field. Without this the section would keep
+  // showing the previous part's belief on re-open.
+  useEffect(() => {
+    setBelief(typeof part?.belief === 'string' ? part.belief : '');
+    setEditing(false);
+    setDraft('');
+  }, [part?.id, part?.belief]);
+
+  const partName = String(part?.name || part?.category || 'this part');
+
+  const handleEstablish = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    const text =
+      `I want to work on finding my own belief for ${partName} — different from what this part believes.`;
+    armPendingChatMessage(text, 'explore');
+    router.push('/');
+  }, [partName, router]);
+
+  const handleStartEdit = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    setDraft(belief);
+    setEditing(true);
+  }, [belief]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditing(false);
+    setDraft('');
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    const trimmed = draft.trim();
+    if (!trimmed || !part?.id) return;
+    setSaving(true);
+    Haptics.selectionAsync().catch(() => {});
+    try {
+      const result = await api.savePartBelief(String(part.id), trimmed);
+      if (result?.belief) {
+        setBelief(result.belief);
+        setEditing(false);
+        setDraft('');
+      } else {
+        Alert.alert(
+          'Couldn’t save',
+          'We couldn’t save your belief just now. Your draft is still here — try again in a moment.',
+        );
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, part?.id]);
+
+  const handleClear = useCallback(() => {
+    if (!part?.id) return;
+    Alert.alert(
+      'Clear belief?',
+      'This will remove the belief you saved for this part. The Self-like voice for this part will be unavailable until you establish a new belief.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            const ok = await api.deletePartBelief(String(part.id));
+            if (ok) {
+              setBelief('');
+            } else {
+              Alert.alert(
+                'Couldn’t clear',
+                'We couldn’t clear the belief just now. Try again in a moment.',
+              );
+            }
+          },
+        },
+      ],
+    );
+  }, [part?.id]);
+
+  const hasBelief = !!(belief && belief.trim());
+
+  return (
+    <View style={styles.beliefWrap}>
+      <Text style={styles.beliefLabel}>MY BELIEF HERE</Text>
+      <Text style={styles.beliefSubtitle}>
+        What I believe — different from what this part believes.
+      </Text>
+
+      {editing ? (
+        <View style={styles.beliefEditor}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            multiline
+            placeholder="What do you actually believe? (different from what this part believes)"
+            placeholderTextColor="rgba(240,237,232,0.3)"
+            style={styles.beliefInput}
+            editable={!saving}
+            autoFocus
+          />
+          <View style={styles.beliefActionsRow}>
+            <Pressable
+              onPress={handleCancelEdit}
+              disabled={saving}
+              style={({ pressed }) => [
+                styles.beliefBtn,
+                styles.beliefBtnSecondary,
+                pressed && { opacity: 0.7 },
+                saving && { opacity: 0.5 },
+              ]}
+              hitSlop={6}
+            >
+              <Text style={styles.beliefBtnSecondaryText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSave}
+              disabled={saving || !draft.trim()}
+              style={({ pressed }) => [
+                styles.beliefBtn,
+                styles.beliefBtnPrimary,
+                { borderColor: color, backgroundColor: color + '22' },
+                pressed && { opacity: 0.85 },
+                (saving || !draft.trim()) && { opacity: 0.5 },
+              ]}
+              hitSlop={6}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color={color} />
+              ) : (
+                <Text style={[styles.beliefBtnPrimaryText, { color }]}>Save</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      ) : hasBelief ? (
+        <View style={styles.beliefFilled}>
+          <Text style={styles.beliefValue}>{belief}</Text>
+          <View style={styles.beliefActionsRow}>
+            <Pressable
+              onPress={handleStartEdit}
+              style={({ pressed }) => [
+                styles.beliefBtn,
+                styles.beliefBtnSecondary,
+                pressed && { opacity: 0.7 },
+              ]}
+              hitSlop={6}
+            >
+              <Ionicons name="create-outline" size={13} color={colors.creamDim} style={{ marginRight: 4 }} />
+              <Text style={styles.beliefBtnSecondaryText}>Edit</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleClear}
+              style={({ pressed }) => [
+                styles.beliefBtn,
+                styles.beliefBtnSecondary,
+                pressed && { opacity: 0.7 },
+              ]}
+              hitSlop={6}
+            >
+              <Ionicons name="trash-outline" size={13} color={colors.creamDim} style={{ marginRight: 4 }} />
+              <Text style={styles.beliefBtnSecondaryText}>Clear</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : (
+        <Pressable
+          onPress={handleEstablish}
+          style={({ pressed }) => [
+            styles.beliefEstablishBtn,
+            { borderColor: color + '66', backgroundColor: color + '10' },
+            pressed && { opacity: 0.85 },
+          ]}
+          accessibilityLabel="Establish belief for this part"
+          hitSlop={8}
+        >
+          <Ionicons
+            name="create-outline"
+            size={15}
+            color={color}
+            style={{ marginRight: 8 }}
+          />
+          <Text style={[styles.beliefEstablishText, { color }]}>
+            Establish belief for this part
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -786,6 +1027,104 @@ const styles = StyleSheet.create({
     height: 0.5,
     backgroundColor: 'rgba(240,237,232,0.08)',
     marginTop: 12,
+  },
+
+  // Belief section — sits below the part description and above the
+  // detected pill. Distinct visual register from the regular Section
+  // rows (which are amber/cream) — uses the part's own color so the
+  // user reads it as "my answer to this part" rather than "another
+  // field the AI fills." Padding + soft border so it reads as a
+  // self-contained zone within the folder.
+  beliefWrap: {
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(240,237,232,0.08)',
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(240,237,232,0.08)',
+  },
+  beliefLabel: {
+    color: '#E6B47A',
+    fontFamily: fonts.sansBold,
+    fontSize: 10,
+    letterSpacing: 2,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  beliefSubtitle: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  beliefEstablishBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+  },
+  beliefEstablishText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 13,
+    letterSpacing: 0.3,
+  },
+  beliefFilled: {},
+  beliefValue: {
+    color: '#F0EDE8',
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 10,
+  },
+  beliefEditor: {},
+  beliefInput: {
+    color: '#F0EDE8',
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    lineHeight: 22,
+    minHeight: 80,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: radii.sm,
+    borderWidth: 0.5,
+    borderColor: 'rgba(240,237,232,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    marginBottom: 10,
+    textAlignVertical: 'top',
+  },
+  beliefActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  beliefBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+  },
+  beliefBtnPrimary: {},
+  beliefBtnPrimaryText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+    letterSpacing: 0.3,
+  },
+  beliefBtnSecondary: {
+    borderColor: 'rgba(240,237,232,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  beliefBtnSecondaryText: {
+    color: colors.creamDim,
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+    letterSpacing: 0.3,
   },
 
   // Detected Nx pill — small amber bordered pill at the top of the

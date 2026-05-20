@@ -136,6 +136,18 @@ export type RateLimitInfo = {
   windowHours?: number;
 };
 
+/** One record emitted by the server's SAVE_BELIEF marker parser
+ *  (Phase 2, polish round 8). The server scans the AI's reply for
+ *  `[SAVE_BELIEF:{ part_id, part_name, belief }]` markers, persists
+ *  each to the parts table, and returns the records on the chat
+ *  response payload alongside the cleaned text. The native client
+ *  renders one SaveBeliefCard per record inline in the chat thread. */
+export type SavedBelief = {
+  part_id: string;
+  part_name: string;
+  belief: string;
+};
+
 export type StreamCallbacks = {
   onDelta: (text: string) => void;
   onDone: (fullText: string) => void;
@@ -145,6 +157,12 @@ export type StreamCallbacks = {
    *  omits this, rate limits fall through to onError with the
    *  human-readable message so existing call sites still work. */
   onRateLimit?: (info: RateLimitInfo) => void;
+  /** Fires once per chat response with the list of beliefs the
+   *  server saved on this turn (parsed from [SAVE_BELIEF:...] markers
+   *  in the AI's reply, then stripped from the text). Empty / unset
+   *  when the AI didn't emit any belief markers. The chat tab uses
+   *  this to inject SaveBeliefCard messages into the thread. */
+  onSavedBeliefs?: (records: SavedBelief[]) => void;
 };
 
 export const api = {
@@ -306,11 +324,15 @@ export const api = {
             return;
           }
           if (serverError) { cb.onError(serverError); return; }
-          if (fullText) { cb.onDelta(fullText); cb.onDone(fullText); return; }
+          if (fullText) {
+            cb.onDelta(fullText);
+            cb.onDone(fullText);
+            return;
+          }
           cb.onError('empty reply');
           return;
         }
-        // Normal JSON path — server returns { reply: "..." }.
+        // Normal JSON path — server returns { reply: "...", savedBeliefs?: [...] }.
         const j: any = await res.json().catch(() => null);
         const reply = (j && (j.reply || j.text)) || '';
         if (!reply) {
@@ -319,6 +341,21 @@ export const api = {
         }
         cb.onDelta(reply);
         cb.onDone(reply);
+        // Phase 2 — surface savedBeliefs from the response after the
+        // reply has landed. The server has already stripped the
+        // [SAVE_BELIEF:...] markers from `reply`, so the cards are
+        // additive UI (the bubble text is clean by the time they
+        // render).
+        if (Array.isArray(j?.savedBeliefs) && j.savedBeliefs.length > 0) {
+          const records: SavedBelief[] = j.savedBeliefs
+            .filter((r: any) => r && typeof r.part_id === 'string' && typeof r.belief === 'string')
+            .map((r: any) => ({
+              part_id: String(r.part_id),
+              part_name: String(r.part_name || ''),
+              belief: String(r.belief || ''),
+            }));
+          if (records.length > 0) cb.onSavedBeliefs?.(records);
+        }
       } catch (e) {
         if ((e as any)?.name === 'AbortError') return;
         cb.onError((e as Error)?.message || 'network error');
@@ -634,11 +671,19 @@ export const api = {
    *  A 4xx body is returned as-is via the `error` field so the
    *  caller can show the server-prepared message (e.g.
    *  empty-transcript). */
-  async mapVoiceTurn(uri: string, mime: string): Promise<{
+  async mapVoiceTurn(
+    uri: string,
+    mime: string,
+    mode: 'self' | 'self-like' = 'self',
+  ): Promise<{
+    mode: 'self' | 'self-like';
     transcript: string;
     response_text: string;
     detected_part: string;
     part_label: string | null;
+    part_id?: string;
+    part_name?: string;
+    fallback?: 'missing_belief' | 'no_part_detected';
     audio_base64: string;
     audio_mime: string;
   } | { error: string; message?: string } | null> {
@@ -647,13 +692,15 @@ export const api = {
       const userId = await getUserId();
       const fileRes = await fetch(uri);
       const blob = await fileRes.blob();
-      console.log(`[map-voice] turn POST — uri=${uri.slice(-60)} mime=${mime} blobSize=${blob.size}B`);
-      const up = await apiFetch('/api/map-voice/turn', {
+      console.log(`[map-voice] turn POST mode=${mode} uri=${uri.slice(-60)} mime=${mime} blobSize=${blob.size}B`);
+      const up = await apiFetch(`/api/map-voice/turn?mode=${encodeURIComponent(mode)}`, {
         label: 'map-voice-turn', method: 'POST',
         headers: { 'Content-Type': mime, 'X-User-Id': userId },
         body: blob as any,
         // The whole STT → LLM → TTS chain runs server-side; give it
-        // a generous budget. ElevenLabs alone can take ~1s.
+        // a generous budget. ElevenLabs alone can take ~1s. Self-like
+        // mode runs a second detection LLM call so the budget covers
+        // both.
         timeoutMs: 30000,
       });
       console.log(`[map-voice] turn response — status=${up.status} elapsedMs=${Date.now() - t0}`);
@@ -702,6 +749,99 @@ export const api = {
       return res.ok;
     } catch (e) {
       console.warn('[map-voice-explainer-seen] threw:', (e as Error)?.message);
+      return false;
+    }
+  },
+
+  /** GET /api/parts/with-beliefs — list of the calling user's parts
+   *  with their belief status. Drives the Self-like mic enable flag
+   *  on the Map tab + the belief section in each part folder.
+   *  Returns an empty array on transport failure so the UI degrades
+   *  gracefully (Self-like mic stays disabled). */
+  async getPartsWithBeliefs(): Promise<{
+    parts: Array<{
+      id: string;
+      name: string;
+      type: string;
+      corePhrase: string | null;
+      belief: string | null;
+      beliefUpdatedAt: string | null;
+    }>;
+  }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/parts/with-beliefs', {
+        label: 'parts-with-beliefs', method: 'GET', headers,
+      });
+      if (!res.ok) return { parts: [] };
+      const j: any = await res.json().catch(() => null);
+      if (!j || !Array.isArray(j.parts)) return { parts: [] };
+      return {
+        parts: j.parts.map((p: any) => ({
+          id: String(p.id),
+          name: String(p.name || p.type || ''),
+          type: String(p.type || ''),
+          corePhrase: p.corePhrase ?? null,
+          belief: p.belief ?? null,
+          beliefUpdatedAt: p.beliefUpdatedAt ?? null,
+        })),
+      };
+    } catch (e) {
+      console.warn('[parts-with-beliefs] threw:', (e as Error)?.message);
+      return { parts: [] };
+    }
+  },
+
+  /** POST /api/parts/:id/belief — save or update the user's
+   *  articulated belief for a specific part. Trim happens server-
+   *  side; empty / whitespace-only inputs are rejected with a 400.
+   *  Returns the updated row on success, null on transport / 4xx
+   *  failure so the caller can show a small error toast without
+   *  changing app state. */
+  async savePartBelief(partId: string, belief: string): Promise<{
+    id: string;
+    name: string;
+    type: string;
+    belief: string;
+    beliefUpdatedAt: string;
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/parts/${encodeURIComponent(partId)}/belief`, {
+        label: 'parts-belief-save', method: 'POST', headers,
+        body: JSON.stringify({ belief }),
+      });
+      if (!res.ok) {
+        console.warn('[parts-belief-save] non-OK', res.status);
+        return null;
+      }
+      const j: any = await res.json().catch(() => null);
+      if (!j || typeof j.belief !== 'string') return null;
+      return {
+        id: String(j.id),
+        name: String(j.name || j.type || ''),
+        type: String(j.type || ''),
+        belief: j.belief,
+        beliefUpdatedAt: String(j.beliefUpdatedAt || ''),
+      };
+    } catch (e) {
+      console.warn('[parts-belief-save] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** DELETE /api/parts/:id/belief — clear the belief for a specific
+   *  part. The Self-like mic for that part becomes unavailable
+   *  until a new belief is established. Returns true on success. */
+  async deletePartBelief(partId: string): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/parts/${encodeURIComponent(partId)}/belief`, {
+        label: 'parts-belief-delete', method: 'DELETE', headers,
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[parts-belief-delete] threw:', (e as Error)?.message);
       return false;
     }
   },

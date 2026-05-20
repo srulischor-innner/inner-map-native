@@ -47,6 +47,7 @@ import { pulseMapTab } from '../../utils/mapPulse';
 import { activatePartOnMap, ActivatablePart } from '../../utils/mapActivation';
 import { subscribeRateLimitNotice } from '../../utils/rateLimitNotice';
 import { consumeSelfMode } from '../../utils/selfMode';
+import { consumePendingChatMessage } from '../../utils/pendingChatMessage';
 import {
   startStream as startTTSStream, appendStreamText as appendTTSStream,
   finishStream as finishTTSStream, cancelStream as cancelTTSStream,
@@ -480,6 +481,28 @@ export default function ChatScreen() {
       addAssistantMessageToProcess(finalGreeting);
       processHistoryRef.current.push({ role: 'assistant', content: finalGreeting });
       setTyping(false);
+
+      // Phase 2 (polish round 8) — cross-tab handoff consumer for the
+      // "Establish belief for this part" button in PartFolderModal.
+      // The button arms a prefilled chat message + target mode via
+      // utils/pendingChatMessage, then routes here. We pick it up
+      // AFTER the boot greeting bubble is in place so the thread
+      // reads coherently: Process gets the greeting, Explore (target
+      // mode) gets the user's prefill bubble + the AI's response.
+      //
+      // chatModeRef is updated synchronously alongside setChatMode so
+      // handleSend reads the correct mode the moment it runs, instead
+      // of waiting for the chatModeRef-sync effect to commit on the
+      // next render. setTimeout(0) defers the actual send by one tick
+      // so React commits the chatMode UI flip before the prefill
+      // bubble lands — the user briefly sees the right mode toggle
+      // active, then their message appears.
+      const pending = consumePendingChatMessage();
+      if (pending && pending.text) {
+        chatModeRef.current = pending.mode;
+        setChatMode(pending.mode);
+        setTimeout(() => { handleSend(pending.text); }, 0);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -945,6 +968,32 @@ export default function ChatScreen() {
               setTyping(false);
               // Stream complete — drop attention indicator back to idle.
               setAttentionState('idle');
+            },
+            onSavedBeliefs: (records) => {
+              // Phase 2 (polish round 8) — render one belief-saved
+              // confirmation card per record, inline in this thread.
+              // The card lands BELOW the assistant bubble that
+              // triggered the save (onDone has already fired by this
+              // point in the JSON-response path, so the order is
+              // assistant bubble → 1+ cards).
+              if (!records || records.length === 0) return;
+              for (const r of records) {
+                const cardId = uuidv4();
+                turnThread.setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: cardId,
+                    role: 'assistant',
+                    text: '',
+                    savedBelief: {
+                      partId: r.part_id,
+                      partName: r.part_name,
+                      belief: r.belief,
+                    },
+                  },
+                ]);
+              }
+              scrollToBottom();
             },
             onRateLimit: (info) => {
               // Daily chat cap. Replace the streaming bubble with a

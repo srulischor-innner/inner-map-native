@@ -49,6 +49,13 @@ export type ChatMsg = {
    *  to the Map tab. Set by the chat send pipeline in app/(tabs)/index.tsx
    *  on the streamed rawAccum BEFORE markers are stripped for display. */
   starterMapComplete?: boolean;
+  /** Phase 2 (polish round 8) — when present, the bubble renders as a
+   *  belief-saved confirmation card instead of a regular chat bubble.
+   *  No avatar, no streaming caret, no part badge — just a centered
+   *  card with the part name + the belief the AI just persisted. Used
+   *  to make the save action visible to the user without interrupting
+   *  the conversation flow. */
+  savedBelief?: { partId: string; partName: string; belief: string };
 };
 
 export function MessageBubble({
@@ -82,6 +89,32 @@ export function MessageBubble({
         <View style={styles.rateLimitCard}>
           <Ionicons name="time-outline" size={16} color={colors.amber} style={styles.rateLimitIcon} />
           <Text style={styles.rateLimitText}>{msg.text}</Text>
+        </View>
+      </View>
+    );
+  }
+  // Belief-saved card — Phase 2 (polish round 8). Centered amber-
+  // bordered card with a small bookmark icon + the part name + the
+  // saved belief. Distinct visual register from a chat bubble so the
+  // user reads it as "the system recorded this for you" rather than
+  // another AI utterance.
+  if (!isUser && msg.savedBelief) {
+    const { partName, belief } = msg.savedBelief;
+    return (
+      <View style={styles.beliefSavedRow}>
+        <View style={styles.beliefSavedCard}>
+          <View style={styles.beliefSavedHeader}>
+            <Ionicons
+              name="bookmark"
+              size={14}
+              color={colors.amber}
+              style={styles.beliefSavedIcon}
+            />
+            <Text style={styles.beliefSavedHeaderText}>
+              BELIEF SAVED · {String(partName).toUpperCase()}
+            </Text>
+          </View>
+          <Text style={styles.beliefSavedBody}>{belief}</Text>
         </View>
       </View>
     );
@@ -720,6 +753,46 @@ const styles = StyleSheet.create({
   },
   rateLimitText: {
     flex: 1,
+    color: colors.cream,
+    fontFamily: fonts.serifItalic,
+    fontSize: 14,
+    lineHeight: 22,
+    letterSpacing: 0.2,
+  },
+
+  // Belief-saved card — Phase 2 (polish round 8). Same centered + amber
+  // register as the rate-limit card; different content layout (small
+  // uppercase header above a serif-italic body) so the user reads it as
+  // a structured record rather than a system error.
+  beliefSavedRow: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  beliefSavedCard: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(230,180,122,0.05)',
+    borderColor: 'rgba(230,180,122,0.45)',
+    borderWidth: 0.5,
+    borderRadius: radii.md,
+    maxWidth: '90%',
+  },
+  beliefSavedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  beliefSavedIcon: {
+    marginRight: 6,
+  },
+  beliefSavedHeaderText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 10,
+    letterSpacing: 1.6,
+  },
+  beliefSavedBody: {
     color: colors.cream,
     fontFamily: fonts.serifItalic,
     fontSize: 14,
