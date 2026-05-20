@@ -34,7 +34,11 @@ import { useRouter } from 'expo-router';
 import { api, ChatMessage } from '../../services/api';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
-import { clearMapVoiceHistory } from '../../services/mapVoiceHistory';
+// (Polish round 7) clearMapVoiceHistory removed alongside the
+// services/mapVoiceHistory module — Map Voice is now turn-based
+// and carries no client-side conversation history. The two
+// session-boundary spots that used to call it are now no-ops.
+const clearMapVoiceHistory = () => {};
 import { ChatModeToggle, ChatMode } from '../../components/ChatModeToggle';
 import { PartConfidenceIndicator, PartConfidence } from '../../components/PartConfidenceIndicator';
 import { colors, spacing } from '../../constants/theme';

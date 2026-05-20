@@ -624,33 +624,85 @@ export const api = {
   },
 
 
-  /** POST /api/realtime-token — mints an ephemeral session token for the
-   *  OpenAI Realtime WebSocket. Pre-fetched while the user is still
-   *  speaking on the map voice path so the token is ready by the time
-   *  recording stops. Returns null on any failure so the caller can
-   *  fall back to the legacy pipeline.
-   *
-   *  `history` is the FULL map-voice conversation so far — never
-   *  truncated client-side. The server includes it in the session's
-   *  `instructions` field so the AI has continuity from turn 1, with
-   *  smart summarization for very long histories. */
-  async realtimeToken(history: ChatMessage[] = []): Promise<string | null> {
+  /** POST /api/map-voice/turn — one turn of the turn-based Map Voice
+   *  pipeline (polish round 7 replacement for the OpenAI Realtime
+   *  WebSocket). Accepts the local recording's file URI + its MIME
+   *  type; reads the file, POSTs the bytes as raw body, and returns
+   *  the JSON response shape: transcript, response_text, detected_part,
+   *  part_label, audio_base64, audio_mime. Returns null on transport
+   *  failure (caller surfaces a "couldn't reach the server" toast).
+   *  A 4xx body is returned as-is via the `error` field so the
+   *  caller can show the server-prepared message (e.g.
+   *  empty-transcript). */
+  async mapVoiceTurn(uri: string, mime: string): Promise<{
+    transcript: string;
+    response_text: string;
+    detected_part: string;
+    part_label: string | null;
+    audio_base64: string;
+    audio_mime: string;
+  } | { error: string; message?: string } | null> {
+    const t0 = Date.now();
+    try {
+      const userId = await getUserId();
+      const fileRes = await fetch(uri);
+      const blob = await fileRes.blob();
+      console.log(`[map-voice] turn POST — uri=${uri.slice(-60)} mime=${mime} blobSize=${blob.size}B`);
+      const up = await apiFetch('/api/map-voice/turn', {
+        label: 'map-voice-turn', method: 'POST',
+        headers: { 'Content-Type': mime, 'X-User-Id': userId },
+        body: blob as any,
+        // The whole STT → LLM → TTS chain runs server-side; give it
+        // a generous budget. ElevenLabs alone can take ~1s.
+        timeoutMs: 30000,
+      });
+      console.log(`[map-voice] turn response — status=${up.status} elapsedMs=${Date.now() - t0}`);
+      const j: any = await up.json().catch(() => null);
+      if (!j) return null;
+      if (!up.ok) {
+        return { error: String(j.error || 'turn-failed'), message: j.message };
+      }
+      return j;
+    } catch (e) {
+      console.warn('[map-voice-turn] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** GET /api/map-voice/explainer-status — has the user already
+   *  dismissed the first-time Map Voice explainer modal? Polled on
+   *  Map-tab mount. Defaults to `false` (modal shows) on any
+   *  transport failure — better to show the explainer twice than
+   *  to hide it from a new user. */
+  async getMapVoiceExplainerStatus(): Promise<{ seen: boolean }> {
     try {
       const headers = await authHeaders();
-      const res = await apiFetch('/api/realtime-token', {
-        label: 'realtime-token', method: 'POST', headers,
-        body: JSON.stringify({ history }),
-        timeoutMs: 8000,
+      const res = await apiFetch('/api/map-voice/explainer-status', {
+        label: 'map-voice-explainer-status', method: 'GET', headers,
       });
-      if (!res.ok) {
-        console.warn('[realtime-token] non-OK', res.status);
-        return null;
-      }
+      if (!res.ok) return { seen: false };
       const j: any = await res.json().catch(() => null);
-      return (j && j.token) || null;
+      return { seen: !!(j && j.seen) };
     } catch (e) {
-      console.warn('[realtime-token] threw:', (e as Error)?.message);
-      return null;
+      console.warn('[map-voice-explainer-status] threw:', (e as Error)?.message);
+      return { seen: false };
+    }
+  },
+
+  /** POST /api/map-voice/explainer-seen — set the flag true so the
+   *  first-time modal never plays again for this user. Fire-and-
+   *  forget; the local UI hides the modal optimistically. */
+  async markMapVoiceExplainerSeen(): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/map-voice/explainer-seen', {
+        label: 'map-voice-explainer-seen', method: 'POST', headers,
+        body: JSON.stringify({}),
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[map-voice-explainer-seen] threw:', (e as Error)?.message);
+      return false;
     }
   },
 
@@ -1287,86 +1339,11 @@ export const api = {
     }
   },
 
-  /** POST /api/voice-usage/session — start a Map Voice session. The
-   *  server checks the monthly $10 cap first. Returns the session
-   *  handle on success, or { error: 'monthly_cap_reached', periodEnd }
-   *  when the user is over budget for the calendar month. null on
-   *  transport failure (caller should treat that as "couldn't start"
-   *  rather than silently proceeding — Map Voice is metered). */
-  async startVoiceSession(): Promise<
-    | { sessionId: string; periodEnd: string; maxSessionSeconds: number }
-    | { error: 'monthly_cap_reached'; periodEnd: string }
-    | null
-  > {
-    try {
-      const headers = await authHeaders();
-      const res = await apiFetch('/api/voice-usage/session', {
-        label: 'voice-usage-session', method: 'POST', headers, body: JSON.stringify({}),
-      });
-      const j: any = await res.json().catch(() => null);
-      if (res.status === 403 && j && j.error === 'monthly_cap_reached') {
-        return { error: 'monthly_cap_reached', periodEnd: String(j.periodEnd || '') };
-      }
-      if (!res.ok || !j || typeof j.sessionId !== 'string') return null;
-      return {
-        sessionId: j.sessionId,
-        periodEnd: String(j.periodEnd || ''),
-        maxSessionSeconds: Number(j.maxSessionSeconds) || 600,
-      };
-    } catch (e) {
-      console.warn('[voice-usage-session] threw:', (e as Error)?.message);
-      return null;
-    }
-  },
-
-  /** POST /api/voice-usage/session/:id/end — report a Map Voice
-   *  session's elapsed duration. The server computes + records the
-   *  cost (duration clamped to the 10-min ceiling server-side).
-   *  Fire-and-forget from the caller's perspective; failures are
-   *  logged, not surfaced (the session already happened). */
-  async endVoiceSession(sessionId: string, durationSeconds: number): Promise<boolean> {
-    try {
-      const headers = await authHeaders();
-      const res = await apiFetch(`/api/voice-usage/session/${encodeURIComponent(sessionId)}/end`, {
-        label: 'voice-usage-end', method: 'POST', headers,
-        body: JSON.stringify({ durationSeconds }),
-      });
-      return res.ok;
-    } catch (e) {
-      console.warn('[voice-usage-end] threw:', (e as Error)?.message);
-      return false;
-    }
-  },
-
-  /** GET /api/voice-usage/current-period — usage summary for the Map
-   *  Voice entry screen. The balance indicator only renders when
-   *  usedUsd / capUsd >= 0.80, so a null return (transport failure)
-   *  just hides the indicator — safe degradation. */
-  async getVoiceUsageCurrentPeriod(): Promise<{
-    usedUsd: number;
-    capUsd: number;
-    periodEnd: string;
-    approxMinutesRemaining: number;
-  } | null> {
-    try {
-      const headers = await authHeaders();
-      const res = await apiFetch('/api/voice-usage/current-period', {
-        label: 'voice-usage-period', method: 'GET', headers,
-      });
-      if (!res.ok) return null;
-      const j: any = await res.json().catch(() => null);
-      if (!j || typeof j !== 'object') return null;
-      return {
-        usedUsd: Number(j.usedUsd) || 0,
-        capUsd: Number(j.capUsd) || 10,
-        periodEnd: String(j.periodEnd || ''),
-        approxMinutesRemaining: Number(j.approxMinutesRemaining) || 0,
-      };
-    } catch (e) {
-      console.warn('[voice-usage-period] threw:', (e as Error)?.message);
-      return null;
-    }
-  },
+  // (Polish round 7) The startVoiceSession / endVoiceSession /
+  // getVoiceUsageCurrentPeriod methods that gated the metered
+  // Realtime-based Map Voice were removed. Map Voice is now
+  // turn-based via api.mapVoiceTurn() above; there's no per-session
+  // ledger and no monthly cap anymore.
 
   /** POST /api/map/mark-seen. Stamps lastSeenMapAt=NOW for the user.
    *  Called on Map-tab entry. Returns the new timestamp on success,
