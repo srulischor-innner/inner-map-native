@@ -976,6 +976,24 @@ export default function ChatScreen() {
               // Stream complete — drop attention indicator back to idle.
               setAttentionState('idle');
             },
+            onMessageIds: (ids) => {
+              // Round 9 RAG — stamp serverMessageId onto the most
+              // recent user bubble (matched by being the last user
+              // message before the streaming AI bubble) and onto the
+              // streaming AI bubble itself (matched by streamId).
+              // Enables the long-press "Mark as key moment" handler.
+              turnThread.setMessages((prev) => {
+                let lastUserIdx = -1;
+                for (let i = prev.length - 1; i >= 0; i--) {
+                  if (prev[i]?.role === 'user') { lastUserIdx = i; break; }
+                }
+                return prev.map((m, i) => {
+                  if (m.id === streamId) return { ...m, serverMessageId: ids.ai };
+                  if (i === lastUserIdx) return { ...m, serverMessageId: ids.user };
+                  return m;
+                });
+              });
+            },
             onSavedBeliefs: (records) => {
               // Phase 2 (polish round 8) — render one belief-saved
               // confirmation card per record, inline in this thread.
@@ -1114,6 +1132,34 @@ export default function ChatScreen() {
     handleSend(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Round 9 RAG — long-press handler shared by every bubble. The
+  // bubble itself shows the ActionSheet / Alert; this callback
+  // handles the API + state flip. We mark the message optimistically
+  // (isKeyMoment=true) before the round-trip, then roll back if the
+  // call fails — same pattern as map-seen / etc. The toast on
+  // success is a lightweight Alert so we don't ship a new toast
+  // surface for one feature.
+  const handleFlagKeyMoment = useCallback((messageId: string) => {
+    // Find the bubble in either thread and flip isKeyMoment.
+    const flipFlag = (next: boolean) => {
+      const apply = (msgs: ChatMsg[]) => msgs.map((m) =>
+        m.serverMessageId === messageId ? { ...m, isKeyMoment: next } : m
+      );
+      setProcessMessages((prev) => apply(prev));
+      setExploreMessages((prev) => apply(prev));
+    };
+    flipFlag(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    (async () => {
+      const ok = await api.flagKeyMoment(messageId);
+      if (!ok) {
+        flipFlag(false);
+        console.warn('[chat] flagKeyMoment failed, rolling back', messageId.slice(0, 8));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
     () => activeMessages.map((m) => (
       <MessageBubble
@@ -1121,6 +1167,7 @@ export default function ChatScreen() {
         msg={m}
         onRetry={handleRetry}
         onViewStarterMap={handleViewStarterMap}
+        onFlagKeyMoment={handleFlagKeyMoment}
       />
     )),
     [activeMessages],

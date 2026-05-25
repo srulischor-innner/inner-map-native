@@ -8,8 +8,8 @@
 // a single session-level mute/unmute toggle in the chat tab header.
 // See components/AudioToggle.tsx.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, Animated, Easing, StyleSheet, PanResponder, LayoutChangeEvent, ActivityIndicator } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { View, Text, Pressable, Animated, Easing, StyleSheet, PanResponder, LayoutChangeEvent, ActivityIndicator, ActionSheetIOS, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import {
@@ -56,10 +56,22 @@ export type ChatMsg = {
    *  to make the save action visible to the user without interrupting
    *  the conversation flow. */
   savedBelief?: { partId: string; partName: string; belief: string };
+  /** Round 9 RAG — server-assigned id for this message in the
+   *  memory_chunks table. Populated for both roles from the chat
+   *  response's `messageIds` payload. Used as the handle for the
+   *  long-press "Mark as key moment" action; absent on bubbles that
+   *  predate RAG (legacy history) — the long-press menu hides the
+   *  option in that case. */
+  serverMessageId?: string;
+  /** Round 9 RAG — true when this message has been promoted to a
+   *  key moment (either via the AI's [KEY_MOMENT:] marker for this
+   *  specific bubble OR via the user's long-press flag). Drives the
+   *  small amber dot indicator in the bubble corner. */
+  isKeyMoment?: boolean;
 };
 
 export function MessageBubble({
-  msg, onRetry, onViewStarterMap, relationshipId, partnerName,
+  msg, onRetry, onViewStarterMap, onFlagKeyMoment, relationshipId, partnerName,
 }: {
   msg: ChatMsg;
   onRetry?: (text: string) => void;
@@ -68,6 +80,13 @@ export function MessageBubble({
    *  wires this to a router.push('/map') so the moment lands on the
    *  Map tab where the user can see what just got built. */
   onViewStarterMap?: () => void;
+  /** Round 9 RAG — fires when the user long-presses a bubble and taps
+   *  "Mark as key moment." The parent (chat tab) is responsible for
+   *  calling api.flagKeyMoment(serverMessageId) and updating the
+   *  message's isKeyMoment flag in local state. Bubbles without a
+   *  serverMessageId (legacy pre-RAG history) hide the menu option
+   *  even when this prop is supplied. */
+  onFlagKeyMoment?: (messageId: string) => void;
   /** When the bubble is in a relationship-mode private chat, these
    *  props enable inline [SHARE_SUGGEST: …] marker rendering as
    *  <SharePromptCard> components. Omitted in the main chat tab —
@@ -78,6 +97,53 @@ export function MessageBubble({
   partnerName?: string | null;
 }) {
   const isUser = msg.role === 'user';
+
+  // Long-press → action sheet (iOS) / Alert with buttons (Android) →
+  // "Mark as key moment" promotes this bubble's chunk in memory_chunks
+  // to a high-importance key_moment. Hidden when:
+  //   - There's no serverMessageId (pre-RAG legacy history).
+  //   - The bubble is a system card (rate-limit / belief-saved).
+  //   - The bubble is already flagged (re-flagging is a no-op
+  //     server-side; surfacing a second prompt would be noise).
+  // The handler fires the parent-supplied onFlagKeyMoment with the
+  // server message id; the chat tab does the API call + state flip.
+  const canFlag = !!(
+    !msg.rateLimited &&
+    !msg.savedBelief &&
+    !msg.isKeyMoment &&
+    msg.serverMessageId &&
+    onFlagKeyMoment
+  );
+
+  const handleLongPress = useCallback(() => {
+    if (!canFlag) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    const onConfirm = () => {
+      if (!msg.serverMessageId) return;
+      onFlagKeyMoment?.(msg.serverMessageId);
+    };
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Mark as key moment'],
+          cancelButtonIndex: 0,
+          userInterfaceStyle: 'dark',
+        },
+        (idx) => { if (idx === 1) onConfirm(); },
+      );
+    } else {
+      // Android — Alert with two buttons covers the same surface.
+      Alert.alert(
+        'Message options',
+        '',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Mark as key moment', onPress: onConfirm },
+        ],
+        { cancelable: true },
+      );
+    }
+  }, [canFlag, msg.serverMessageId, onFlagKeyMoment]);
   // Daily rate-limit card — different visual treatment from a chat
   // bubble. Centered, amber-bordered, the server-prepared copy reads
   // as a system note rather than an AI utterance. Renders early so
@@ -123,7 +189,22 @@ export function MessageBubble({
   }
   return (
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
-      <View style={[styles.bubble, isUser ? styles.user : styles.assistant]}>
+      <Pressable
+        onLongPress={handleLongPress}
+        delayLongPress={400}
+        // No onPress / no visual feedback on press — the bubble is
+        // not a primary tap target. Long-press is the only gesture
+        // here; everything else (retry pill, starter-map button) is
+        // its own Pressable inside.
+        style={[styles.bubble, isUser ? styles.user : styles.assistant]}
+        accessibilityLabel={canFlag ? 'Chat message — long-press for options' : 'Chat message'}
+      >
+        {/* Key-moment indicator — small amber dot in the top-right
+            corner. Visible when this bubble has been flagged (either
+            by the AI's [KEY_MOMENT:] marker for this specific message
+            or by the user's long-press flag). Pure decoration; the
+            actual flagged state lives on memory_chunks server-side. */}
+        {msg.isKeyMoment ? <View style={styles.keyMomentDot} /> : null}
         {msg.voice ? (
           <VoiceNoteBubble
             id={msg.id}
@@ -174,7 +255,7 @@ export function MessageBubble({
             <Text style={styles.starterMapBtnText}>VIEW MY STARTER MAP</Text>
           </Pressable>
         ) : null}
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -808,5 +889,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     letterSpacing: 0.3,
+  },
+
+  // Round 9 RAG — small amber dot in the top-right corner of a bubble
+  // that's been flagged as a key moment. Positioned absolutely inside
+  // the bubble's relative parent (the Pressable wrapping the bubble
+  // content). Pure visual — not interactive on its own.
+  keyMomentDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.amber,
+    zIndex: 5,
   },
 });

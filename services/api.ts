@@ -163,6 +163,13 @@ export type StreamCallbacks = {
    *  when the AI didn't emit any belief markers. The chat tab uses
    *  this to inject SaveBeliefCard messages into the thread. */
   onSavedBeliefs?: (records: SavedBelief[]) => void;
+  /** Round 9 RAG — server-assigned ids for the user message + AI
+   *  reply that were just stored in memory_chunks. The chat tab
+   *  stamps these onto the matching bubbles as serverMessageId so
+   *  the long-press "Mark as key moment" action has a stable handle
+   *  to reference. Absent on legacy paths where the server didn't
+   *  surface ids — bubbles without an id hide the menu option. */
+  onMessageIds?: (ids: { user: string; ai: string }) => void;
 };
 
 export const api = {
@@ -355,6 +362,12 @@ export const api = {
               belief: String(r.belief || ''),
             }));
           if (records.length > 0) cb.onSavedBeliefs?.(records);
+        }
+        // Round 9 RAG — surface the server-assigned message ids so
+        // the chat tab can stamp them onto the user + AI bubbles
+        // for later long-press flagging.
+        if (j?.messageIds && typeof j.messageIds.user === 'string' && typeof j.messageIds.ai === 'string') {
+          cb.onMessageIds?.({ user: j.messageIds.user, ai: j.messageIds.ai });
         }
       } catch (e) {
         if ((e as any)?.name === 'AbortError') return;
@@ -842,6 +855,35 @@ export const api = {
       return res.ok;
     } catch (e) {
       console.warn('[parts-belief-delete] threw:', (e as Error)?.message);
+      return false;
+    }
+  },
+
+  /** POST /api/memory/flag — promote a chat message into a key moment
+   *  (round 9 RAG). The server scopes the lookup by req.userId, so a
+   *  user can only flag their own messages. messageId is the
+   *  server-assigned id surfaced in /api/chat's done payload under
+   *  `messageIds.user` / `messageIds.ai`. Returns true on success
+   *  (newly flagged OR already flagged — both treated as success
+   *  from the client's perspective) and false on any error.
+   *  Idempotent: re-flagging a chunk that's already a key moment
+   *  returns ok=true with alreadyFlagged=true server-side, which we
+   *  collapse into a true return here. */
+  async flagKeyMoment(messageId: string): Promise<boolean> {
+    if (!messageId) return false;
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/memory/flag', {
+        label: 'memory-flag', method: 'POST', headers,
+        body: JSON.stringify({ messageId }),
+      });
+      if (!res.ok) {
+        console.warn('[memory-flag] non-OK', res.status);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[memory-flag] threw:', (e as Error)?.message);
       return false;
     }
   },
