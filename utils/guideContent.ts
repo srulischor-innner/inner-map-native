@@ -360,7 +360,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "Knowing the parts are there is one thing. Leading them is something else. For that, you need your own ground — your own sense of who you are, separate from any single part's story.",
       "Not against the parts. Just yours.",
       "When a part comes online with its certainty — \"I have to fix this,\" \"I'm not enough,\" \"Shut down, this is too much\" — there can be space to hear it without becoming it. To honor what it feels without doing what it demands. Something like: \"I see why you feel that way. I'm still going a different way.\"",
-      "That \"no\" usually isn't rejection. It comes with the validation, not against it. The coach holding their own ground while still being with the player.",
+      "That \"no\" usually isn't rejection. It comes with the validation, not against it. The Self-like part holding its own ground while still being with the player.",
       "When parts are met this way, they often begin to settle. There starts to be someone home.",
     ],
   },

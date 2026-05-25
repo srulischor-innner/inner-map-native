@@ -29,7 +29,7 @@ import * as Haptics from 'expo-haptics';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 
 import { api, ChatMessage } from '../../services/api';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete } from '../../utils/markers';
@@ -482,30 +482,37 @@ export default function ChatScreen() {
       processHistoryRef.current.push({ role: 'assistant', content: finalGreeting });
       setTyping(false);
 
-      // Phase 2 (polish round 8) — cross-tab handoff consumer for the
-      // "Establish belief for this part" button in PartFolderModal.
-      // The button arms a prefilled chat message + target mode via
-      // utils/pendingChatMessage, then routes here. We pick it up
-      // AFTER the boot greeting bubble is in place so the thread
-      // reads coherently: Process gets the greeting, Explore (target
-      // mode) gets the user's prefill bubble + the AI's response.
-      //
-      // chatModeRef is updated synchronously alongside setChatMode so
-      // handleSend reads the correct mode the moment it runs, instead
-      // of waiting for the chatModeRef-sync effect to commit on the
-      // next render. setTimeout(0) defers the actual send by one tick
-      // so React commits the chatMode UI flip before the prefill
-      // bubble lands — the user briefly sees the right mode toggle
-      // active, then their message appears.
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ===== PENDING CHAT MESSAGE CONSUMER =====
+  // Cross-tab handoff for "Establish your belief" in PartFolderModal:
+  // the button arms a prefilled chat message + target mode via
+  // utils/pendingChatMessage, then routes here. Round 9 fix —
+  // previously we consumed inside the mount effect, but Expo Router
+  // tabs stay mounted, so warm navigation (Map → Chat) never re-fired
+  // the consumer and the prefill sat unused. useFocusEffect fires on
+  // EVERY tab focus, cold and warm.
+  //
+  // chatModeRef is updated synchronously alongside setChatMode so
+  // handleSend reads the correct mode the moment it runs, instead of
+  // waiting for the chatModeRef-sync effect to commit on the next
+  // render. setTimeout(0) defers the actual send by one tick so React
+  // commits the chatMode UI flip before the prefill bubble lands —
+  // the user briefly sees the right mode toggle active, then their
+  // message appears.
+  useFocusEffect(
+    React.useCallback(() => {
       const pending = consumePendingChatMessage();
       if (pending && pending.text) {
         chatModeRef.current = pending.mode;
         setChatMode(pending.mode);
         setTimeout(() => { handleSend(pending.text); }, 0);
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
+  );
 
   // ===== EXPLORE OPENING GREETING =====
   // Seeds the Explore thread the first time the user switches into it

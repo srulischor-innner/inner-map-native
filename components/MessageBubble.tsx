@@ -93,13 +93,14 @@ export function MessageBubble({
       </View>
     );
   }
-  // Belief-saved card — Phase 2 (polish round 8). Centered amber-
-  // bordered card with a small bookmark icon + the part name + the
-  // saved belief. Distinct visual register from a chat bubble so the
-  // user reads it as "the system recorded this for you" rather than
-  // another AI utterance.
+  // Belief-saved card — Phase 2 (polish round 8; reframed round 9 as
+  // single-belief). Centered amber-bordered card with a small bookmark
+  // icon + "BELIEF SAVED" header + the saved belief text + a one-line
+  // confirmation that the Self-like voice is now available. Distinct
+  // visual register from a chat bubble so the user reads it as "the
+  // system recorded this for you" rather than another AI utterance.
   if (!isUser && msg.savedBelief) {
-    const { partName, belief } = msg.savedBelief;
+    const { belief } = msg.savedBelief;
     return (
       <View style={styles.beliefSavedRow}>
         <View style={styles.beliefSavedCard}>
@@ -110,11 +111,12 @@ export function MessageBubble({
               color={colors.amber}
               style={styles.beliefSavedIcon}
             />
-            <Text style={styles.beliefSavedHeaderText}>
-              BELIEF SAVED · {String(partName).toUpperCase()}
-            </Text>
+            <Text style={styles.beliefSavedHeaderText}>BELIEF SAVED</Text>
           </View>
           <Text style={styles.beliefSavedBody}>{belief}</Text>
+          <Text style={styles.beliefSavedFooter}>
+            Self-like voice is now available on the map.
+          </Text>
         </View>
       </View>
     );
@@ -798,5 +800,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     letterSpacing: 0.2,
+  },
+  beliefSavedFooter: {
+    marginTop: 8,
+    color: colors.amber,
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+    lineHeight: 18,
+    letterSpacing: 0.3,
   },
 });

@@ -46,14 +46,12 @@ import { playPreFetchedAudio } from '../../utils/ttsStream';
 import { armPendingChatMessage } from '../../utils/pendingChatMessage';
 import type { NodeKey } from './InnerMapCanvas';
 
-// Phase 2 (polish round 8). Belief section renders for the three
-// canonical single-row part types — wound, fixer, skeptic — where a
-// user's articulated belief unlocks the Self-like voice for that
-// part. Managers + firefighters can grow belief support in a later
-// phase (each row would carry its own belief). Self / self-like
-// folders intentionally don't get a belief field (Self IS the
-// leader; self-like is the operator, not the part being addressed).
-const BELIEF_PART_TYPES = new Set(['wound', 'fixer', 'skeptic']);
+// Round 9 correction (single-belief model): the user has ONE belief
+// total — what they stand on, separate from every part on the map.
+// That belief lives on the Self-like part row. The belief section
+// only renders inside the Self-like part folder; opening any other
+// folder shows just the part's own content.
+const BELIEF_PART_TYPES = new Set(['self-like']);
 
 type Props = {
   visible: boolean;
@@ -263,13 +261,15 @@ export function PartFolderModal({
           ) : null}
           <Text style={styles.description}>{meta.description}</Text>
 
-          {/* User's articulated belief for this part — Phase 2 (polish
-              round 8). Renders for wound/fixer/skeptic only. Gated on
-              having a part row so we know which id to save against;
-              early in the user's journey there may be no row yet, in
-              which case the section is hidden until the AI files the
-              part for the first time. */}
-          {part?.id && BELIEF_PART_TYPES.has(String(partKey)) ? (
+          {/* User's articulated belief — the single belief that
+              activates Self-like voice across the whole map (round 9
+              correction). Renders ONLY inside the Self-like part
+              folder. Doesn't require a part.id — the empty-state
+              "Establish your belief" button routes to chat, and the
+              server saves on the Self-like row via the SAVE_BELIEF
+              marker (it tolerates the row not existing yet by
+              creating one when the user has at least begun mapping). */}
+          {BELIEF_PART_TYPES.has(String(partKey)) ? (
             <BeliefSection part={part} color={meta.color} />
           ) : null}
 
@@ -325,13 +325,15 @@ function Section({
 }
 
 // ============================================================================
-// Belief section — Phase 2 (polish round 8). Renders inside the part
-// folder body for wound/fixer/skeptic. Three render states:
+// Belief section — Phase 2 (polish round 8; rescoped in round 9).
+// Renders inside the Self-like part folder only. The single belief is
+// what the user stands on, separate from their parts; it activates
+// Self-like voice for the entire map. Three render states:
 //
-//   1. EMPTY  → "Establish belief for this part" button. Arms a pre-
-//      filled chat message via utils/pendingChatMessage, then routes
-//      to the chat tab where the index screen consumes the prefill
-//      on mount and sends it in Explore mode.
+//   1. EMPTY  → "Establish your belief" button. Arms a pre-filled
+//      chat message via utils/pendingChatMessage, then routes to the
+//      chat tab where the index screen consumes the prefill on mount
+//      and sends it in Explore mode.
 //
 //   2. FILLED → belief text + Edit + Clear actions. Clear shows a
 //      confirmation Alert (the user just spent real effort articulating
@@ -362,15 +364,13 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
     setDraft('');
   }, [part?.id, part?.belief]);
 
-  const partName = String(part?.name || part?.category || 'this part');
-
   const handleEstablish = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
     const text =
-      `I want to work on finding my own belief for ${partName} — different from what this part believes.`;
+      "I want to work on my own belief — what I stand on that's separate from my parts.";
     armPendingChatMessage(text, 'explore');
     router.push('/');
-  }, [partName, router]);
+  }, [router]);
 
   const handleStartEdit = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
@@ -409,7 +409,7 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
     if (!part?.id) return;
     Alert.alert(
       'Clear belief?',
-      'This will remove the belief you saved for this part. The Self-like voice for this part will be unavailable until you establish a new belief.',
+      'This will remove the belief you saved. The Self-like voice will be unavailable until you establish a new belief.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -435,9 +435,9 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
 
   return (
     <View style={styles.beliefWrap}>
-      <Text style={styles.beliefLabel}>MY BELIEF HERE</Text>
+      <Text style={styles.beliefLabel}>YOUR BELIEF</Text>
       <Text style={styles.beliefSubtitle}>
-        What I believe — different from what this part believes.
+        What you stand on — separate from what your parts believe.
       </Text>
 
       {editing ? (
@@ -446,7 +446,7 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
             value={draft}
             onChangeText={setDraft}
             multiline
-            placeholder="What do you actually believe? (different from what this part believes)"
+            placeholder="What do you stand on? (different from what your parts believe)"
             placeholderTextColor="rgba(240,237,232,0.3)"
             style={styles.beliefInput}
             editable={!saving}
@@ -524,7 +524,7 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
             { borderColor: color + '66', backgroundColor: color + '10' },
             pressed && { opacity: 0.85 },
           ]}
-          accessibilityLabel="Establish belief for this part"
+          accessibilityLabel="Establish your belief"
           hitSlop={8}
         >
           <Ionicons
@@ -534,7 +534,7 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
             style={{ marginRight: 8 }}
           />
           <Text style={[styles.beliefEstablishText, { color }]}>
-            Establish belief for this part
+            Establish your belief
           </Text>
         </Pressable>
       )}

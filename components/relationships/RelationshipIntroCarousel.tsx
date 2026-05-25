@@ -162,8 +162,15 @@ export function RelationshipIntroCarousel({
         </View>
       ) : null}
 
+      {/* flex: 1 — without it the FlatList sizes itself to the
+          intrinsic content height, which on shorter devices leaves
+          no room for the inner ScrollView to actually scroll. The
+          slide's flex:1 child fills whatever vertical space the
+          FlatList provides; explicit flex:1 here gives it the full
+          available column between header and pagination foot. */}
       <FlatList
         ref={listRef}
+        style={styles.list}
         data={SLIDES}
         keyExtractor={(_, i) => String(i)}
         horizontal
@@ -265,6 +272,8 @@ const styles = StyleSheet.create({
   },
   headerSpacer: { width: 44, height: 44 },
   closeBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+
+  list: { flex: 1 },
 
   slide: {
     flex: 1,

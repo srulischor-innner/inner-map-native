@@ -71,14 +71,14 @@ const EXPLAINER_SELF_LINE =
 const EXPLAINER_SELF_LIKE_LINE =
   '🎙 Self-like part — "I hear you, AND we\'re going a different way." Active leadership. When you need to hold a line with a part — make a different choice, redirect.';
 const EXPLAINER_FOOTNOTE =
-  "(Self-like part becomes available once you've established your belief for a part — different from what the part believes.)";
+  "(Self-like part voice becomes available once you've established your own belief separate from your parts. Tap the Self-like part on the map to begin.)";
 
 const SELF_INFO_BODY =
   "Self — pure presence. Speak; the part you're blended with lights up; Self responds to that part. Use when you need to be witnessed and settle.";
 const SELF_LIKE_INFO_BODY =
   "Self-like part — active leadership. Speak; the part lights up; Self-like part responds from your established belief. Use when you need help holding a line with a part.";
 const SELF_LIKE_DISABLED_BODY =
-  "Self-like part — for active leadership when you need to hold a line with a part. Requires your own belief for the part first — different from what the part believes. Tap any part below to start that work.";
+  "Self-like part — for active leadership when you need to hold a line with a part. Requires your own belief separate from the parts first. Tap the Self-like part on the map to begin.";
 
 type Props = {
   sessionId: string;
@@ -125,13 +125,20 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  // Refresh the parts-with-beliefs list. Called on mount and after
-  // any self-like turn to pick up freshly-established beliefs.
+  // Refresh the belief gate. Round 9 correction (single-belief model):
+  // Self-like activates only when the user's SELF-LIKE PART specifically
+  // carries a belief — not any part on the map. The whole map operates
+  // from one underlying belief system; the Self-like part holds the
+  // single different belief that contrasts with the entire map. Called
+  // on mount and after any self-like turn so a freshly-saved belief
+  // (via SAVE_BELIEF marker in chat) lights the mic without a manual
+  // reload.
   const refreshBeliefStatus = useCallback(async () => {
     try {
       const { parts } = await api.getPartsWithBeliefs();
-      const any = parts.some((p) => !!(p.belief && p.belief.trim()));
-      setSelfLikeEnabled(any);
+      const selfLike = parts.find((p) => String(p.type || '').toLowerCase() === 'self-like');
+      const hasBelief = !!(selfLike && selfLike.belief && selfLike.belief.trim());
+      setSelfLikeEnabled(hasBelief);
     } catch {
       setSelfLikeEnabled(false);
     }
@@ -506,7 +513,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
           <View style={styles.toast}>
             <Text style={styles.toastText}>
               {fallbackToast.kind === 'missing_belief'
-                ? `${fallbackToast.partName || 'This part'} — open the folder to establish your belief.`
+                ? 'Tap the Self-like part on the map to establish your belief.'
                 : 'Couldn’t identify a single part — try again with one specific situation.'}
             </Text>
           </View>
