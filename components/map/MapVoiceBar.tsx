@@ -198,7 +198,21 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   // mode for the in-flight recording is held in recordingModeRef so a
   // mid-record state shuffle can't crosswire branches.
   const startRecording = useCallback(async (mode: ActiveMic) => {
-    if (state !== 'idle') return;
+    if (state !== 'idle') {
+      console.log(`[map-voice-bar] startRecording bailed — state=${state} (expected idle)`);
+      return;
+    }
+    console.log(`[map-voice-bar] startRecording BEGIN mode=${mode}`);
+    // Stamp the press start time IMMEDIATELY so heldMs at release
+    // reflects the actual hold duration, even if the user releases
+    // before prepareToRecordAsync() finishes (~500ms on iOS cold
+    // start). Previously this was set AFTER the await, which meant
+    // a 700ms hold computed heldMs ≈ 200ms and fell into the
+    // accidental-tap branch — and we'd never have reached
+    // setState('recording') anyway, so the release handler couldn't
+    // even fire stopAndDispatch under the old `state === 'recording'`
+    // gate. Both gates are fixed below; this is the cleanup.
+    pressStartTimeRef.current = Date.now();
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {
@@ -213,13 +227,16 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       } catch {}
       await recorder.prepareToRecordAsync();
       recorder.record();
+      // recordingModeRef.current is the AUTHORITATIVE signal that a
+      // recording is in flight — set the moment recorder.record() has
+      // been called. The release handler reads THIS (not React state)
+      // so closure-capture timing can't make us miss a dispatch.
       recordingModeRef.current = mode;
       setActiveMic(mode);
       setState('recording');
       setHoldSec(0);
       cancellingRef.current = false;
       setSlideCancelling(false);
-      pressStartTimeRef.current = Date.now();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       tickRef.current = setInterval(() => {
         setHoldSec(Math.floor((Date.now() - pressStartTimeRef.current) / 1000));
@@ -234,6 +251,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
         stopAndDispatchRef.current?.();
       }, MAX_HOLD_MS);
+      console.log(`[map-voice-bar] startRecording READY mode=${mode}, recorder armed`);
     } catch (e) {
       console.warn('[map-voice-bar] startRecording failed:', (e as Error)?.message);
       setState('idle');
@@ -279,9 +297,11 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   }, []);
 
   const sendAudio = useCallback(async (uri: string, mime: string, mode: ActiveMic) => {
+    console.log(`[map-voice-bar] sendAudio START mode=${mode}`);
     setState('thinking');
     try {
       const result = await api.mapVoiceTurn(uri, mime, mode);
+      console.log(`[map-voice-bar] sendAudio — mapVoiceTurn resolved (${result ? 'truthy' : 'null'})`);
       if (!result) {
         console.warn('[map-voice-bar] turn returned null');
         setState('idle');
@@ -333,6 +353,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   }, [onDetectedPart, playReplyAudio, refreshBeliefStatus, showFallbackToast]);
 
   const stopAndDispatch = useCallback(async () => {
+    console.log('[map-voice-bar] stopAndDispatch START');
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     if (maxHoldTimerRef.current) { clearTimeout(maxHoldTimerRef.current); maxHoldTimerRef.current = null; }
     const heldMs = Date.now() - pressStartTimeRef.current;
@@ -341,8 +362,10 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     const cancelled = cancellingRef.current;
     cancellingRef.current = false;
     setSlideCancelling(false);
+    console.log(`[map-voice-bar] stopAndDispatch mode=${mode} heldMs=${heldMs} cancelled=${cancelled}`);
     try {
       await recorder.stop();
+      console.log('[map-voice-bar] recorder.stop resolved');
       try {
         await setAudioModeAsync({
           allowsRecording: false, playsInSilentMode: true,
@@ -365,7 +388,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       // user understands the gesture model. Previously a quick
       // accidental tap dropped to idle with no feedback, which read
       // as "the mic is broken." Now they see "Hold to record."
-      console.log('[map-voice-bar] hold too short — toast');
+      console.log(`[map-voice-bar] hold too short (${heldMs}ms < ${MIN_HOLD_MS}ms) — toast`);
       showFallbackToast({ kind: 'hold-to-record' });
       setState('idle');
       setActiveMic(null);
@@ -373,12 +396,13 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     }
     const uri = recorder.uri;
     if (!uri) {
-      console.warn('[map-voice-bar] no recording uri');
+      console.warn('[map-voice-bar] no recording uri after stop — silent fail');
       setState('idle');
       setActiveMic(null);
       return;
     }
     const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/mp4';
+    console.log(`[map-voice-bar] dispatching to sendAudio mode=${mode || 'self'} uri=...${uri.slice(-30)} mime=${mime}`);
     sendAudio(uri, mime, mode || 'self');
   }, [recorder, sendAudio, showFallbackToast]);
 
@@ -408,6 +432,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   });
 
   const onSelfPressIn = useCallback(() => {
+    console.log(`[map-voice-bar] onSelfPressIn — state=${state} explainerSeen=${explainerSeen}`);
     if (state !== 'idle') return;
     wantRecordingRef.current = true;
     if (explainerSeen === false) {
@@ -418,13 +443,35 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     startRecording('self');
   }, [state, explainerSeen, startRecording]);
 
+  // Build 11 release handler — use recordingModeRef.current (a synchronous
+  // ref set the moment recorder.record() fires) as the dispatch gate,
+  // NOT React state. The previous `state === 'recording'` check was
+  // bitten by closure capture: useCallback's closure captures `state`
+  // at the time React re-renders, which lags the actual recording
+  // having started (state transitions through batched updates). On
+  // some iOS first-launch cold paths the closure still held state='idle'
+  // at release time, the gate failed silently, and the recording was
+  // never dispatched. recordingModeRef.current avoids that entire class
+  // of bug — refs are read at call time, not closure-capture time.
   const onSelfPressOut = useCallback(() => {
+    const heldMs = Date.now() - pressStartTimeRef.current;
+    const wasRecording = recordingModeRef.current !== null;
+    console.log(
+      `[map-voice-bar] onSelfPressOut — wantRecording=${wantRecordingRef.current} ` +
+      `recordingMode=${recordingModeRef.current} state=${state} heldMs=${heldMs}`,
+    );
     if (!wantRecordingRef.current) return;
     wantRecordingRef.current = false;
-    if (state === 'recording') stopAndDispatch();
+    if (wasRecording) {
+      console.log('[map-voice-bar] onSelfPressOut → calling stopAndDispatch');
+      stopAndDispatch();
+    } else {
+      console.log('[map-voice-bar] onSelfPressOut — no active recording, skipping dispatch');
+    }
   }, [state, stopAndDispatch]);
 
   const onSelfLikePressIn = useCallback(() => {
+    console.log(`[map-voice-bar] onSelfLikePressIn — state=${state} selfLikeEnabled=${selfLikeEnabled}`);
     if (state !== 'idle') return;
     if (!selfLikeEnabled) {
       Haptics.selectionAsync().catch(() => {});
@@ -441,9 +488,20 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   }, [state, selfLikeEnabled, explainerSeen, startRecording]);
 
   const onSelfLikePressOut = useCallback(() => {
+    const heldMs = Date.now() - pressStartTimeRef.current;
+    const wasRecording = recordingModeRef.current !== null;
+    console.log(
+      `[map-voice-bar] onSelfLikePressOut — wantRecording=${wantRecordingRef.current} ` +
+      `recordingMode=${recordingModeRef.current} state=${state} heldMs=${heldMs}`,
+    );
     if (!wantRecordingRef.current) return;
     wantRecordingRef.current = false;
-    if (state === 'recording') stopAndDispatch();
+    if (wasRecording) {
+      console.log('[map-voice-bar] onSelfLikePressOut → calling stopAndDispatch');
+      stopAndDispatch();
+    } else {
+      console.log('[map-voice-bar] onSelfLikePressOut — no active recording, skipping dispatch');
+    }
   }, [state, stopAndDispatch]);
 
   // Shared slide-to-cancel: when the user drags up past SLIDE_CANCEL_DY
@@ -472,19 +530,25 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       onMoveShouldSetPanResponder: () => true,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
+        console.log(`[map-voice-bar] PanResponder GRANT mode=${mode}`);
         if (mode === 'self') handlersRef.current.onPressIn('self');
         else handlersRef.current.onPressIn('self-like');
       },
       onPanResponderMove: (_e: GestureResponderEvent, g: PanResponderGestureState) => {
         handlersRef.current.onMove(g.dy);
       },
-      onPanResponderRelease: () => {
+      onPanResponderRelease: (_e, g) => {
+        console.log(`[map-voice-bar] PanResponder RELEASE mode=${mode} dy=${g.dy.toFixed(1)} dx=${g.dx.toFixed(1)}`);
         handlersRef.current.onPressOut();
       },
-      onPanResponderTerminate: () => {
+      onPanResponderTerminate: (_e, g) => {
         // Treat external interruption (e.g., parent scroll, modal
         // appearing) as a cancel: stop the recorder + don't send.
-        if (state === 'recording') {
+        // Use recordingModeRef.current — NOT React state — since
+        // makeMicResponder is called once at mount and `state` in
+        // this closure would be permanently 'idle'.
+        console.log(`[map-voice-bar] PanResponder TERMINATE mode=${mode} dy=${g.dy.toFixed(1)} recordingMode=${recordingModeRef.current}`);
+        if (recordingModeRef.current !== null) {
           cancellingRef.current = true;
           setSlideCancelling(true);
         }
