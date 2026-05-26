@@ -33,7 +33,7 @@ const base = {
     },
     ios: {
       bundleIdentifier: 'com.srulischor.innermap',
-      buildNumber: '2',
+      buildNumber: '3',
       supportsTablet: false,
       // Apple Sign-In capability — required for Build 11 account
       // recovery. Apple's policy requires that any iOS app offering
