@@ -48,6 +48,7 @@ import { activatePartOnMap, ActivatablePart } from '../../utils/mapActivation';
 import { subscribeRateLimitNotice } from '../../utils/rateLimitNotice';
 import { consumeSelfMode } from '../../utils/selfMode';
 import { consumePendingChatMessage } from '../../utils/pendingChatMessage';
+import { MigrationModal, shouldShowMigrationModal } from '../../components/auth/MigrationModal';
 import {
   startStream as startTTSStream, appendStreamText as appendTTSStream,
   finishStream as finishTTSStream, cancelStream as cancelTTSStream,
@@ -332,6 +333,20 @@ export default function ChatScreen() {
         if (!cancelled) setFirstSessionPending(completedAt === null);
       })
       .catch(() => { if (!cancelled) setFirstSessionPending(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Build 11 — soft migration prompt for existing anonymous testers.
+  // Probe /api/auth/identities once on mount; if empty AND the user
+  // hasn't made a sign-in choice yet, surface MigrationModal. The
+  // probe is fire-and-forget — a transport failure leaves the modal
+  // closed so we don't trap an offline user behind it.
+  const [migrationVisible, setMigrationVisible] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    shouldShowMigrationModal()
+      .then((show) => { if (!cancelled && show) setMigrationVisible(true); })
+      .catch(() => { /* probe failure → no modal */ });
     return () => { cancelled = true; };
   }, []);
   // Wired to the "View my starter map" button on the completion bubble.
@@ -1175,6 +1190,14 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
+      {/* Build 11 — soft migration prompt for existing anonymous testers.
+          Mounts as a Modal so it overlays the entire chat tab without
+          affecting any layout below. The probe in the boot effect
+          above decides whether to make it visible. */}
+      <MigrationModal
+        visible={migrationVisible}
+        onResolved={() => setMigrationVisible(false)}
+      />
       {/* Tiny ambient attention indicator pinned to the top-right of the
           chat tab — sits BELOW the global tab bar (which is rendered by the
           parent _layout). Low-visibility on purpose; reflects the AI's

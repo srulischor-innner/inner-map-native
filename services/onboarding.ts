@@ -24,12 +24,28 @@ const KEYS = {
   termsAccepted:      'onboarding.termsAccepted',
   intakeComplete:     'onboarding.intakeComplete',
   privacyNoticeSeen:  'onboarding.privacyNoticeSeen',
+  // Build 11 — set true once the user has made a sign-in choice on
+  // the new sign-in screen (either signed in with a provider OR
+  // explicitly opted into anonymous mode). Drives the boot gate
+  // that routes brand-new installs to /sign-in BEFORE onboarding.
+  // Existing Build-10 testers who upgrade have this flag absent
+  // (false) AND hasSeenIntro=true — that combination triggers the
+  // soft migration modal on next boot rather than the full sign-in
+  // screen.
+  signInChoiceMade:   'onboarding.signInChoiceMade',
+  // Build 11 — bookkeeping for the soft migration modal. Dismiss
+  // count increments every time the user taps "Remind me later";
+  // after 5 dismissals OR 7 days, the modal shifts to an aggressive
+  // variant that requires an explicit "continue anonymously" confirm.
+  migrationDismissCount: 'onboarding.migrationDismissCount',
+  migrationFirstSeenAt:  'onboarding.migrationFirstSeenAt',
 } as const;
 
 export type OnboardingState = {
   hasSeenIntro: boolean;
   termsAccepted: boolean;
   intakeComplete: boolean;
+  signInChoiceMade: boolean;
 };
 
 async function getBool(key: string): Promise<boolean> {
@@ -87,18 +103,58 @@ async function setBool(key: string, v: boolean): Promise<void> {
 }
 
 export async function getOnboardingState(): Promise<OnboardingState> {
-  const [a, b, c] = await Promise.all([
+  const [a, b, c, d] = await Promise.all([
     getBool(KEYS.hasSeenIntro),
     getBool(KEYS.termsAccepted),
     getBool(KEYS.intakeComplete),
+    getBool(KEYS.signInChoiceMade),
   ]);
-  return { hasSeenIntro: a, termsAccepted: b, intakeComplete: c };
+  return { hasSeenIntro: a, termsAccepted: b, intakeComplete: c, signInChoiceMade: d };
 }
 
 export const markIntroSeen          = () => setBool(KEYS.hasSeenIntro, true);
 export const markTermsAccepted      = () => setBool(KEYS.termsAccepted, true);
 export const markIntakeComplete     = () => setBool(KEYS.intakeComplete, true);
 export const markPrivacyNoticeSeen  = () => setBool(KEYS.privacyNoticeSeen, true);
+// Build 11 — set when the user has either signed in OR explicitly
+// chosen anonymous on the new sign-in screen. Boot gate uses this
+// to decide whether to route brand-new installs to /sign-in.
+export const markSignInChoiceMade   = () => setBool(KEYS.signInChoiceMade, true);
+
+/** Read the migration-modal bookkeeping flags. Used by the chat-tab
+ *  mount to decide whether to show the soft modal, the aggressive
+ *  modal, or skip the prompt this session. Caller can also bump the
+ *  dismissCount via incrementMigrationDismissCount() below. */
+export async function getMigrationDismissState(): Promise<{
+  dismissCount: number;
+  firstSeenAt: number | null;
+}> {
+  try {
+    const [c, f] = await Promise.all([
+      AsyncStorage.getItem(KEYS.migrationDismissCount),
+      AsyncStorage.getItem(KEYS.migrationFirstSeenAt),
+    ]);
+    return {
+      dismissCount: c ? Math.max(0, parseInt(c, 10) || 0) : 0,
+      firstSeenAt: f ? Math.max(0, parseInt(f, 10) || 0) || null : null,
+    };
+  } catch { return { dismissCount: 0, firstSeenAt: null }; }
+}
+
+/** Increment dismissCount; set firstSeenAt to now if not yet stamped.
+ *  Returns the new dismissCount so the caller can branch on it. */
+export async function incrementMigrationDismissCount(): Promise<number> {
+  try {
+    const cur = await AsyncStorage.getItem(KEYS.migrationDismissCount);
+    const next = (cur ? Math.max(0, parseInt(cur, 10) || 0) : 0) + 1;
+    await AsyncStorage.setItem(KEYS.migrationDismissCount, String(next));
+    const seen = await AsyncStorage.getItem(KEYS.migrationFirstSeenAt);
+    if (!seen) {
+      await AsyncStorage.setItem(KEYS.migrationFirstSeenAt, String(Date.now()));
+    }
+    return next;
+  } catch { return 0; }
+}
 
 /** Read-only check used by the onboarding screen to skip the privacy
  *  notice phase on re-entry if the user already acknowledged it in a
@@ -116,5 +172,8 @@ export async function resetOnboarding(): Promise<void> {
     AsyncStorage.removeItem(KEYS.termsAccepted),
     AsyncStorage.removeItem(KEYS.intakeComplete),
     AsyncStorage.removeItem(KEYS.privacyNoticeSeen),
+    AsyncStorage.removeItem(KEYS.signInChoiceMade),
+    AsyncStorage.removeItem(KEYS.migrationDismissCount),
+    AsyncStorage.removeItem(KEYS.migrationFirstSeenAt),
   ]);
 }

@@ -183,3 +183,53 @@ export async function setUserId(id: string): Promise<string> {
   await writeBoth(trimmed);
   return trimmed;
 }
+
+/**
+ * Read the currently-stored user id WITHOUT minting. Returns null
+ * when neither the in-memory cache nor either disk store has a
+ * value — i.e. genuinely first-launch.
+ *
+ * Build 11 / account recovery — the sign-in flow needs to send the
+ * existing anonymous user_id (when present) so the server can run
+ * the migration branch instead of minting a fresh user_id. Calling
+ * getUserId() before sign-in would create a UUID we don't want to
+ * keep if the server returns a different (existing-identity) id.
+ *
+ * Same timeouts + cache semantics as getUserId, just without the
+ * mint-on-miss fallback. A truly stalled store still returns null
+ * here (treated as "no id known yet"); the caller can decide
+ * whether to gate the sign-in flow on it.
+ */
+export async function peekUserId(): Promise<string | null> {
+  if (_cached) return _cached;
+  const s = await readSecure();
+  if (s.ok && typeof s.value === 'string' && s.value) {
+    _cached = s.value;
+    return s.value;
+  }
+  const a = await readAsync();
+  if (a.ok && typeof a.value === 'string' && a.value) {
+    _cached = a.value;
+    return a.value;
+  }
+  return null;
+}
+
+/**
+ * Clear the cached + persisted user id. Used by the sign-out flow.
+ * After this returns, the next getUserId() call mints a fresh id —
+ * which is the intended behavior for a sign-out (the user is now
+ * anonymous on this device until they sign in again).
+ *
+ * Both stores are cleared best-effort; a stall on one doesn't block
+ * the other. The cache is reset synchronously so subsequent reads
+ * within the same process see the clear immediately.
+ */
+export async function clearUserId(): Promise<void> {
+  console.warn('[user] clearUserId — wiping identity (sign-out)');
+  _cached = null;
+  await Promise.allSettled([
+    withTimeout(SecureStore.deleteItemAsync(KEY), SECURE_WRITE_TIMEOUT_MS, 'SecureStore delete'),
+    withTimeout(AsyncStorage.removeItem(KEY), ASYNC_TIMEOUT_MS, 'AsyncStorage delete'),
+  ]);
+}

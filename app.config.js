@@ -35,15 +35,20 @@ const base = {
       bundleIdentifier: 'com.srulischor.innermap',
       buildNumber: '2',
       supportsTablet: false,
-      // PR B: associatedDomains array intentionally empty.
-      // The only universal-link surface this app ever claimed was
-      // /connect/* for the deep-link invite hand-off, and that flow
-      // was retired in PR B in favor of text-based code sharing.
-      // The empty array is preserved (rather than the key being
-      // removed) so the field stays visible — when a new universal-
-      // link surface is introduced in the future, adding the entry
-      // here is a one-line change.
-      associatedDomains: [],
+      // Apple Sign-In capability — required for Build 11 account
+      // recovery. Apple's policy requires that any iOS app offering
+      // third-party social login (Google) also offer Sign in with
+      // Apple. expo-apple-authentication wires up the runtime; this
+      // flag adds the entitlement at build time.
+      usesAppleSignIn: true,
+      // Build 11 — magic-link universal link. The /auth/email path on
+      // my-inner-map.com is the landing the user's email link points
+      // at; iOS handles the universal-link match before the browser
+      // renders it, opening the app directly and routing through our
+      // deep-link handler. The host must serve a matching
+      // /.well-known/apple-app-site-association file pointing at this
+      // bundle.
+      associatedDomains: ['applinks:my-inner-map.com'],
       infoPlist: {
         NSMicrophoneUsageDescription:
           'Inner Map uses the microphone for voice notes and voice conversations.',
@@ -68,13 +73,22 @@ const base = {
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       permissions: ['RECORD_AUDIO'],
-      // PR B: intentFilters left empty. The only auto-verify deep
-      // link this app declared was https://…/connect/* for the
-      // invite-link hand-off, which was retired in PR B (text-based
-      // code sharing has no link to intercept). Property kept (as an
-      // empty array) rather than removed so future deep links can
-      // be added here without re-introducing the field shape.
-      intentFilters: [],
+      // Build 11 — magic-link Android App Link. Same role as the iOS
+      // associatedDomains entry above. The host must serve a matching
+      // /.well-known/assetlinks.json with this package + the SHA-256
+      // fingerprint of the production signing cert. autoVerify=true
+      // enables the silent OS interception so the email link opens
+      // the app directly rather than the browser.
+      intentFilters: [
+        {
+          action: 'VIEW',
+          autoVerify: true,
+          data: [
+            { scheme: 'https', host: 'my-inner-map.com', pathPrefix: '/auth/' },
+          ],
+          category: ['BROWSABLE', 'DEFAULT'],
+        },
+      ],
     },
     web: {
       favicon: './assets/favicon.png',
@@ -85,11 +99,26 @@ const base = {
       'expo-font',
       'expo-asset',
       'expo-local-authentication',
+      // Build 11 — Apple Sign-In runtime + entitlement plumbing.
+      'expo-apple-authentication',
     ],
     extra: {
       apiBaseUrl: 'https://inner-map-production.up.railway.app',
       eas: {
         projectId: '14bce05f-41e2-42f3-aa6c-3c153023894f',
+      },
+      // Build 11 — Google Sign-In OAuth Client IDs. Set at build time
+      // via EAS secrets (or in .env for local dev). The web client
+      // id is the one whose audience the server JWT verifier expects
+      // when @react-native-google-signin/google-signin is configured
+      // with serverClientId — that's the recommended pattern for
+      // backend ID-token verification. iOS / Android client IDs are
+      // referenced by the native SDK; web is what the audience
+      // ultimately resolves to in the issued idToken.
+      googleClientIds: {
+        ios:     process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '',
+        android: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || '',
+        web:     process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '',
       },
       router: {},
     },

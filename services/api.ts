@@ -12,7 +12,7 @@
 //   data: {"type":"error","error":"..."}
 
 import Constants from 'expo-constants';
-import { getUserId } from './user';
+import { getUserId, peekUserId, setUserId } from './user';
 import { emitRateLimitNotice } from '../utils/rateLimitNotice';
 
 const BASE_URL: string =
@@ -1544,6 +1544,156 @@ export const api = {
     } catch (e) {
       console.warn('[map-mark-seen] threw:', (e as Error)?.message);
       return null;
+    }
+  },
+
+  // ==========================================================================
+  // Build 11 — Account recovery (Apple / Google / email magic link).
+  // ==========================================================================
+  // Three providers feed a single /api/auth/sign-in endpoint. The
+  // server returns { userId, isNewUser, migrated, identityId } — the
+  // caller writes that userId into SecureStore (via setUserId) and
+  // continues with the existing X-User-Id flow.
+  //
+  // X-User-Id flow during sign-in:
+  //   - If an existing anonymous user_id is on disk → peekUserId
+  //     returns it, we send it as X-User-Id. Server detects new
+  //     identity + existing X-User-Id → MIGRATION (preserves the
+  //     anonymous user's data under the now-linked identity).
+  //   - If no existing user_id → no header, server mints a fresh
+  //     user_id (first-time sign-up) OR routes to an existing
+  //     identity's user_id (cross-device restore).
+  //
+  // Helper that builds headers WITHOUT minting an anonymous user_id
+  // if none exists yet. Used only by the sign-in path so we don't
+  // burn a UUID on first launch just to throw it away seconds later.
+  async _authSignInHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const existing = await peekUserId();
+    if (existing) headers['X-User-Id'] = existing;
+    return headers;
+  },
+
+  /** POST /api/auth/sign-in. Verify a provider credential and resolve
+   *  to a user_id. Returns the resolved id + flags telling the caller
+   *  whether this is a brand-new account, a migration of the calling
+   *  anonymous user, or simply a re-sign-in from a known identity.
+   *
+   *  The caller is responsible for writing the returned userId into
+   *  SecureStore via setUserId() so subsequent requests carry the
+   *  right X-User-Id. Failed verification surfaces as null + a
+   *  server-side log. */
+  async authSignIn(
+    provider: 'apple' | 'google' | 'email',
+    credential: string,
+  ): Promise<{
+    userId: string;
+    isNewUser: boolean;
+    migrated: boolean;
+    identityId: string;
+  } | null> {
+    try {
+      const headers = await this._authSignInHeaders();
+      const res = await apiFetch('/api/auth/sign-in', {
+        label: 'auth-sign-in', method: 'POST', headers,
+        body: JSON.stringify({ provider, credential }),
+      });
+      if (!res.ok) {
+        console.warn(`[auth-sign-in] non-OK ${res.status}`);
+        return null;
+      }
+      const j: any = await res.json().catch(() => null);
+      if (!j || typeof j.userId !== 'string') return null;
+      // Stamp the resolved userId into SecureStore so the rest of
+      // the app picks it up via getUserId(). For the migration path
+      // this is a no-op (server returns the same id we already had);
+      // for first-time sign-up + cross-device restore this is the
+      // actual identity-store of the resolved id.
+      try { await setUserId(j.userId); } catch (e) {
+        console.warn('[auth-sign-in] setUserId threw:', (e as Error)?.message);
+      }
+      return {
+        userId: j.userId,
+        isNewUser: !!j.isNewUser,
+        migrated: !!j.migrated,
+        identityId: String(j.identityId || ''),
+      };
+    } catch (e) {
+      console.warn('[auth-sign-in] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** POST /api/auth/email/request. Generates + sends a magic-link
+   *  email. Returns true on success (server ALWAYS returns ok:true
+   *  unless the email is malformed — anti-enumeration). Caller
+   *  surfaces "check your inbox" copy regardless of outcome. */
+  async authRequestEmailMagicLink(email: string): Promise<boolean> {
+    try {
+      const headers = await this._authSignInHeaders();
+      const res = await apiFetch('/api/auth/email/request', {
+        label: 'auth-email-request', method: 'POST', headers,
+        body: JSON.stringify({ email }),
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[auth-email-request] threw:', (e as Error)?.message);
+      return false;
+    }
+  },
+
+  /** GET /api/auth/identities. Returns the identities currently
+   *  linked to the user. Empty array means the user is anonymous —
+   *  the chat tab boot uses this to decide whether to show the
+   *  migration modal. */
+  async authListIdentities(): Promise<{
+    identities: Array<{
+      id: string;
+      provider: 'apple' | 'google' | 'email';
+      email: string | null;
+      created_at: string;
+      last_used_at: string;
+    }>;
+  }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/auth/identities', {
+        label: 'auth-list-identities', method: 'GET', headers,
+      });
+      if (!res.ok) return { identities: [] };
+      const j: any = await res.json().catch(() => null);
+      if (!j || !Array.isArray(j.identities)) return { identities: [] };
+      return {
+        identities: j.identities.map((r: any) => ({
+          id: String(r.id),
+          provider: r.provider,
+          email: r.email ?? null,
+          created_at: String(r.created_at || ''),
+          last_used_at: String(r.last_used_at || ''),
+        })),
+      };
+    } catch (e) {
+      console.warn('[auth-list-identities] threw:', (e as Error)?.message);
+      return { identities: [] };
+    }
+  },
+
+  /** DELETE /api/auth/identities/:id. Unlink one identity from the
+   *  calling user. Returns true on success. The caller is responsible
+   *  for warning the user if this is their LAST identity (going back
+   *  to anonymous mode means cross-device restore is no longer
+   *  available). */
+  async authRemoveIdentity(identityId: string): Promise<boolean> {
+    if (!identityId) return false;
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/auth/identities/${encodeURIComponent(identityId)}`, {
+        label: 'auth-remove-identity', method: 'DELETE', headers,
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[auth-remove-identity] threw:', (e as Error)?.message);
+      return false;
     }
   },
 };

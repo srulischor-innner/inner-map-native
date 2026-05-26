@@ -33,7 +33,9 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
-import { getUserId, setUserId as overrideUserId } from '../services/user';
+import { getUserId, setUserId as overrideUserId, clearUserId } from '../services/user';
+import { resetOnboarding } from '../services/onboarding';
+import { AuthButtonRow } from '../components/auth/AuthButtonRow';
 import {
   useExperienceLevel, loadExperienceLevel, setExperienceLevel,
   LEVEL_LABELS, ExperienceLevel,
@@ -146,6 +148,9 @@ export default function SettingsScreen() {
             <Text style={styles.linkText}>CHANGE</Text>
           </Pressable>
         </View>
+
+        {/* ===== ACCOUNT (Build 11) ===== */}
+        <AccountSection />
 
         {/* ===== PRIVACY ===== */}
         <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>PRIVACY</Text>
@@ -342,6 +347,73 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansBold,
     fontSize: 11,
     letterSpacing: 1.4,
+  },
+
+  // Build 11 — Account section styles. The "SAVE MY DATA" primary
+  // button uses the same amber CTA pattern as the EndSession button;
+  // the "Add another sign-in option" / "Sign out" links use the
+  // muted text-button pattern from the other settings rows.
+  rowSubBlock: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: spacing.sm,
+    paddingHorizontal: 2,
+  },
+  accountPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.amber,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.pill,
+    marginTop: spacing.sm,
+    minWidth: 240,
+    alignSelf: 'center',
+  },
+  accountPrimaryBtnText: {
+    color: colors.background,
+    fontFamily: fonts.sansBold,
+    fontSize: 13,
+    letterSpacing: 1.4,
+  },
+  accountAddWrap: {
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderRadius: radii.md,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.18)',
+  },
+  accountAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginTop: spacing.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  accountAddBtnText: {
+    color: colors.amber,
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+    letterSpacing: 0.4,
+  },
+  accountSignOutBtn: {
+    alignSelf: 'center',
+    marginTop: spacing.md,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  accountSignOutText: {
+    color: '#E05050',
+    fontFamily: fonts.sansMedium,
+    fontSize: 13,
+    letterSpacing: 0.4,
   },
 
   version: {
@@ -652,6 +724,197 @@ function CrisisResourcesSection() {
 // here. The existing in-app /privacy screen (linked elsewhere in
 // Settings) carries the detailed policy in the meantime.
 // =============================================================================
+// =============================================================================
+// Account section (Build 11). Three states based on /api/auth/identities:
+//
+//   - LOADING — small loader; doesn't render the section
+//   - SIGNED IN  → list of linked identities + "Add another" sub-row
+//                  + Sign out
+//   - ANONYMOUS  → "You're using Inner Map anonymously" notice +
+//                  primary "Save my data — add a sign-in option"
+//                  button that expands into the AuthButtonRow
+//
+// Sign-out path: clearUserId() + resetOnboarding() so the next launch
+// re-runs the welcome → sign-in → onboarding gauntlet from a clean
+// slate. The user's server-side data is preserved (the auth_identities
+// row → user_id mapping doesn't change), so signing back in restores
+// it on the next launch.
+// =============================================================================
+type Identity = {
+  id: string;
+  provider: 'apple' | 'google' | 'email';
+  email: string | null;
+  created_at: string;
+  last_used_at: string;
+};
+
+function AccountSection() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [identities, setIdentities] = useState<Identity[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { identities } = await api.authListIdentities();
+      setIdentities(identities as Identity[]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleRemove = useCallback((id: Identity) => {
+    const isLast = identities.length <= 1;
+    const message = isLast
+      ? 'This is your only sign-in option. If you remove it, you’ll go back to anonymous mode — ' +
+        'and if you lose this device, your data will be lost. Continue?'
+      : 'Remove this sign-in option from your account?';
+    Alert.alert(
+      'Remove sign-in option',
+      message,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove', style: 'destructive',
+          onPress: async () => {
+            const ok = await api.authRemoveIdentity(id.id);
+            if (ok) {
+              await refresh();
+            } else {
+              Alert.alert('Couldn’t remove', 'Try again in a moment.');
+            }
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  }, [identities, refresh]);
+
+  const handleSignOut = useCallback(() => {
+    Alert.alert(
+      'Sign out?',
+      'You can sign back in with the same Apple, Google, or email on this device or any other to restore your data.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out',
+          onPress: async () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+            try { await clearUserId(); } catch {}
+            try { await resetOnboarding(); } catch {}
+            // Replace, not push — the back stack should be empty
+            // post-sign-out so the user can't navigate "back" into
+            // their previous session's screens.
+            router.replace('/sign-in');
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  }, [router]);
+
+  if (loading) {
+    return (
+      <>
+        <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>ACCOUNT</Text>
+        <View style={styles.row}>
+          <Text style={styles.rowSub}>Loading…</Text>
+        </View>
+      </>
+    );
+  }
+
+  const providerLabel = (p: Identity['provider']) =>
+    p === 'apple' ? 'Apple' : p === 'google' ? 'Google' : 'Email';
+
+  return (
+    <>
+      <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>ACCOUNT</Text>
+      {identities.length === 0 ? (
+        <>
+          <View style={styles.row}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>You're using Inner Map anonymously.</Text>
+              <Text style={styles.rowSub}>
+                Your data only exists on this device. If you lose this phone,
+                your data will be lost.
+              </Text>
+            </View>
+          </View>
+          {addOpen ? (
+            <View style={styles.accountAddWrap}>
+              <AuthButtonRow
+                onSuccess={() => { setAddOpen(false); refresh(); }}
+                compact
+              />
+            </View>
+          ) : (
+            <Pressable
+              onPress={() => setAddOpen(true)}
+              style={({ pressed }) => [styles.accountPrimaryBtn, pressed && { opacity: 0.85 }]}
+              accessibilityLabel="Save my data — add a sign-in option"
+            >
+              <Ionicons name="cloud-upload-outline" size={16} color={colors.background} style={{ marginRight: 8 }} />
+              <Text style={styles.accountPrimaryBtnText}>SAVE MY DATA</Text>
+            </Pressable>
+          )}
+        </>
+      ) : (
+        <>
+          <Text style={styles.rowSubBlock}>
+            Your data is saved to your account. You can sign in on any device to restore it.
+          </Text>
+          {identities.map((id) => (
+            <View key={id.id} style={styles.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>{providerLabel(id.provider)}</Text>
+                {id.email ? (
+                  <Text style={styles.rowSub}>{id.email}</Text>
+                ) : null}
+              </View>
+              <Pressable
+                onPress={() => handleRemove(id)}
+                hitSlop={10}
+                style={styles.linkBtn}
+              >
+                <Text style={[styles.linkText, { color: '#E05050' }]}>REMOVE</Text>
+              </Pressable>
+            </View>
+          ))}
+          {addOpen ? (
+            <View style={styles.accountAddWrap}>
+              <Text style={styles.rowSubBlock}>Add another sign-in option:</Text>
+              <AuthButtonRow
+                onSuccess={() => { setAddOpen(false); refresh(); }}
+                compact
+              />
+            </View>
+          ) : (
+            <Pressable
+              onPress={() => setAddOpen(true)}
+              hitSlop={8}
+              style={styles.accountAddBtn}
+            >
+              <Ionicons name="add" size={14} color={colors.amber} />
+              <Text style={styles.accountAddBtnText}>Add another sign-in option</Text>
+            </Pressable>
+          )}
+          <Pressable
+            onPress={handleSignOut}
+            hitSlop={8}
+            style={styles.accountSignOutBtn}
+          >
+            <Text style={styles.accountSignOutText}>Sign out</Text>
+          </Pressable>
+        </>
+      )}
+    </>
+  );
+}
+
 function PrivacyDataSection() {
   const router = useRouter();
   const { exporting, run: handleExport } = useAccountExport();

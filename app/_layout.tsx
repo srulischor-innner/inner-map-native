@@ -13,13 +13,17 @@
 //      Stack's layoutEffects have fired and the route is registered.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { AppState, View, Image, StyleSheet } from 'react-native';
+import { AppState, View, Image, StyleSheet, Alert } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Notifications from 'expo-notifications';
+import * as Linking from 'expo-linking';
 import { useFonts } from 'expo-font';
+
+import { api } from '../services/api';
+import { markSignInChoiceMade } from '../services/onboarding';
 
 import { colors } from '../constants/theme';
 import { getOnboardingState, OnboardingState } from '../services/onboarding';
@@ -322,14 +326,47 @@ export default function RootLayout() {
         // screen, so next launch corrects itself.
         const fallback: OnboardingState = {
           hasSeenIntro: true, termsAccepted: true, intakeComplete: true,
+          // Build 11 — default signInChoiceMade=true on timeout so a
+          // stalled storage doesn't trap the user on /sign-in. The
+          // sign-in screen still routes back to /onboarding on
+          // explicit completion; defaulting true means the worst
+          // case is "user lands on the main app without having seen
+          // the sign-in screen" rather than "user is stuck on
+          // sign-in forever."
+          signInChoiceMade: true,
         };
         const state = await withTimeout(getOnboardingState(), 3000, fallback, 'getOnboardingState');
         console.log('[boot] step 1/3 done — state:', state);
 
+        // Build 11 boot routing — TWO sequential gates:
+        //   Gate A: signInChoiceMade=false AND hasSeenIntro=false →
+        //     FRESH INSTALL on Build 11. Send to /sign-in. After the
+        //     user signs in (or explicitly chooses anonymous), the
+        //     sign-in screen sets signInChoiceMade=true and routes
+        //     to /onboarding for the existing welcome → privacy →
+        //     terms → intake flow.
+        //   Gate B: onboarding incomplete (the existing rule) →
+        //     /onboarding.
+        //   Otherwise (fully onboarded) → fall through to the main
+        //     tabs. The chat tab's mount checks /api/auth/identities
+        //     and surfaces MigrationModal if the user is still
+        //     anonymous AND signInChoiceMade=false (existing Build-10
+        //     tester upgrading).
+        const needsSignIn = !state.signInChoiceMade && !state.hasSeenIntro;
         const complete = state.hasSeenIntro && state.termsAccepted && state.intakeComplete;
-        console.log('[boot] step 2/3 — complete?', complete);
+        console.log(`[boot] step 2/3 — needsSignIn=${needsSignIn} complete=${complete}`);
 
-        if (!complete && !hasRedirectedToOnboarding) {
+        if (needsSignIn && !hasRedirectedToOnboarding) {
+          hasRedirectedToOnboarding = true;
+          setTimeout(() => {
+            try {
+              console.log('[boot] → replace(/sign-in)');
+              router.replace('/sign-in');
+            } catch (e) {
+              console.warn('[boot] router.replace(/sign-in) threw:', (e as Error)?.message);
+            }
+          }, 0);
+        } else if (!complete && !hasRedirectedToOnboarding) {
           hasRedirectedToOnboarding = true;
           // Defer by one tick so the Stack's layoutEffects have wired up the
           // route registry before we try to replace.
@@ -372,8 +409,74 @@ export default function RootLayout() {
     } catch (e) {
       console.warn('[boot] notification listener registration failed:', (e as Error)?.message);
     }
+
+    // Build 11 — magic-link deep-link handler. The user's email
+    // contains https://my-inner-map.com/auth/email?token=…; on iOS
+    // and Android the universal-link / app-link routes that URL
+    // straight into this app (via associatedDomains / intentFilters
+    // in app.config.js). Tapping the link from inside the email
+    // client opens the app with that URL as the initial deep link.
+    //
+    // We also accept the bare innermap://auth/email?token=… scheme
+    // — used by the web fallback landing page when universal links
+    // don't intercept (desktop browser opens, etc.).
+    //
+    // Handles both:
+    //   - cold-launch (Linking.getInitialURL on first render)
+    //   - warm relaunch (Linking.addEventListener while in foreground)
+    const consumeAuthEmailUrl = async (url: string) => {
+      try {
+        if (!url) return;
+        const parsed = Linking.parse(url);
+        const isAuthEmail =
+          (parsed.scheme === 'innermap' && parsed.hostname === 'auth' &&
+            (parsed.path === '/email' || parsed.path === 'email')) ||
+          (parsed.hostname === 'my-inner-map.com' && /\/auth\/email\/?$/.test(parsed.path || ''));
+        if (!isAuthEmail) return;
+        const token = parsed.queryParams?.token;
+        const tokenStr = Array.isArray(token) ? token[0] : token;
+        if (typeof tokenStr !== 'string' || !tokenStr) {
+          console.warn('[boot] magic-link URL missing token:', url);
+          return;
+        }
+        console.log('[boot] magic-link deep link received — completing sign-in');
+        const out = await api.authSignIn('email', tokenStr);
+        if (!out) {
+          Alert.alert(
+            'Sign-in link expired',
+            'This link is invalid or has expired (links are good for 15 minutes). Request a fresh sign-in email.',
+          );
+          return;
+        }
+        await markSignInChoiceMade();
+        // If the user was on /sign-in (or hasn't onboarded), proceed
+        // to /onboarding. If they're already in the main app (e.g.
+        // signing in from settings via a fresh email link), just
+        // stay where they are — the api method has already updated
+        // SecureStore with the resolved userId.
+        try {
+          router.replace(out.isNewUser ? '/onboarding' : '/');
+        } catch (e) {
+          console.warn('[boot] post-magic-link routing threw:', (e as Error)?.message);
+        }
+      } catch (e) {
+        console.warn('[boot] magic-link handler threw:', (e as Error)?.message);
+      }
+    };
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        console.log('[boot] initial URL:', url);
+        consumeAuthEmailUrl(url);
+      }
+    }).catch(() => {});
+    const linkingSub = Linking.addEventListener('url', (event) => {
+      console.log('[boot] foreground URL event:', event?.url);
+      if (event?.url) consumeAuthEmailUrl(event.url);
+    });
+
     return () => {
       try { responseSubRef.current?.remove(); } catch {}
+      try { linkingSub?.remove?.(); } catch {}
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
