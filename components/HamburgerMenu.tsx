@@ -251,12 +251,24 @@ function SessionRow({
   mostActivePart?: string | null;
   /** Mode the session was ended in. NULL for legacy rows that
    *  predate the column on the server — the row hides the label
-   *  in that case so older history doesn't grow a misleading tag. */
-  chatMode?: 'process' | 'explore' | null;
+   *  in that case so older history doesn't grow a misleading tag.
+   *  Build 11 adds 'partner_private' for synthetic Partner-chat
+   *  sessions surfaced from relationship_messages. */
+  chatMode?: 'process' | 'explore' | 'partner_private' | null;
   onPress: () => void;
 }) {
-  const dotColor = mostActivePart ? (PART_COLOR[mostActivePart] || colors.amber) : 'rgba(255,255,255,0.2)';
-  const showMode = chatMode === 'process' || chatMode === 'explore';
+  // Partner sessions get a heart-color dot (no part detection); the
+  // row indicator carries the 💗 affordance via the "Partner" chip
+  // styling.
+  const isPartner = chatMode === 'partner_private';
+  const dotColor = isPartner
+    ? '#E0879A'
+    : (mostActivePart ? (PART_COLOR[mostActivePart] || colors.amber) : 'rgba(255,255,255,0.2)');
+  const showMode = chatMode === 'process' || chatMode === 'explore' || chatMode === 'partner_private';
+  const modeLabel =
+    chatMode === 'explore' ? 'Explore' :
+    chatMode === 'partner_private' ? '💗 Partner' :
+    'Process';
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.sessionRow, pressed && { opacity: 0.65 }]}>
       <View style={[styles.sessionDot, { backgroundColor: dotColor }]} />
@@ -269,10 +281,12 @@ function SessionRow({
                 styles.sessionMode,
                 chatMode === 'explore'
                   ? styles.sessionModeExplore
-                  : styles.sessionModeProcess,
+                  : chatMode === 'partner_private'
+                    ? styles.sessionModePartner
+                    : styles.sessionModeProcess,
               ]}
             >
-              {chatMode === 'explore' ? 'Explore' : 'Process'}
+              {modeLabel}
             </Text>
           ) : null}
         </View>
@@ -571,6 +585,12 @@ const styles = StyleSheet.create({
   },
   sessionModeExplore: {
     color: '#E6B47A',
+  },
+  // Build 11 — Partner chat label. Heart-pink to distinguish from
+  // amber Process/Explore tags; same italic Cormorant register so
+  // it fits visually with the rest of the chip family.
+  sessionModePartner: {
+    color: '#E0879A',
   },
   sessionTitle: { color: colors.cream, fontSize: 14, marginTop: 2 },
 

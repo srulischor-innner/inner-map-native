@@ -27,7 +27,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, Modal, StyleSheet, ActivityIndicator,
+  View, Text, Pressable, Modal, StyleSheet, ActivityIndicator, PanResponder,
+  PanResponderInstance, GestureResponderEvent, PanResponderGestureState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -53,9 +54,19 @@ type ActiveMic = 'self' | 'self-like';
 // established a belief for) or fallback="no_part_detected" (no part
 // was detected with confidence). The audio still plays in both cases;
 // the toast is purely informational and dismisses on its own.
-type FallbackToast = { kind: 'missing_belief' | 'no_part_detected'; partName?: string | null } | null;
+//
+// Build 11 extends this with two press-and-hold gesture toasts:
+//   - 'hold-to-record'  → user released within MIN_HOLD_MS (accidental tap)
+//   - 'slide-cancelled' → user slid finger off the mic and released
+//                          (recording discarded silently otherwise)
+type FallbackToast = {
+  kind: 'missing_belief' | 'no_part_detected' | 'hold-to-record' | 'slide-cancelled';
+  partName?: string | null;
+} | null;
 
 const MIN_HOLD_MS = 300;          // discard accidental taps shorter than this
+const MAX_HOLD_MS = 120000;       // 2 minutes — auto-send if user holds longer
+const SLIDE_CANCEL_DY = -60;      // upward swipe past this distance cancels
 const SELF_LABEL = 'SELF';
 const SELF_LIKE_LABEL = 'SELF-LIKE';
 
@@ -113,6 +124,15 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   // state change can't redirect dispatch into the wrong branch.
   const recordingModeRef = useRef<ActiveMic | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Build 11 — slide-to-cancel + max-hold infra. cancellingRef tracks
+  // whether the user has slid past SLIDE_CANCEL_DY during a hold; the
+  // matching `slideCancelling` state mirrors it for render-time UI
+  // feedback (icon swap + red overlay). maxHoldTimerRef auto-sends
+  // at MAX_HOLD_MS so a stuck-finger hold doesn't burn an unbounded
+  // recording.
+  const cancellingRef = useRef(false);
+  const [slideCancelling, setSlideCancelling] = useState(false);
+  const maxHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fetch the explainer-seen flag once on mount. Result is cached
   // for this session; the POST/dismiss path updates it locally so
@@ -197,11 +217,23 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       setActiveMic(mode);
       setState('recording');
       setHoldSec(0);
+      cancellingRef.current = false;
+      setSlideCancelling(false);
       pressStartTimeRef.current = Date.now();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       tickRef.current = setInterval(() => {
         setHoldSec(Math.floor((Date.now() - pressStartTimeRef.current) / 1000));
       }, 250);
+      // Build 11 — auto-send at MAX_HOLD_MS so a stuck finger doesn't
+      // burn an unbounded recording. The auto-fire goes through the
+      // same stopAndDispatch path as a normal release, just without a
+      // user gesture initiating it.
+      if (maxHoldTimerRef.current) clearTimeout(maxHoldTimerRef.current);
+      maxHoldTimerRef.current = setTimeout(() => {
+        console.log('[map-voice-bar] MAX_HOLD_MS reached — auto-sending');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        stopAndDispatchRef.current?.();
+      }, MAX_HOLD_MS);
     } catch (e) {
       console.warn('[map-voice-bar] startRecording failed:', (e as Error)?.message);
       setState('idle');
@@ -209,6 +241,11 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       recordingModeRef.current = null;
     }
   }, [state, recorder]);
+
+  // stopAndDispatchRef holds the latest version of stopAndDispatch so
+  // the max-hold setTimeout can call it without capturing a stale
+  // closure. Wired after stopAndDispatch is declared below.
+  const stopAndDispatchRef = useRef<(() => Promise<void>) | null>(null);
 
   // Decode + play the base64 MP3 returned by /api/map-voice/turn.
   // Reused across all four outcome branches (self / self-like
@@ -297,9 +334,13 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
 
   const stopAndDispatch = useCallback(async () => {
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    if (maxHoldTimerRef.current) { clearTimeout(maxHoldTimerRef.current); maxHoldTimerRef.current = null; }
     const heldMs = Date.now() - pressStartTimeRef.current;
     const mode = recordingModeRef.current;
     recordingModeRef.current = null;
+    const cancelled = cancellingRef.current;
+    cancellingRef.current = false;
+    setSlideCancelling(false);
     try {
       await recorder.stop();
       try {
@@ -311,8 +352,21 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     } catch (e) {
       console.warn('[map-voice-bar] recorder.stop threw:', (e as Error)?.message);
     }
+    if (cancelled) {
+      console.log('[map-voice-bar] slide-cancelled — discarding');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      showFallbackToast({ kind: 'slide-cancelled' });
+      setState('idle');
+      setActiveMic(null);
+      return;
+    }
     if (heldMs < MIN_HOLD_MS) {
-      console.log('[map-voice-bar] hold too short — discarding');
+      // Build 11 — replace the silent discard with a toast so the
+      // user understands the gesture model. Previously a quick
+      // accidental tap dropped to idle with no feedback, which read
+      // as "the mic is broken." Now they see "Hold to record."
+      console.log('[map-voice-bar] hold too short — toast');
+      showFallbackToast({ kind: 'hold-to-record' });
       setState('idle');
       setActiveMic(null);
       return;
@@ -326,14 +380,36 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     }
     const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/mp4';
     sendAudio(uri, mime, mode || 'self');
-  }, [recorder, sendAudio]);
+  }, [recorder, sendAudio, showFallbackToast]);
+
+  // Wire the ref so the max-hold setTimeout can fire stopAndDispatch
+  // without closing over a stale instance.
+  useEffect(() => {
+    stopAndDispatchRef.current = stopAndDispatch;
+  }, [stopAndDispatch]);
+
+  // Build 11 — gesture handlers driven by PanResponder instead of
+  // Pressable so we can track finger movement during a hold (slide-
+  // to-cancel) and reliably distinguish a real release from a parent-
+  // ScrollView intercept. The press-in / press-out shape stays the
+  // same; the responder just wraps it with onMove dy tracking.
+  //
+  // Refs hold the latest handler closures so the PanResponder we
+  // create once (per mount) always calls the freshest startRecording
+  // / stopAndDispatch — PanResponder.create captures by closure, and
+  // we don't want to recreate it on every dependency change because
+  // re-creating mid-gesture orphans the in-flight responder.
+  const handlersRef = useRef<{
+    onPressIn: (mode: ActiveMic) => void;
+    onPressOut: () => void;
+    onMove: (dy: number) => void;
+  }>({
+    onPressIn: () => {}, onPressOut: () => {}, onMove: () => {},
+  });
 
   const onSelfPressIn = useCallback(() => {
     if (state !== 'idle') return;
     wantRecordingRef.current = true;
-    // First-time check — if the user has not seen the explainer
-    // modal yet, show it INSTEAD of starting the recording. The
-    // recording starts on the next tap, after dismiss.
     if (explainerSeen === false) {
       setModal('explainer');
       wantRecordingRef.current = false;
@@ -350,8 +426,6 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
 
   const onSelfLikePressIn = useCallback(() => {
     if (state !== 'idle') return;
-    // Disabled tooltip path — no belief established yet. Fire the
-    // info modal and bail out before any recording infra is touched.
     if (!selfLikeEnabled) {
       Haptics.selectionAsync().catch(() => {});
       setModal('selfLikeDisabled');
@@ -359,9 +433,6 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     }
     wantRecordingRef.current = true;
     if (explainerSeen === false) {
-      // Same first-time gate as Self — the explainer covers both
-      // mics in a single modal, so the first tap (whichever mic)
-      // surfaces it.
       setModal('explainer');
       wantRecordingRef.current = false;
       return;
@@ -374,6 +445,77 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     wantRecordingRef.current = false;
     if (state === 'recording') stopAndDispatch();
   }, [state, stopAndDispatch]);
+
+  // Shared slide-to-cancel: when the user drags up past SLIDE_CANCEL_DY
+  // (60px), set cancellingRef so the eventual release discards the
+  // recording. Dragging BACK below the threshold un-cancels (matches
+  // WhatsApp's behavior). The state mirror drives the visual: mic
+  // icon swaps to an X and the recording chip turns red.
+  const onMicMove = useCallback((dy: number) => {
+    if (state !== 'recording') return;
+    const shouldCancel = dy < SLIDE_CANCEL_DY;
+    if (shouldCancel !== cancellingRef.current) {
+      cancellingRef.current = shouldCancel;
+      setSlideCancelling(shouldCancel);
+      if (shouldCancel) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }
+    }
+  }, [state]);
+
+  // PanResponder factory — produces ONE responder per mic. Created
+  // once at mount; reads the latest handlers via handlersRef so we
+  // don't need to recreate the responder when callbacks change.
+  function makeMicResponder(mode: ActiveMic): PanResponderInstance {
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => {
+        if (mode === 'self') handlersRef.current.onPressIn('self');
+        else handlersRef.current.onPressIn('self-like');
+      },
+      onPanResponderMove: (_e: GestureResponderEvent, g: PanResponderGestureState) => {
+        handlersRef.current.onMove(g.dy);
+      },
+      onPanResponderRelease: () => {
+        handlersRef.current.onPressOut();
+      },
+      onPanResponderTerminate: () => {
+        // Treat external interruption (e.g., parent scroll, modal
+        // appearing) as a cancel: stop the recorder + don't send.
+        if (state === 'recording') {
+          cancellingRef.current = true;
+          setSlideCancelling(true);
+        }
+        handlersRef.current.onPressOut();
+      },
+    });
+  }
+
+  const selfResponderRef = useRef<PanResponderInstance | null>(null);
+  const selfLikeResponderRef = useRef<PanResponderInstance | null>(null);
+  if (!selfResponderRef.current) selfResponderRef.current = makeMicResponder('self');
+  if (!selfLikeResponderRef.current) selfLikeResponderRef.current = makeMicResponder('self-like');
+
+  // Keep handlersRef pointed at the freshest callbacks for each mic.
+  // The PanResponder grabs onPressIn(mode) via a route that branches
+  // inside makeMicResponder; the handlers themselves are keyed by
+  // mode externally, so we only need to publish three slots: the
+  // per-mic onPressIn (selected at responder time), onPressOut
+  // (shared), and onMove (shared).
+  useEffect(() => {
+    handlersRef.current = {
+      onPressIn: (mode) => (mode === 'self' ? onSelfPressIn() : onSelfLikePressIn()),
+      onPressOut: () => (activeMic === 'self-like' ? onSelfLikePressOut() : onSelfPressOut()),
+      onMove: onMicMove,
+    };
+  }, [onSelfPressIn, onSelfPressOut, onSelfLikePressIn, onSelfLikePressOut, onMicMove, activeMic]);
+
+  // Cleanup max-hold timer on unmount.
+  useEffect(() => () => {
+    if (maxHoldTimerRef.current) clearTimeout(maxHoldTimerRef.current);
+  }, []);
 
   const dismissExplainer = useCallback(() => {
     setModal(null);
@@ -395,29 +537,37 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       <View style={styles.bar} pointerEvents="box-none">
         <View style={styles.col}>
           <Text style={styles.glyph}>●</Text>
-          <Pressable
-            onPressIn={onSelfPressIn}
-            onPressOut={onSelfPressOut}
-            hitSlop={8}
+          <View
+            {...(selfResponderRef.current?.panHandlers || {})}
             style={[
               styles.mic,
               selfMicRecording && styles.micRecording,
               selfMicBusy && thinking && styles.micThinking,
               selfMicBusy && speaking && styles.micSpeaking,
+              // Build 11 — slide-to-cancel visual: red overlay + X
+              // icon when the user has dragged past the threshold.
+              selfMicRecording && slideCancelling && styles.micCancelling,
             ]}
-            accessibilityLabel="Self — hold to speak"
+            accessible
+            accessibilityLabel="Self — hold to speak, slide up to cancel"
             accessibilityRole="button"
           >
             {selfMicBusy && thinking ? (
               <ActivityIndicator color={colors.amber} />
             ) : (
               <Ionicons
-                name="mic"
+                name={selfMicRecording && slideCancelling ? 'close' : 'mic'}
                 size={22}
-                color={selfMicRecording || (selfMicBusy && speaking) ? '#fff' : colors.amber}
+                color={
+                  selfMicRecording && slideCancelling
+                    ? '#fff'
+                    : selfMicRecording || (selfMicBusy && speaking)
+                      ? '#fff'
+                      : colors.amber
+                }
               />
             )}
-          </Pressable>
+          </View>
           <View style={styles.labelRow}>
             <Text style={styles.label}>{SELF_LABEL}</Text>
             <Pressable
@@ -430,7 +580,9 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
             </Pressable>
           </View>
           {selfMicRecording ? (
-            <Text style={styles.hint}>recording… {holdSec}s</Text>
+            <Text style={[styles.hint, slideCancelling && styles.hintCancelling]}>
+              {slideCancelling ? 'release to cancel' : `recording… ${holdSec}s`}
+            </Text>
           ) : null}
         </View>
 
@@ -444,20 +596,20 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
             faded. */}
         <View style={[styles.col, !selfLikeEnabled && styles.colDisabled]}>
           <Text style={[styles.glyph, !selfLikeEnabled && styles.glyphDim]}>◆</Text>
-          <Pressable
-            onPressIn={onSelfLikePressIn}
-            onPressOut={onSelfLikePressOut}
-            hitSlop={8}
+          <View
+            {...(selfLikeResponderRef.current?.panHandlers || {})}
             style={[
               styles.mic,
               !selfLikeEnabled && styles.micDisabled,
               selfLikeMicRecording && styles.micRecording,
               selfLikeMicBusy && thinking && styles.micThinking,
               selfLikeMicBusy && speaking && styles.micSpeaking,
+              selfLikeMicRecording && slideCancelling && styles.micCancelling,
             ]}
+            accessible
             accessibilityLabel={
               selfLikeEnabled
-                ? 'Self-like part — hold to speak'
+                ? 'Self-like part — hold to speak, slide up to cancel'
                 : 'Self-like part — not yet available'
             }
             accessibilityRole="button"
@@ -466,7 +618,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
               <ActivityIndicator color={colors.amber} />
             ) : (
               <Ionicons
-                name="mic"
+                name={selfLikeMicRecording && slideCancelling ? 'close' : 'mic'}
                 size={22}
                 color={
                   !selfLikeEnabled
@@ -477,7 +629,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
                 }
               />
             )}
-          </Pressable>
+          </View>
           <View style={styles.labelRow}>
             <Pressable
               onPress={() => setModal('selfLikeInfo')}
@@ -496,7 +648,9 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
             </Text>
           </View>
           {selfLikeMicRecording ? (
-            <Text style={styles.hint}>recording… {holdSec}s</Text>
+            <Text style={[styles.hint, slideCancelling && styles.hintCancelling]}>
+              {slideCancelling ? 'release to cancel' : `recording… ${holdSec}s`}
+            </Text>
           ) : null}
         </View>
       </View>
@@ -514,7 +668,11 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
             <Text style={styles.toastText}>
               {fallbackToast.kind === 'missing_belief'
                 ? 'Tap the Self-like part on the map to establish your belief.'
-                : 'Couldn’t identify a single part — try again with one specific situation.'}
+                : fallbackToast.kind === 'no_part_detected'
+                  ? 'Couldn’t identify a single part — try again with one specific situation.'
+                  : fallbackToast.kind === 'hold-to-record'
+                    ? 'Hold to record.'
+                    : 'Recording cancelled.'}
             </Text>
           </View>
         </View>
@@ -639,6 +797,10 @@ const styles = StyleSheet.create({
   micRecording: { backgroundColor: '#d4726a', borderColor: '#d4726a' },
   micThinking:  { backgroundColor: colors.backgroundSecondary },
   micSpeaking:  { backgroundColor: '#8A7AAA', borderColor: '#8A7AAA' },
+  // Build 11 — slide-to-cancel state. Darker red + thicker border so
+  // the user clearly sees the recording is about to be discarded on
+  // release. The icon swaps to "close" via the render branch.
+  micCancelling: { backgroundColor: '#8a2a2a', borderColor: '#5a1a1a', borderWidth: 3 },
   micDisabled: {
     borderColor: colors.creamFaint,
     shadowOpacity: 0,
@@ -664,6 +826,13 @@ const styles = StyleSheet.create({
     color: colors.creamDim,
     fontFamily: fonts.sans,
     fontSize: 11,
+  },
+  // Build 11 — recording hint when the user has slid past the
+  // cancel threshold. Red text matches the cancelling mic visual
+  // so the discard intention reads loud + clear.
+  hintCancelling: {
+    color: '#E05050',
+    fontFamily: fonts.sansBold,
   },
 
   // Fallback toast — pinned just above the mic bar. Self-aligned

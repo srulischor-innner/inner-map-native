@@ -1239,17 +1239,64 @@ export const api = {
     departedAt?: string | null;
     partnerNoticeShown?: 0 | 1;
   }>> {
-    try {
+    // Build 11 — bug fix for "partner connection lost on every app
+    // update." The old shape returned [] on BOTH "no partners" AND
+    // transport failure, which made the Partner tab unable to tell
+    // a real "no partner" state from a cold-start blip. On app
+    // updates Railway often takes 5-30s to wake up, the fetch
+    // times out, the UI sees [], classifies as 'none', and routes
+    // to the connect-screen — asking the user to re-invite a
+    // partner who's still paired server-side.
+    //
+    // Compatibility: the public API stays a plain array — that's
+    // what every existing call site consumes. The new
+    // listRelationshipsResult() below is the discriminated form
+    // for callers that need to tell apart "empty list" from
+    // "fetch failed." Native Partner tab uses the new form; older
+    // callers (smokes, dev tooling) keep the array contract.
+    const r = await this.listRelationshipsResult();
+    return r.ok ? r.relationships : [];
+  },
+
+  /** Discriminated form of listRelationships() used by the Partner
+   *  tab so it can keep showing the existing-partner UI on a cold-
+   *  start fetch failure instead of falling into the connect-
+   *  screen. Retries the request ONCE on transport failure so a
+   *  brief Railway wake-up doesn't surface as an empty list.
+   *  Returns:
+   *    { ok: true,  relationships: [...] }   on 200
+   *    { ok: false, relationships: [] }      on non-OK / throw
+   *                                           after the retry.
+   */
+  async listRelationshipsResult(): Promise<{
+    ok: boolean;
+    relationships: any[];
+  }> {
+    const attempt = async () => {
       const headers = await authHeaders();
       const res = await apiFetch('/api/relationships', {
         label: 'rel-list', method: 'GET', headers,
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw new Error(`http_${res.status}`);
       const j: any = await res.json();
       return Array.isArray(j?.relationships) ? j.relationships : [];
-    } catch (e) {
-      console.warn('[rel-list] threw:', (e as Error)?.message);
-      return [];
+    };
+    try {
+      const arr = await attempt();
+      return { ok: true, relationships: arr };
+    } catch (e1) {
+      console.warn('[rel-list] first attempt failed, retrying once:', (e1 as Error)?.message);
+      // One-shot retry. Most transient failures resolve on the
+      // second hit once Railway is warm (the first cold request
+      // primes the box). Bound the retry to avoid hiding a real
+      // outage behind exponential backoff.
+      try {
+        const arr = await attempt();
+        return { ok: true, relationships: arr };
+      } catch (e2) {
+        console.warn('[rel-list] retry also failed:', (e2 as Error)?.message);
+        return { ok: false, relationships: [] };
+      }
     }
   },
 

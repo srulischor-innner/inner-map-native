@@ -114,6 +114,7 @@ type Relationship = {
 
 type Phase =
   | { kind: 'loading' }
+  | { kind: 'fetch-error' }   // Build 11 — distinct from 'none'; see refresh()
   | { kind: 'none' }
   | { kind: 'pending-no-partner'; rel: Relationship }
   | { kind: 'pending-intros'; rel: Relationship }
@@ -186,16 +187,40 @@ export default function RelationshipsScreen() {
     router.push(`/relationships/intro/${encodeURIComponent(relationshipId)}` as any);
   }, [router]);
 
+  // Build 11 — pull via the discriminated form so we can keep showing
+  // the existing-partner UI on a transport failure instead of falling
+  // through to the connect-screen on every app-update cold start.
+  // Bug fix for "partner connection lost on every app update": the
+  // old shape (always an array) couldn't distinguish "no partner"
+  // from "fetch failed during Railway wake-up." Now an ok:false
+  // result routes to phase='fetch-error' which renders a small
+  // retry banner over whatever the user saw before.
   const refresh = useCallback(async () => {
-    const rels = (await api.listRelationships()) as Relationship[];
-    setPhase(classify(rels));
+    const r = await api.listRelationshipsResult();
+    if (!r.ok) {
+      setPhase((prev) => {
+        // If we already have a real phase (active / pending / etc.)
+        // from a prior successful fetch this session, keep it —
+        // surfacing a refresh-failed banner without nuking the
+        // working UI underneath.
+        if (prev.kind === 'loading' || prev.kind === 'none' || prev.kind === 'fetch-error') {
+          return { kind: 'fetch-error' };
+        }
+        return prev;
+      });
+      return;
+    }
+    setPhase(classify(r.relationships as Relationship[]));
   }, []);
 
   // Initial load.
   useEffect(() => {
     refresh().catch((e) => {
       console.warn('[relationships] load failed:', (e as Error)?.message);
-      setPhase({ kind: 'none' });
+      // Caught path is now rare — listRelationshipsResult swallows
+      // transport errors and returns ok:false. Keep this branch as
+      // a safety net for genuinely unexpected throws.
+      setPhase({ kind: 'fetch-error' });
     });
   }, [refresh]);
 
@@ -336,6 +361,14 @@ export default function RelationshipsScreen() {
       </Pressable>
       {phase.kind === 'loading' || introSeen === undefined ? (
         <CenteredLoader />
+      ) : phase.kind === 'fetch-error' ? (
+        // Build 11 — surface a retry banner instead of the connect-
+        // screen when the relationships fetch fails. Common on app-
+        // update cold starts (Railway wake-up latency). The user
+        // taps "Try again" to re-fetch; refresh either resolves to
+        // their real phase (active / pending / none) or stays in
+        // fetch-error if Railway is still down.
+        <FetchErrorView onRetry={refresh} />
       ) : phase.kind === 'none' ? (
         <NoRelationshipView
           busy={busy}
@@ -480,6 +513,51 @@ function CenteredLoader() {
   return (
     <View style={styles.center}>
       <ActivityIndicator size="large" color={colors.amber} />
+    </View>
+  );
+}
+
+// Build 11 — shown when api.listRelationshipsResult() returns ok:false
+// (transport error, likely Railway cold start on first launch after an
+// app update). The retry button re-runs refresh() which re-issues the
+// request; the inner one-shot retry inside the api method handles the
+// common case where the second hit catches a now-warm server. If THIS
+// retry also fails, we stay on the error screen — never falling
+// through to the connect-screen and asking the user to re-invite a
+// partner who's still paired server-side.
+function FetchErrorView({ onRetry }: { onRetry: () => Promise<void> | void }) {
+  const [retrying, setRetrying] = useState(false);
+  const handleRetry = useCallback(async () => {
+    if (retrying) return;
+    setRetrying(true);
+    Haptics.selectionAsync().catch(() => {});
+    try { await onRetry(); } finally { setRetrying(false); }
+  }, [retrying, onRetry]);
+  return (
+    <View style={styles.center}>
+      <Ionicons name="cloud-offline-outline" size={36} color={colors.creamDim} style={{ marginBottom: 16 }} />
+      <Text style={styles.fetchErrorTitle}>
+        Couldn't reach the server.
+      </Text>
+      <Text style={styles.fetchErrorBody}>
+        This usually clears in a moment. Your partner connection is safe — we just couldn't fetch the current state.
+      </Text>
+      <Pressable
+        onPress={handleRetry}
+        disabled={retrying}
+        style={({ pressed }) => [
+          styles.fetchErrorRetryBtn,
+          pressed && { opacity: 0.85 },
+          retrying && { opacity: 0.6 },
+        ]}
+        accessibilityLabel="Try again"
+      >
+        {retrying ? (
+          <ActivityIndicator color={colors.background} />
+        ) : (
+          <Text style={styles.fetchErrorRetryText}>TRY AGAIN</Text>
+        )}
+      </Pressable>
     </View>
   );
 }
@@ -832,7 +910,43 @@ const styles = StyleSheet.create({
   // still fills the available area; behavior is set per-platform on
   // the component itself (padding on iOS, height on Android).
   kav: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg },
+
+  // Build 11 — FetchErrorView styles. Plain card-less layout because
+  // it sits inside the existing center container; the icon + headline
+  // + body + retry button stack vertically with comfortable spacing.
+  fetchErrorTitle: {
+    color: colors.cream,
+    fontFamily: fonts.serifBold,
+    fontSize: 22,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  fetchErrorBody: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 15,
+    lineHeight: 23,
+    textAlign: 'center',
+    maxWidth: 320,
+    marginBottom: spacing.lg,
+  },
+  fetchErrorRetryBtn: {
+    backgroundColor: colors.amber,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: 14,
+    borderRadius: 32,
+    minWidth: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fetchErrorRetryText: {
+    color: colors.background,
+    fontFamily: fonts.sansBold,
+    fontSize: 13,
+    letterSpacing: 1.4,
+  },
 
   // Floating info button — top-right of the Partner tab content.
   // Sits in the empty space at the right edge of the segments row
