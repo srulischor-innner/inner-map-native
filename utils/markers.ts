@@ -197,6 +197,12 @@ export function stripMarkers(text: string): string {
     // relationship-mode private chats. Display path preserves it
     // so the bubble can render a <SharePromptCard>.
     .replace(/\[SHARE_SUGGEST:\s*[^\]]+\]/g, '')
+    // INTAKE_COMPLETE — fires once at the end of the first relationship-
+    // mode session after the AI has collected all five intake answers.
+    // Server-side parser persists the JSON payload onto relationship_-
+    // intakes; client just needs to scrub the marker from the bubble.
+    // JSON values may contain newlines, so we use [\s\S] inside.
+    .replace(/(?:^|\n)\s*INTAKE_COMPLETE:\s*\{[\s\S]*?\}/g, '')
     // STARTER_MAP_COMPLETE — first-session completion signal. Server
     // detects it in the streamed text and writes firstSessionCompletedAt;
     // the client uses its presence to render a "View my starter map"
@@ -261,6 +267,11 @@ export function stripMarkersForDisplay(text: string): string {
     // strips this before the response reaches us; the rule here is
     // a defensive catch for streaming partials that slipped through.
     .replace(/\[SAVE_BELIEF:\s*\{[\s\S]*?\}\s*\]/g, '')
+    // INTAKE_COMPLETE — strip from display path too. The marker is
+    // pure structured payload (the 5 intake fields are persisted
+    // server-side); the user-visible transition line that follows
+    // it carries all the displayable copy.
+    .replace(/(?:^|\n)\s*INTAKE_COMPLETE:\s*\{[\s\S]*?\}/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 }

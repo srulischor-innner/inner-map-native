@@ -27,6 +27,23 @@
 // up from 300ms after the empty-transcript bug — see [voice-note] logs.
 const MIN_RECORDING_MS = 500;
 
+// Trailing-audio safeguards — mirror the MapVoiceBar fix (commit
+// 13b650b). On real devices the Pressable.onPressOut event can fire
+// 0-200ms after the finger physically begins to lift, and on iOS
+// expo-audio's stop() resolves before AVAudioRecorder finishes
+// finalizing the M4A container. Both races chop the trailing
+// syllable off voice notes — exact same symptom user reported in
+// Map Voice, and the same symptom shows up in Partner-chat voice
+// notes (which use this same ChatInput).
+//
+//   STOP_GRACE_MS — keep the mic open 250ms after release so any
+//     trailing syllable lands in the recorder buffer.
+//   POST_STOP_FLUSH_MS — wait 150ms after recorder.stop() resolves
+//     before reading recorder.uri, letting iOS finalize the M4A
+//     moov atom + flush the last AAC frames.
+const STOP_GRACE_MS = 250;
+const POST_STOP_FLUSH_MS = 150;
+
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
@@ -220,12 +237,30 @@ export function ChatInput({
     const heldSec = Math.max(0.1, heldMs / 1000);
     console.log(`[voice-note] endHold — stopTimestamp=${stopTs} heldMs=${heldMs} heldSec=${heldSec.toFixed(3)} threshold=${MIN_RECORDING_MS}ms`);
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    // Skip the grace + flush for micro-taps that would be discarded anyway.
+    // Otherwise we'd burn 400ms waiting on an audio we're not going to send.
+    const willDiscard = heldMs < MIN_RECORDING_MS;
+    // Trailing-audio fix: keep the mic open STOP_GRACE_MS more so any
+    // syllable the user was finishing at the moment of release lands
+    // in the recorder buffer. State stays "recording" visually during
+    // this window — the pill keeps reading "Recording…" for an extra
+    // 250ms but the user won't notice. See STOP_GRACE_MS docstring.
+    if (!willDiscard) {
+      await new Promise<void>((r) => setTimeout(r, STOP_GRACE_MS));
+    }
     setRecording(false);
     setSeconds(0);
     try {
       await recorder.stop();
+      // Belt-and-braces flush: wait POST_STOP_FLUSH_MS so iOS finalizes
+      // the M4A container before we read recorder.uri. Skip on micro-
+      // tap discard since the file is being thrown away.
+      if (!willDiscard) {
+        await new Promise<void>((r) => setTimeout(r, POST_STOP_FLUSH_MS));
+      }
       const uri = recorder.uri;
-      console.log(`[voice-note] recorder.stop returned — uri=${uri ? uri.slice(-60) : '(null)'}`);
+      const capturedMs = heldMs + (willDiscard ? 0 : STOP_GRACE_MS);
+      console.log(`[voice-note] recorder.stop returned — uri=${uri ? uri.slice(-60) : '(null)'} capturedMs=${capturedMs}`);
       // Minimum-duration guard. Whisper returns empty transcripts for
       // sub-half-second clips (mic warmup + capture latency leaves
       // mostly silence). Show the user a quick "hold longer" alert
