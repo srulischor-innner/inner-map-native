@@ -67,6 +67,21 @@ export type SharedMessage = {
   responses: SharedMessageResponse[];
 };
 
+// Partner-chat session record. One row per closed-or-open private-chat
+// session for a partner. Matches publicRelationshipSession() on the server —
+// practicesJson is parsed server-side into a string[] before send.
+export type RelationshipSession = {
+  id: string;
+  relationshipId: string;
+  userId: string;
+  startedAt: string;
+  endedAt: string | null;
+  summary: string | null;
+  practices: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 async function authHeaders(): Promise<Record<string, string>> {
   const userId = await getUserId();
   return {
@@ -1343,6 +1358,141 @@ export const api = {
     } catch (e) {
       console.warn('[rel-messages] threw:', (e as Error)?.message);
       return [];
+    }
+  },
+
+  // ===========================================================================
+  // RELATIONSHIP SESSIONS — per-partner bracketed conversations
+  // ===========================================================================
+  // Mirror the main Chat tab's session lifecycle, scoped to one
+  // partner's PRIVATE chat. Auto-opened on Partner → Chat entry,
+  // closed by tap-and-hold of the EndSessionButton in
+  // RelationshipChat. The server resumes a recent open session
+  // (<60min idle) or mints fresh — the native client doesn't have
+  // to decide.
+
+  /** POST /api/relationships/:relationshipId/sessions/start.
+   *  Resumes the most recent open session (<60min stale) or mints
+   *  a fresh one. Returns the session row + a `resumed` boolean. */
+  async startRelationshipSession(
+    relationshipId: string,
+  ): Promise<{ session: RelationshipSession; resumed: boolean } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/sessions/start`,
+        { label: 'rel-session-start', method: 'POST', headers, body: JSON.stringify({}) },
+      );
+      if (!res.ok) {
+        console.warn(`[rel-session-start] non-OK ${res.status}`);
+        return null;
+      }
+      const j: any = await res.json().catch(() => null);
+      if (!j || !j.session) return null;
+      return { session: j.session as RelationshipSession, resumed: !!j.resumed };
+    } catch (e) {
+      console.warn('[rel-session-start] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** POST /api/relationships/sessions/:sessionId/end.
+   *  Closes the session + runs summary + practices generation inline.
+   *  Latency: typically 2-5 sec (one Anthropic call). Returns the
+   *  updated session row with summary + practices populated. */
+  async endRelationshipSession(
+    sessionId: string,
+  ): Promise<{ session: RelationshipSession } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/sessions/${encodeURIComponent(sessionId)}/end`,
+        { label: 'rel-session-end', method: 'POST', headers, body: JSON.stringify({}) },
+      );
+      if (!res.ok) {
+        console.warn(`[rel-session-end] non-OK ${res.status}`);
+        return null;
+      }
+      const j: any = await res.json().catch(() => null);
+      if (!j || !j.session) return null;
+      return { session: j.session as RelationshipSession };
+    } catch (e) {
+      console.warn('[rel-session-end] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** POST /api/relationships/sessions/:sessionId/generate-summary.
+   *  Standalone re-generate. Used for retry on a fallback / failed
+   *  summary. Doesn't touch endedAt. Returns { summary, practices,
+   *  fallback?, error? }. */
+  async generateRelationshipSessionSummary(
+    sessionId: string,
+  ): Promise<{ summary: string; practices: string[]; fallback?: boolean; error?: string } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/sessions/${encodeURIComponent(sessionId)}/generate-summary`,
+        { label: 'rel-session-summary', method: 'POST', headers, body: JSON.stringify({}) },
+      );
+      if (!res.ok) {
+        console.warn(`[rel-session-summary] non-OK ${res.status}`);
+        return null;
+      }
+      const j: any = await res.json().catch(() => null);
+      if (!j) return null;
+      return {
+        summary: String(j.summary || ''),
+        practices: Array.isArray(j.practices) ? j.practices.map(String) : [],
+        ...(j.fallback ? { fallback: true } : {}),
+        ...(j.error ? { error: String(j.error) } : {}),
+      };
+    } catch (e) {
+      console.warn('[rel-session-summary] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** GET /api/relationships/:relationshipId/sessions?limit=20.
+   *  Past sessions for the calling user + relationship, newest first.
+   *  Includes both open and closed sessions. */
+  async listRelationshipSessions(
+    relationshipId: string,
+    limit = 20,
+  ): Promise<RelationshipSession[]> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/sessions?limit=${limit}`,
+        { label: 'rel-session-list', method: 'GET', headers },
+      );
+      if (!res.ok) return [];
+      const j: any = await res.json().catch(() => null);
+      return Array.isArray(j?.sessions) ? (j.sessions as RelationshipSession[]) : [];
+    } catch (e) {
+      console.warn('[rel-session-list] threw:', (e as Error)?.message);
+      return [];
+    }
+  },
+
+  /** GET /api/relationships/sessions/:sessionId. Single session
+   *  detail, used by the hamburger to open a past session's
+   *  summary screen read-only. */
+  async getRelationshipSession(
+    sessionId: string,
+  ): Promise<RelationshipSession | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/sessions/${encodeURIComponent(sessionId)}`,
+        { label: 'rel-session-get', method: 'GET', headers },
+      );
+      if (!res.ok) return null;
+      const j: any = await res.json().catch(() => null);
+      return (j?.session as RelationshipSession) || null;
+    } catch (e) {
+      console.warn('[rel-session-get] threw:', (e as Error)?.message);
+      return null;
     }
   },
 

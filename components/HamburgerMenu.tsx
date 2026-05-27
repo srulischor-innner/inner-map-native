@@ -21,7 +21,7 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 
 import { colors, radii, spacing } from '../constants/theme';
-import { api } from '../services/api';
+import { api, RelationshipSession } from '../services/api';
 import { getSettings, setAudioEnabled, setPushEnabled } from '../services/settings';
 import {
   useExperienceLevel, setExperienceLevel,
@@ -30,6 +30,7 @@ import {
 import { resetOnboarding } from '../services/onboarding';
 import { PART_COLOR } from '../utils/markers';
 import { SessionDetailModal } from './session/SessionDetailModal';
+import { RelationshipSessionSummaryModal } from './relationships/RelationshipSessionSummaryModal';
 
 const FEEDBACK_TO  = 'support@my-inner-map.com';
 
@@ -45,6 +46,18 @@ export function HamburgerMenu({
   const [pushOn, setPushOn]   = useState(true);
   const [sessions, setSessions] = useState<any[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // Partner-session summary modal state — opened when the user taps a
+  // recent session whose id starts with `relsession::` (real
+  // relationship_sessions row). We fetch the full session detail and
+  // pass it into RelationshipSessionSummaryModal in read-only mode so
+  // the user can re-read the summary + practices any time.
+  // selectedRelSession holds the resolved row; selectedRelMeta tracks
+  // the partnerName + relationshipId so practice cards can still
+  // "Send to {partner}" + "Forward" from a past session.
+  const [selectedRelSession, setSelectedRelSession] = useState<RelationshipSession | null>(null);
+  const [selectedRelMeta, setSelectedRelMeta] =
+    useState<{ relationshipId: string; partnerName: string | null } | null>(null);
+  const [relSummaryFailed, setRelSummaryFailed] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -62,8 +75,29 @@ export function HamburgerMenu({
     })();
   }, [visible]);
 
-  function openSession(id: string) {
+  function openSession(id: string, row?: any) {
     Haptics.selectionAsync().catch(() => {});
+    // Partner sessions (real relationship_sessions rows) carry the
+    // `relsession::<uuid>` prefix — fetch + open the summary modal
+    // instead of the regular SessionDetailModal (which expects a
+    // /api/sessions row). Legacy `partner::` day-bucket ids still
+    // route through SessionDetailModal so pre-PR partner history
+    // remains viewable.
+    if (id.startsWith('relsession::')) {
+      const realId = id.slice('relsession::'.length);
+      setSelectedRelMeta({
+        relationshipId: row?.relationshipId || '',
+        partnerName: row?.partnerName || null,
+      });
+      setSelectedRelSession(null);
+      setRelSummaryFailed(false);
+      (async () => {
+        const session = await api.getRelationshipSession(realId);
+        if (session) setSelectedRelSession(session);
+        else setRelSummaryFailed(true);
+      })();
+      return;
+    }
     setSelectedSessionId(id);
   }
 
@@ -155,7 +189,7 @@ export function HamburgerMenu({
                 title={s.title || s.preview}
                 mostActivePart={s.mostActivePart}
                 chatMode={s.chatMode}
-                onPress={() => openSession(s.id)}
+                onPress={() => openSession(s.id, s)}
               />
             ))}
           </View>
@@ -232,11 +266,32 @@ export function HamburgerMenu({
         <Text style={styles.version}>Inner Map · v{version}</Text>
       </SafeAreaView>
 
-      {/* Session transcript modal — shared with Journey tab. */}
+      {/* Session transcript modal — shared with Journey tab. Used
+          for regular Process/Explore sessions AND the legacy
+          `partner::` day-bucket ids (pre-PR partner-chat history). */}
       <SessionDetailModal
         visible={!!selectedSessionId}
         sessionId={selectedSessionId}
         onClose={() => setSelectedSessionId(null)}
+      />
+
+      {/* Partner-session summary modal (read-only). Opened when the
+          user taps a recent session whose id starts with
+          `relsession::` — a real relationship_sessions row from the
+          post-PR per-partner session-bracketing model. The "Begin
+          New Session" button is repurposed as "Done" via onContinue,
+          which just closes the modal without minting a new session. */}
+      <RelationshipSessionSummaryModal
+        visible={!!selectedRelMeta}
+        session={selectedRelSession}
+        failed={relSummaryFailed}
+        relationshipId={selectedRelMeta?.relationshipId || ''}
+        partnerName={selectedRelMeta?.partnerName || null}
+        onContinue={() => {
+          setSelectedRelMeta(null);
+          setSelectedRelSession(null);
+          setRelSummaryFailed(false);
+        }}
       />
     </Modal>
   );

@@ -37,12 +37,14 @@ import * as Haptics from 'expo-haptics';
 import { v4 as uuidv4 } from 'uuid';
 
 import { colors, fonts, spacing } from '../../constants/theme';
-import { api, ChatMessage } from '../../services/api';
+import { api, ChatMessage, RelationshipSession } from '../../services/api';
 import { MessageBubble, ChatMsg } from '../MessageBubble';
 import { stripMarkers, stripMarkersForDisplay } from '../../utils/markers';
 import { ChatInput } from '../ChatInput';
 import { AudioToggle } from '../AudioToggle';
 import { ConversationStarters } from '../ConversationStarters';
+import { EndSessionButton } from '../EndSessionButton';
+import { RelationshipSessionSummaryModal } from './RelationshipSessionSummaryModal';
 
 // Opening AI message rendered when the partner chat history is empty
 // — gives the user a starting point so they're not staring at a blank
@@ -93,6 +95,27 @@ export function RelationshipChat({
   const historyRef = useRef<ChatMessage[]>([]);
   const scrollRef = useRef<ScrollView | null>(null);
 
+  // ===== SESSION STATE =====
+  // Server-side relationship_sessions row that brackets this partner
+  // chat. Auto-opened on mount (resume-or-fresh, 60min staleness),
+  // closed by tap-and-hold of the EndSessionButton, then a summary +
+  // 1-3 practices land in the RelationshipSessionSummaryModal.
+  // sessionIdRef mirrors the id for the End handler so a mid-session
+  // re-render doesn't lose the reference. userSentInSessionRef drives
+  // EndSessionButton.visible (only show after a real back-and-forth).
+  const [activeSession, setActiveSession] = useState<RelationshipSession | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const userSentInSessionRef = useRef(false);
+  const [, setSessionTick] = useState(0); // forces EndSessionButton re-eval after first user send
+
+  // Summary modal state — open in loading mode the moment the user
+  // commits End; populated when api.endRelationshipSession resolves.
+  // Failed = transport/500 OR endpoint returned no session row.
+  const [summarySession, setSummarySession] = useState<RelationshipSession | null>(null);
+  const [summaryVisible, setSummaryVisible] = useState(false);
+  const [summaryFailed, setSummaryFailed] = useState(false);
+  const [endingTransition, setEndingTransition] = useState(false);
+
   // ===== AUDIO TOGGLE =====
   // Session-level audio mute/unmute. Default OFF — user opts in each
   // visit by tapping the speaker icon in the chat header. When ON, every
@@ -126,6 +149,29 @@ export function RelationshipChat({
       historyRef.current = wire;
       setLoading(false);
       requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
+    })();
+    return () => { cancelled = true; };
+  }, [relationshipId]);
+
+  // Auto-open relationship session on mount. The server's start
+  // endpoint is resume-or-fresh: if there's an open session less
+  // than 60min old it returns that; otherwise it auto-ends any
+  // stale open session (fire-and-forget summary) and mints a new
+  // one. Either way we get a session row back. Failures are
+  // tolerated — the chat still works, just without session
+  // bracketing — but the End Session button hides itself since
+  // there's nothing to close.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await api.startRelationshipSession(relationshipId);
+      if (cancelled) return;
+      if (result?.session) {
+        setActiveSession(result.session);
+        sessionIdRef.current = result.session.id;
+      } else {
+        console.warn('[rel-chat] session start returned null — End Session disabled this mount');
+      }
     })();
     return () => { cancelled = true; };
   }, [relationshipId]);
@@ -348,6 +394,14 @@ export function RelationshipChat({
     const userId = uuidv4();
     setMessages((prev) => [...prev, { id: userId, role: 'user', text: t }]);
     historyRef.current.push({ role: 'user', content: t });
+    // Mark this session as "back-and-forth started" so EndSessionButton
+    // reveals itself. Forcing a re-render via setSessionTick is the
+    // simplest way to pull the ref check through React — a ref change
+    // alone wouldn't re-evaluate the button's `visible` prop.
+    if (!userSentInSessionRef.current) {
+      userSentInSessionRef.current = true;
+      setSessionTick((n) => n + 1);
+    }
     // ChatInput owns its own text state and clears itself on send; we
     // just push the bubble + run the turn.
     scrollToBottom();
@@ -393,6 +447,10 @@ export function RelationshipChat({
     );
     if (transcript) {
       historyRef.current.push({ role: 'user', content: transcript });
+      if (!userSentInSessionRef.current) {
+        userSentInSessionRef.current = true;
+        setSessionTick((n) => n + 1);
+      }
       runAssistantTurn();
     }
   }, [sending, runAssistantTurn, scrollToBottom]);
@@ -518,14 +576,93 @@ export function RelationshipChat({
           keyboard (kbHeight) plus the safe-area home-indicator gap
           (insets.bottom) when the keyboard is hidden. When the
           keyboard is up, kbHeight already covers the home-indicator
-          area so we don't double-pad. */}
+          area so we don't double-pad.
+          End-session pill sits beneath the input, mirroring the
+          main chat tab's dock layout — visible once the user has
+          sent at least one message in the active session AND the
+          server returned a session id (otherwise End would be a
+          no-op). Hidden during the ending transition so the user
+          can't tap twice. */}
       <View style={{ paddingBottom: kbHeight > 0 ? kbHeight : Math.max(insets.bottom, 6) }}>
         <ChatInput
           disabled={sending}
           onSend={handleSend}
           onSendVoice={handleSendVoice}
         />
+        <EndSessionButton
+          visible={
+            !!sessionIdRef.current &&
+            userSentInSessionRef.current &&
+            !endingTransition
+          }
+          onEnd={async () => {
+            const sid = sessionIdRef.current;
+            if (!sid) return;
+            // 1) Block re-entry + open the summary modal in loading mode.
+            setEndingTransition(true);
+            setSummarySession(null);
+            setSummaryFailed(false);
+            setSummaryVisible(true);
+            // 2) Fire the end-session call. Server closes the
+            //    session row, runs the summary prompt inline (one
+            //    Anthropic call), persists summary + practicesJson,
+            //    and returns the populated row. Typical 2-5s.
+            try {
+              const result = await api.endRelationshipSession(sid);
+              if (result?.session) {
+                setSummarySession(result.session);
+              } else {
+                setSummaryFailed(true);
+              }
+            } catch (e) {
+              console.warn('[rel-chat] end-session threw:', (e as Error)?.message);
+              setSummaryFailed(true);
+            }
+          }}
+        />
       </View>
+
+      {/* End-of-session summary modal — full-screen slide-up with
+          the AI-generated recap + practice cards. onContinue fires
+          when the user taps "Begin New Session"; we close the modal,
+          reset the local chat state, and open a fresh session. */}
+      <RelationshipSessionSummaryModal
+        visible={summaryVisible}
+        session={summarySession}
+        failed={summaryFailed}
+        relationshipId={relationshipId}
+        partnerName={partnerName}
+        onContinue={async () => {
+          // Close the modal first so the dismiss animation overlaps
+          // with the chat reset.
+          setSummaryVisible(false);
+          setSummarySession(null);
+          setSummaryFailed(false);
+          // Reset local chat state — messages cleared, history wiped,
+          // session refs nulled. Note: the SERVER's
+          // relationship_messages table is NOT cleared (sessions are
+          // a bracketing concept; the history persists across them).
+          // We just clear the LOCAL view so the new session starts
+          // visually fresh. The opening message + starter pills
+          // re-render via messages.length === 0.
+          cancelTTSStream();
+          setAudioEnabled(false);
+          setMessages([]);
+          historyRef.current = [];
+          userSentInSessionRef.current = false;
+          sessionIdRef.current = null;
+          setActiveSession(null);
+          setEndingTransition(false);
+          // Mint a fresh session. Same resume-or-fresh endpoint as
+          // mount; staleness window means we'll always get a new
+          // session row here since we just closed the previous one.
+          const result = await api.startRelationshipSession(relationshipId);
+          if (result?.session) {
+            setActiveSession(result.session);
+            sessionIdRef.current = result.session.id;
+          }
+        }}
+      />
     </View>
   );
 }
