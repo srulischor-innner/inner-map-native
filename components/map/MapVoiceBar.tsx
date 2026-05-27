@@ -67,8 +67,43 @@ type FallbackToast = {
 const MIN_HOLD_MS = 300;          // discard accidental taps shorter than this
 const MAX_HOLD_MS = 120000;       // 2 minutes — auto-send if user holds longer
 const SLIDE_CANCEL_DY = -60;      // upward swipe past this distance cancels
+// Audio-truncation fix (real-device regression — user reports of
+// transcripts ending mid-word: "I was wondering ", "my needs don't",
+// "this part of me that's yelling at me like "). Two trailing-audio
+// safeguards layered together:
+//
+//   STOP_GRACE_MS — keep the mic OPEN for 250ms AFTER the user lifts
+//     their finger. The PanResponder release event fires within
+//     ~0-200ms of the finger physically beginning to lift; if we call
+//     recorder.stop() the instant we receive the release, any trailing
+//     syllable the user was finishing gets swallowed. 250ms of post-
+//     release recording captures the tail.
+//
+//   POST_STOP_FLUSH_MS — wait 150ms AFTER recorder.stop() resolves
+//     before reading recorder.uri. expo-audio's stop() promise resolves
+//     when the recorder transitions out of the recording state, but
+//     the underlying iOS AVAudioRecorder may still be finalizing the
+//     M4A container (writing the moov atom + flushing the last AAC
+//     frames) for another 50-200ms. Reading uri + uploading
+//     immediately can give us a file with the last frames missing.
+//
+// Skip both delays for slide-cancel / terminate paths — the audio is
+// being discarded anyway, no point keeping the user waiting.
+const STOP_GRACE_MS = 250;
+const POST_STOP_FLUSH_MS = 150;
 const SELF_LABEL = 'SELF';
 const SELF_LIKE_LABEL = 'SELF-LIKE';
+
+// Reasons stopAndDispatch can be invoked. Surfaces in the diagnostic
+// log so future truncation reports can be triaged at a glance:
+//   user_release — normal press-out (the dominant happy path)
+//   auto_max    — MAX_HOLD_MS auto-fire (stuck-finger guard)
+//   slide_cancel — user slid past SLIDE_CANCEL_DY OR external
+//                  interruption (PanResponder terminate) — both
+//                  discard the audio, so they share a reason label.
+//   other       — explicit fallback for future call sites; treated
+//                 like user_release for the tail-capture window.
+type StopReason = 'user_release' | 'auto_max' | 'slide_cancel' | 'other';
 
 const EXPLAINER_BODY = [
   // Mirrors the spec verbatim. The render path splits this into
@@ -249,7 +284,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       maxHoldTimerRef.current = setTimeout(() => {
         console.log('[map-voice-bar] MAX_HOLD_MS reached — auto-sending');
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-        stopAndDispatchRef.current?.();
+        stopAndDispatchRef.current?.('auto_max');
       }, MAX_HOLD_MS);
       console.log(`[map-voice-bar] startRecording READY mode=${mode}, recorder armed`);
     } catch (e) {
@@ -263,7 +298,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   // stopAndDispatchRef holds the latest version of stopAndDispatch so
   // the max-hold setTimeout can call it without capturing a stale
   // closure. Wired after stopAndDispatch is declared below.
-  const stopAndDispatchRef = useRef<(() => Promise<void>) | null>(null);
+  const stopAndDispatchRef = useRef<((reason?: StopReason) => Promise<void>) | null>(null);
 
   // Decode + play the base64 MP3 returned by /api/map-voice/turn.
   // Reused across all four outcome branches (self / self-like
@@ -352,8 +387,8 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     }
   }, [onDetectedPart, playReplyAudio, refreshBeliefStatus, showFallbackToast]);
 
-  const stopAndDispatch = useCallback(async () => {
-    console.log('[map-voice-bar] stopAndDispatch START');
+  const stopAndDispatch = useCallback(async (reasonHint: StopReason = 'user_release') => {
+    console.log(`[map-voice-bar] stopAndDispatch START reasonHint=${reasonHint}`);
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     if (maxHoldTimerRef.current) { clearTimeout(maxHoldTimerRef.current); maxHoldTimerRef.current = null; }
     const heldMs = Date.now() - pressStartTimeRef.current;
@@ -362,10 +397,33 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     const cancelled = cancellingRef.current;
     cancellingRef.current = false;
     setSlideCancelling(false);
-    console.log(`[map-voice-bar] stopAndDispatch mode=${mode} heldMs=${heldMs} cancelled=${cancelled}`);
+    // Effective reason: cancellingRef set during this hold overrides
+    // a 'user_release' hint with 'slide_cancel' so the log always
+    // reflects what actually happened. terminate path also routes
+    // through cancellingRef → reads as slide_cancel below.
+    const reason: StopReason = cancelled ? 'slide_cancel' : reasonHint;
+    console.log(`[map-voice-bar] stopAndDispatch mode=${mode} heldMs=${heldMs} reason=${reason}`);
+
+    // ===== TRAILING-AUDIO FIX =====
+    // For real user releases (not cancel / not terminate / not
+    // max-hold auto-fire), keep the mic open for STOP_GRACE_MS more
+    // so any trailing syllable hits the recorder before we close
+    // the file. See STOP_GRACE_MS docstring above.
+    const captureTail = reason === 'user_release' || reason === 'auto_max' || reason === 'other';
+    if (captureTail) {
+      await new Promise<void>((r) => setTimeout(r, STOP_GRACE_MS));
+    }
+
     try {
       await recorder.stop();
       console.log('[map-voice-bar] recorder.stop resolved');
+      // Belt-and-braces flush: even after stop() resolves, the iOS
+      // AVAudioRecorder may still be finalizing the M4A container.
+      // Wait POST_STOP_FLUSH_MS before reading recorder.uri so we
+      // don't upload a file with truncated trailing frames.
+      if (captureTail) {
+        await new Promise<void>((r) => setTimeout(r, POST_STOP_FLUSH_MS));
+      }
       try {
         await setAudioModeAsync({
           allowsRecording: false, playsInSilentMode: true,
@@ -375,6 +433,17 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     } catch (e) {
       console.warn('[map-voice-bar] recorder.stop threw:', (e as Error)?.message);
     }
+
+    // Effective captured duration includes the grace window (the mic
+    // was open during STOP_GRACE_MS too). Surfaces in the diagnostic
+    // log below so we can correlate transcript truncation reports
+    // with how long the file should have been.
+    const capturedMs = heldMs + (captureTail ? STOP_GRACE_MS : 0);
+    console.log(
+      `[map-voice-bar] recorder stopped duration=${capturedMs}ms ` +
+      `maxAllowedMs=${MAX_HOLD_MS} reason="${reason}"`,
+    );
+
     if (cancelled) {
       console.log('[map-voice-bar] slide-cancelled — discarding');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -464,7 +533,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     wantRecordingRef.current = false;
     if (wasRecording) {
       console.log('[map-voice-bar] onSelfPressOut → calling stopAndDispatch');
-      stopAndDispatch();
+      stopAndDispatch('user_release');
     } else {
       console.log('[map-voice-bar] onSelfPressOut — no active recording, skipping dispatch');
     }
@@ -498,7 +567,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
     wantRecordingRef.current = false;
     if (wasRecording) {
       console.log('[map-voice-bar] onSelfLikePressOut → calling stopAndDispatch');
-      stopAndDispatch();
+      stopAndDispatch('user_release');
     } else {
       console.log('[map-voice-bar] onSelfLikePressOut — no active recording, skipping dispatch');
     }
