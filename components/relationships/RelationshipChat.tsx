@@ -446,6 +446,13 @@ export function RelationshipChat({
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const showSub = Keyboard.addListener(showEvt, (e) => {
       setKbHeight(e.endCoordinates?.height ?? 0);
+      // Build 11 bug fix — the kbHeight padding lifts the INPUT BAR
+      // above the keyboard, but the ScrollView keeps its contentOffset.
+      // Without an explicit scrollToEnd, the last 1–2 messages slide
+      // under the (now-smaller) ScrollView's bottom edge and get
+      // clipped behind the input bar / hidden above the keyboard.
+      // Same pattern the main chat tab uses (app/(tabs)/index.tsx ~570).
+      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
     });
     const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
     return () => { showSub.remove(); hideSub.remove(); };
