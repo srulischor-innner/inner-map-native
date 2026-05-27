@@ -19,6 +19,7 @@
     },
     "production": {
       "autoIncrement": true,
+      "prebuildCommand": "node scripts/check-production-build.js",
       "ios": {
         "simulator": false
       }

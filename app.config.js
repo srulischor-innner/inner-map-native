@@ -65,14 +65,39 @@ const base = {
     },
     android: {
       package: 'com.srulischor.innermap',
-      versionCode: 2,
+      // Bump to 3: missing-INTERNET fix (May 2026 outage) requires a
+      // new artifact for Android Internal Testing to pick up the
+      // corrected AndroidManifest.xml.
+      versionCode: 3,
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
         backgroundColor: '#0a0a0f',
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
-      permissions: ['RECORD_AUDIO'],
+      // ANDROID PERMISSIONS — must include INTERNET explicitly.
+      //
+      // May 2026 incident: Android Internal Testing builds shipped
+      // with permissions: ['RECORD_AUDIO'] only. Production users
+      // saw zero requests land at Railway from ua=okhttp/4.12.0 —
+      // every fetch failed before leaving the device. Email sign-in
+      // AND Google sign-in both broke; iOS was unaffected (different
+      // permission model). Browser on the same phone reached the
+      // server, ruling out connectivity / TLS / DNS.
+      //
+      // Root cause: when android.permissions is set to an explicit
+      // array, Expo's prebuild merges it with autolinked module
+      // permissions, but it can ALSO act as a filter on the
+      // permission tags emitted into AndroidManifest.xml — and the
+      // default INTERNET tag (which RN's networking module declares
+      // via its manifest merge) gets stripped in some prebuild paths
+      // (especially with newArchEnabled: true). Being explicit is
+      // the reliable fix.
+      //
+      // ACCESS_NETWORK_STATE is bundled with INTERNET as the standard
+      // pair so any future "is the user online?" check doesn't trip
+      // the same class of bug.
+      permissions: ['RECORD_AUDIO', 'INTERNET', 'ACCESS_NETWORK_STATE'],
       // Build 11 — magic-link Android App Link. Same role as the iOS
       // associatedDomains entry above. The host must serve a matching
       // /.well-known/assetlinks.json with this package + the SHA-256

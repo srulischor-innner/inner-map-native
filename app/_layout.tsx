@@ -13,7 +13,7 @@
 //      Stack's layoutEffects have fired and the route is registered.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { AppState, View, Image, StyleSheet, Alert } from 'react-native';
+import { AppState, View, Image, StyleSheet, Alert, Platform } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -22,7 +22,7 @@ import * as Notifications from 'expo-notifications';
 import * as Linking from 'expo-linking';
 import { useFonts } from 'expo-font';
 
-import { api } from '../services/api';
+import { api, API_BASE_URL } from '../services/api';
 import { markSignInChoiceMade } from '../services/onboarding';
 
 import { colors } from '../constants/theme';
@@ -45,6 +45,43 @@ import { LandingScreen } from '../components/LandingScreen';
 // module not properly bundled in the standalone build).
 // =============================================================================
 console.log('[splash] _layout.tsx is executing');
+
+// =============================================================================
+// BOOT DIAGNOSTICS — API base URL + reachability probe.
+//
+// May 2026 Android outage post-mortem: Android Internal Testing build
+// shipped without INTERNET permission (see app.config.js note on
+// android.permissions). Zero requests reached Railway from ua=
+// okhttp/4.12.0 — but nothing in the device logs immediately surfaced
+// the cause, because every failure was just a generic toast in the
+// auth flow and we had no boot-time observability. The two logs below
+// give a 5-second triage path:
+//
+//   [boot] API_URL=...        — if this prints "" or anything other
+//                               than the prod Railway URL, the build
+//                               is misconfigured and no fetch will work
+//   [boot] health: 200        — server reachable, networking OK
+//   [boot] health FAILED: ... — server unreachable; the error message
+//                               tells you whether it's TLS, DNS, blocked
+//                               cleartext, missing INTERNET, etc.
+//
+// The health-check fires fire-and-forget so it adds no boot latency.
+// It's wrapped in try/catch because a fetch crash on Android with no
+// INTERNET permission throws synchronously in some RN builds, not as
+// a rejected promise.
+// =============================================================================
+console.log(
+  '[boot] API_URL=', API_BASE_URL,
+  'platform=', Platform.OS,
+  'isProd=', !__DEV__,
+);
+try {
+  fetch(`${API_BASE_URL}/api/health`, { method: 'GET' })
+    .then((r) => console.log('[boot] health:', r.status))
+    .catch((e) => console.log('[boot] health FAILED:', (e as Error)?.message));
+} catch (e) {
+  console.log('[boot] health THREW SYNC:', (e as Error)?.message);
+}
 
 // Global uncaught-error logger. Installed once per JS context. Any error
 // thrown after this point — whether in a useEffect, an async IIFE, a

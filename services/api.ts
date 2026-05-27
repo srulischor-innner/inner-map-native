@@ -19,6 +19,13 @@ const BASE_URL: string =
   (Constants.expoConfig?.extra as any)?.apiBaseUrl ||
   'https://inner-map-production.up.railway.app';
 
+// Re-exported so the root layout (and anything else) can log + reach
+// the same resolved URL the rest of the API client uses — without
+// duplicating the Constants.expoConfig lookup. The May 2026 Android
+// outage (zero requests landing at Railway from ua=okhttp/4.12.0)
+// would've been caught in seconds with a boot-time URL log.
+export const API_BASE_URL = BASE_URL;
+
 // One-time boot log so we can see the resolved URL in the Metro console. If this
 // ever prints something unexpected, that alone explains why every call is failing.
 console.log('[api] BASE_URL =', BASE_URL);
