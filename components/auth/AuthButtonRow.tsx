@@ -102,13 +102,19 @@ export function AuthButtonRow({
   // One-time Google configure — safe to call multiple times.
   useEffect(() => { ensureGoogleConfigured(); }, []);
 
-  const reportError = useCallback((msg: string) => {
+  // Build 11 — log every error surfaced to the user so the toast
+  // text + its origin is traceable in Metro/device logs. Source tag
+  // distinguishes "client-side hard-coded fallback" from "passed up
+  // from a server response."
+  const reportError = useCallback((msg: string, source: string) => {
+    console.warn(`[auth-buttons] reportError source=${source} msg="${msg}"`);
     setStatusMsg(msg);
     if (onError) onError(msg);
   }, [onError]);
 
   const handleApple = useCallback(async () => {
     if (busy) return;
+    console.log('[auth-buttons] handleApple START');
     setBusy('apple');
     setStatusMsg(null);
     try {
@@ -119,23 +125,36 @@ export function AuthButtonRow({
         ],
       });
       const idToken = credential.identityToken;
+      console.log(
+        `[auth-buttons] Apple signInAsync returned — idTokenLen=${idToken?.length || 0} ` +
+        `authCodeLen=${credential.authorizationCode?.length || 0} ` +
+        `user=${credential.user ? credential.user.slice(0, 8) + '…' : '(none)'} ` +
+        `email=${credential.email ? credential.email.slice(0, 3) + '…' : '(none)'}`,
+      );
       if (!idToken) {
-        reportError('Apple didn’t return a sign-in token. Try again.');
+        reportError('Apple didn’t return a sign-in token. Try again.', 'apple-sdk-no-token');
         return;
       }
       const out = await api.authSignIn('apple', idToken);
       if (!out) {
-        reportError('Couldn’t sign in with Apple right now. Try again in a moment.');
+        // api.authSignIn returned null — the server-side log shows
+        // exactly which gate failed. Toast wording stays generic.
+        reportError('Couldn’t sign in with Apple right now. Try again in a moment.', 'authSignIn-returned-null');
         return;
       }
+      console.log(`[auth-buttons] Apple sign-in SUCCESS userId=${out.userId.slice(0, 8)}…`);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       onSuccess({ ...out, provider: 'apple' });
     } catch (e: any) {
       // ERR_CANCELED is the user backing out of the system sheet —
       // not actually an error; silent dismiss.
-      if (e?.code === 'ERR_CANCELED' || e?.code === 'ERR_REQUEST_CANCELED') return;
-      console.warn('[auth-buttons] apple sign-in threw:', e?.message);
-      reportError('Apple sign-in failed. Try again.');
+      if (e?.code === 'ERR_CANCELED' || e?.code === 'ERR_REQUEST_CANCELED') {
+        console.log('[auth-buttons] Apple sign-in user-cancelled');
+        return;
+      }
+      console.warn('[auth-buttons] Apple sign-in threw:', e?.code, e?.message);
+      if (e?.stack) console.warn(e.stack);
+      reportError('Apple sign-in failed. Try again.', 'apple-sdk-threw');
     } finally {
       setBusy(null);
     }
@@ -143,6 +162,7 @@ export function AuthButtonRow({
 
   const handleGoogle = useCallback(async () => {
     if (busy) return;
+    console.log('[auth-buttons] handleGoogle START');
     setBusy('google');
     setStatusMsg(null);
     try {
@@ -152,15 +172,23 @@ export function AuthButtonRow({
       // either at the top level (older) or under .data.idToken (v13+).
       const idToken: string | undefined =
         result?.idToken || result?.data?.idToken;
+      const userEmail: string | undefined =
+        result?.user?.email || result?.data?.user?.email;
+      console.log(
+        `[auth-buttons] Google signIn returned — idTokenLen=${idToken?.length || 0} ` +
+        `shape=${result?.data ? 'v13+' : 'v12-'} ` +
+        `email=${userEmail ? userEmail.slice(0, 3) + '…' : '(none)'}`,
+      );
       if (!idToken) {
-        reportError('Google didn’t return a sign-in token. Try again.');
+        reportError('Google didn’t return a sign-in token. Try again.', 'google-sdk-no-token');
         return;
       }
       const out = await api.authSignIn('google', idToken);
       if (!out) {
-        reportError('Couldn’t sign in with Google right now. Try again in a moment.');
+        reportError('Couldn’t sign in with Google right now. Try again in a moment.', 'authSignIn-returned-null');
         return;
       }
+      console.log(`[auth-buttons] Google sign-in SUCCESS userId=${out.userId.slice(0, 8)}…`);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       onSuccess({ ...out, provider: 'google' });
     } catch (e: any) {
@@ -170,9 +198,13 @@ export function AuthButtonRow({
         e?.code === statusCodes.SIGN_IN_CANCELLED ||
         e?.code === 'SIGN_IN_CANCELLED' ||
         e?.code === '-5' /* iOS cancel */
-      ) return;
-      console.warn('[auth-buttons] google sign-in threw:', e?.message, e?.code);
-      reportError('Google sign-in failed. Try again.');
+      ) {
+        console.log('[auth-buttons] Google sign-in user-cancelled');
+        return;
+      }
+      console.warn('[auth-buttons] Google sign-in threw:', e?.code, e?.message);
+      if (e?.stack) console.warn(e.stack);
+      reportError('Google sign-in failed. Try again.', 'google-sdk-threw');
     } finally {
       setBusy(null);
     }

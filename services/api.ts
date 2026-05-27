@@ -1639,25 +1639,52 @@ export const api = {
     migrated: boolean;
     identityId: string;
   } | null> {
+    // Build 11 diagnostic logging — silent sign-in failures on iOS
+    // TestFlight were near-impossible to diagnose without seeing the
+    // exact response shape the client received. We log the request
+    // entry (provider + credential length, never the credential
+    // itself), the raw HTTP status, and the JSON body the server
+    // returned (or the parse failure). Tagged [auth-sign-in:client]
+    // so it's distinguishable from the server's [auth] log lines.
+    console.log(
+      `[auth-sign-in:client] START provider=${provider} credLen=${credential?.length || 0}`,
+    );
     try {
       const headers = await this._authSignInHeaders();
+      const hasUserIdHeader = !!headers['X-User-Id'];
+      console.log(`[auth-sign-in:client] sending — hasXUserIdHeader=${hasUserIdHeader}`);
       const res = await apiFetch('/api/auth/sign-in', {
         label: 'auth-sign-in', method: 'POST', headers,
         body: JSON.stringify({ provider, credential }),
       });
+      console.log(`[auth-sign-in:client] HTTP status=${res.status} ok=${res.ok}`);
+      // Read the body regardless of status so we can log the server's
+      // error response on non-OK paths (otherwise the operator can
+      // see "non-OK 401" with no context on which guard tripped).
+      const bodyText = await res.text().catch(() => '');
+      const bodyPreview = bodyText.length > 500 ? bodyText.slice(0, 500) + '…' : bodyText;
+      console.log(`[auth-sign-in:client] body: ${bodyPreview}`);
       if (!res.ok) {
-        console.warn(`[auth-sign-in] non-OK ${res.status}`);
+        console.warn(`[auth-sign-in:client] non-OK ${res.status} — returning null to caller`);
         return null;
       }
-      const j: any = await res.json().catch(() => null);
-      if (!j || typeof j.userId !== 'string') return null;
+      let j: any = null;
+      try { j = JSON.parse(bodyText); } catch {}
+      if (!j || typeof j.userId !== 'string') {
+        console.warn('[auth-sign-in:client] response missing userId — returning null');
+        return null;
+      }
+      console.log(
+        `[auth-sign-in:client] SUCCESS userId=${j.userId.slice(0, 8)}… ` +
+        `isNewUser=${!!j.isNewUser} migrated=${!!j.migrated}`,
+      );
       // Stamp the resolved userId into SecureStore so the rest of
       // the app picks it up via getUserId(). For the migration path
       // this is a no-op (server returns the same id we already had);
       // for first-time sign-up + cross-device restore this is the
       // actual identity-store of the resolved id.
       try { await setUserId(j.userId); } catch (e) {
-        console.warn('[auth-sign-in] setUserId threw:', (e as Error)?.message);
+        console.warn('[auth-sign-in:client] setUserId threw:', (e as Error)?.message);
       }
       return {
         userId: j.userId,
@@ -1666,7 +1693,7 @@ export const api = {
         identityId: String(j.identityId || ''),
       };
     } catch (e) {
-      console.warn('[auth-sign-in] threw:', (e as Error)?.message);
+      console.warn('[auth-sign-in:client] threw:', (e as Error)?.message);
       return null;
     }
   },
@@ -1676,15 +1703,24 @@ export const api = {
    *  unless the email is malformed — anti-enumeration). Caller
    *  surfaces "check your inbox" copy regardless of outcome. */
   async authRequestEmailMagicLink(email: string): Promise<boolean> {
+    const masked = email.includes('@')
+      ? email.slice(0, 3) + '…@' + (email.split('@')[1] || '?')
+      : '(invalid)';
+    console.log(`[auth-email-request:client] START email=${masked}`);
     try {
       const headers = await this._authSignInHeaders();
       const res = await apiFetch('/api/auth/email/request', {
         label: 'auth-email-request', method: 'POST', headers,
         body: JSON.stringify({ email }),
       });
+      const bodyText = await res.text().catch(() => '');
+      console.log(
+        `[auth-email-request:client] HTTP status=${res.status} ok=${res.ok} ` +
+        `body=${bodyText.slice(0, 200)}`,
+      );
       return res.ok;
     } catch (e) {
-      console.warn('[auth-email-request] threw:', (e as Error)?.message);
+      console.warn('[auth-email-request:client] threw:', (e as Error)?.message);
       return false;
     }
   },
