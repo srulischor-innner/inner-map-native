@@ -17,8 +17,17 @@
 //      without ATS exemption; we either need HTTPS or arbitrary loads.
 //
 // How to wire:
-//   - eas.json: add "prebuildCommand": "node scripts/check-production-build.js"
-//     under build.production (EAS runs it before each prod build).
+//   - eas.json: "prebuildCommand": "node scripts/check-production-build.js"
+//     under build.production. EAS appends "--platform <ios|android>" to
+//     whatever you set here when it runs the prebuild step (one prebuild
+//     per platform in a multi-platform build). The script tolerates the
+//     extra args — argv is checked below, no flags are required.
+//   - DO NOT prefix with "npx expo" — Expo's CLI rejects unknown flags,
+//     so "npx expo node ... --platform android" fails with
+//     "unknown or unexpected option: --platform" and EAS aborts the
+//     build. Invoke node directly. (May 2026 build-pipeline incident
+//     where the wrong prebuildCommand shape broke every Android prod
+//     build; the eas.json comment + argv log below document the fix.)
 //   - Or invoke manually before pushing a new build:
 //     node scripts/check-production-build.js
 //
@@ -27,6 +36,21 @@
 // Internal Testing again.
 
 const path = require('path');
+
+// EAS injects --platform <ios|android> when running prebuildCommand.
+// We don't need to act on it (the same config checks apply to both
+// platforms — each enforces its own platform's requirements), but
+// logging which platform fired the check makes the EAS build log
+// self-explanatory and confirms the script ran in the expected
+// wrapper. Extra argv entries are silently tolerated by Node.
+const argvPlatformIdx = process.argv.indexOf('--platform');
+const argvPlatform =
+  argvPlatformIdx >= 0 && argvPlatformIdx + 1 < process.argv.length
+    ? process.argv[argvPlatformIdx + 1]
+    : null;
+if (argvPlatform) {
+  console.log(`[prebuild-check] --platform=${argvPlatform} (passed by EAS)`);
+}
 
 const profile = process.env.EAS_BUILD_PROFILE || 'production';
 // Only enforce in production. Dev / preview builds may legitimately
