@@ -52,7 +52,20 @@ if (argvPlatform) {
   console.log(`[prebuild-check] --platform=${argvPlatform} (passed by EAS)`);
 }
 
-const profile = process.env.EAS_BUILD_PROFILE || 'production';
+// Profile resolution order (highest precedence first):
+//   1. --profile <name> CLI flag (used by the build:*:prod npm scripts
+//      so a developer's shell EAS_BUILD_PROFILE=development can't
+//      silently skip the check before a production build).
+//   2. EAS_BUILD_PROFILE env var (set by EAS during a real prebuild).
+//   3. Default to 'production'.
+// Cross-platform — no inline env-var prefix needed, so the same npm
+// script line works on macOS, Linux, and Windows cmd.
+const argvProfileIdx = process.argv.indexOf('--profile');
+const argvProfile =
+  argvProfileIdx >= 0 && argvProfileIdx + 1 < process.argv.length
+    ? process.argv[argvProfileIdx + 1]
+    : null;
+const profile = argvProfile || process.env.EAS_BUILD_PROFILE || 'production';
 // Only enforce in production. Dev / preview builds may legitimately
 // point at localhost or a staging URL.
 if (profile !== 'production') {

@@ -7,7 +7,11 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "check:prod-build": "EAS_BUILD_PROFILE=production node scripts/check-production-build.js"
+    "check:prod-build": "node scripts/check-production-build.js --profile production",
+    "_prod-build-policy": "ALWAYS trigger production builds through build:android:prod / build:ios:prod / build:all:prod (NEVER raw `eas build`). The wrapper runs check:prod-build first so a misconfigured app.config.js (missing INTERNET, wrong apiBaseUrl, etc.) aborts before EAS spends 10+ minutes building a broken artifact. See May 2026 Android outage post-mortem.",
+    "build:android:prod": "node scripts/check-production-build.js --profile production && eas build --platform android --profile production",
+    "build:ios:prod": "node scripts/check-production-build.js --profile production && eas build --platform ios --profile production",
+    "build:all:prod": "node scripts/check-production-build.js --profile production && eas build --platform all --profile production"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
