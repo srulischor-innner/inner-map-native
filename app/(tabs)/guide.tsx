@@ -1,7 +1,7 @@
 // Guide tab — three pill-navigated sections:
 //   • The Map   — 11 swipeable slides introducing the framework
 //   • Healing   — 5 swipeable slides on the three stages + "creating something new"
-//   • Using It  — scrollable cards (4 feature cards + 5 principles)
+//   • Using It  — scrollable cards (7 feature cards + 5 principles)
 //
 // FlatLists with pagingEnabled give the horizontal swipe with clean snap-to-page.
 // A "Begin your map →" CTA appears at the bottom of each section and jumps to Chat.
@@ -271,7 +271,7 @@ function UsingSection() {
       contentContainerStyle={styles.usingContent}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.usingH2}>The four ways to use Inner Map</Text>
+      <Text style={styles.usingH2}>The seven ways to use Inner Map</Text>
       {USING_FEATURES.map((f, i) => (
         <FeatureCard key={i} feature={f} />
       ))}
@@ -302,10 +302,17 @@ function UsingSection() {
 function FeatureCard({ feature }: { feature: GuideFeature }) {
   // Small iconography for each feature. Keeps the visual hierarchy consistent with
   // the amber left-border card style used across the app.
+  // Ionicons keyed off the variant. self / self-like mirror the visual
+  // shorthand the Map tab itself uses (● for Self, ◆ for Self-like) so
+  // the card icons reinforce the in-app affordance. partner = heart,
+  // journal = book, journey = trending line.
   const iconName: Record<GuideFeature['icon'], keyof typeof Ionicons.glyphMap> = {
     chat: 'chatbubble-ellipses-outline',
     map: 'triangle-outline',
     self: 'ellipse-outline',
+    'self-like': 'diamond-outline',
+    partner: 'heart-outline',
+    journal: 'book-outline',
     journey: 'trending-up-outline',
   };
   return (

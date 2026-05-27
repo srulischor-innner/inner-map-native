@@ -402,39 +402,68 @@ export const HEALING_SLIDES: GuideSlide[] = [
 ];
 
 // ===== SECTION 3: USING IT =====
-export type GuideFeature = { icon: 'chat' | 'map' | 'self' | 'journey'; title: string; body: string[] };
+// Card icon variants. The 4-card April spec (chat / map / self / journey)
+// expanded to 7 once the app grew Process+Explore modes, Map Voice with
+// two mics, the Partner tab, and the Journal. Each variant gets a
+// matching Ionicons glyph in FeatureCard.
+export type GuideFeature = {
+  icon: 'chat' | 'map' | 'self' | 'self-like' | 'partner' | 'journal' | 'journey';
+  title: string;
+  body: string[];
+};
 
 export const USING_FEATURES: GuideFeature[] = [
   {
     icon: 'chat',
-    title: 'Chat — where your map gets built',
+    title: 'Chat',
     body: [
-      "Just talk. Share what's on your mind, what's been activated lately, what pattern keeps showing up. As you talk the map gradually fills in.",
-      "Come when something is alive — not just when everything is fine. Be specific. Notice what you're slightly reluctant to say — that's usually the most important thing.",
+      "Chat is where most of the work happens. Two modes: Explore for active inner work — naming patterns, identifying parts, building your map. Process for being heard, working through something, or just talking it out. Both build your map; Process just doesn't make that the focus.",
+      "You can type, or press and hold the mic to send a voice note. The AI will read its responses aloud if you tap the speaker icon. End a session anytime to get a summary and a few things to try.",
     ],
   },
   {
     icon: 'map',
-    title: 'Map — see yourself clearly',
+    title: 'Map',
     body: [
-      "The Map tab shows a visual picture of your inner world. As conversations progress the nodes fill in. Tap any node to see its full folder.",
-      "The most powerful feature: tap the microphone on the Map tab and have a live voice conversation while watching the map. The node of whichever part is most active lights up in real time.",
+      "The Map shows your inner landscape — wound, fixer, skeptic, managers, firefighters, and Self. As you talk in Chat, parts get added or refined. Tap any part to see what's been said about it and the belief it carries.",
+      "Two mic buttons sit at the bottom of the Map for Map Voice — short, focused voice conversations to check where you are right now.",
     ],
   },
   {
     icon: 'self',
-    title: 'Self — being truly received',
+    title: 'Self mic',
     body: [
-      "Sometimes you don't need to explore. You need to be received.",
-      "Tapping the Self circle on the map shifts the conversation entirely. No mapping, no detecting, no guiding. Just pure presence and warmth — for when you need to feel held rather than understood.",
+      "Use the Self mic when you want to be met with presence. Press and hold, share what's true, release. Self responds — grounded, warm, unhurried. The point isn't to figure anything out. It's to not be alone in what you're carrying.",
+    ],
+  },
+  {
+    icon: 'self-like',
+    title: 'Self-like mic',
+    body: [
+      "Use the Self-like mic when you're ready to work on a part's belief. Tap a part on the map first to focus on it, then press the Self-like mic. This is more active — helping you find a different premise for the part to operate from. Once articulated, you can save it to that part's folder.",
+    ],
+  },
+  {
+    icon: 'partner',
+    title: 'Partner',
+    body: [
+      "Partner mode is for relationship work — between you and one person you've connected with through the app. Your private chat is yours; the AI helps you notice patterns about you and them.",
+      "First time in, the AI does a short intake — how long you've been together, how you met, what's working, what isn't. After that, sessions are open-ended.",
+      "Anything you choose to share with your partner goes through a consent step — nothing is forwarded automatically. Each session ends with a summary and a few practices, which you can keep private, send to your partner, or forward to anyone you want.",
+    ],
+  },
+  {
+    icon: 'journal',
+    title: 'Journal',
+    body: [
+      "Free space for whatever needs to come out — no AI, no analysis. Sometimes the work is just expelling energy through words without trying to make sense of it.",
     ],
   },
   {
     icon: 'journey',
-    title: 'Journey — watching yourself change',
+    title: 'Journey',
     body: [
-      "The Journey tab tracks how you're changing — through patterns in your language over time. It shows which energies are most active and how your two spectrums are moving.",
-      "Outside-In → Inside-Out tracks how your protective parts orient to the world. Fragmented → Flowing tracks how your whole system is actually running. Both move slowly. That's correct.",
+      "Journey shows your work over time — sessions, what came up, how the map has shifted. Useful for noticing your own patterns at a longer time scale than any single conversation.",
     ],
   },
 ];
