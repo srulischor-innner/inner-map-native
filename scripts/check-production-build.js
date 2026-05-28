@@ -134,5 +134,56 @@ check('iOS will accept the API URL (HTTPS or ATS exemption)',
   httpsOnly || allowsArbitraryLoads,
   'either apiBaseUrl must be https:// OR ios.infoPlist.NSAppTransportSecurity.NSAllowsArbitraryLoads must be true');
 
+// ---- Google OAuth client IDs (Build 13 Android-Google-Sign-In fix) ----
+// EAS auto-injects EAS secrets into the build environment, so any
+// secret named EXPO_PUBLIC_GOOGLE_*_CLIENT_ID will be available to
+// app.config.js at build time. The user-facing failure mode when
+// the WEB client ID is missing is silent: GoogleSignin.configure()
+// runs without webClientId, signIn() returns no idToken, and the
+// user sees "Google didn't return a sign-in token. Try again."
+//
+// We verify by listing EAS secrets via the CLI. Skipped (warning,
+// not failure) when the eas CLI is unavailable or not authenticated
+// — operator might be running the local check without EAS access,
+// and we don't want to block that flow.
+function listEasSecrets() {
+  const { execSync } = require('child_process');
+  try {
+    const stdout = execSync('eas secret:list --json', {
+      cwd: path.join(__dirname, '..'),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      timeout: 15000,
+    });
+    const parsed = JSON.parse(stdout);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (e) {
+    return null; // CLI not available, not logged in, or list returned non-JSON
+  }
+}
+const easSecrets = listEasSecrets();
+if (easSecrets === null) {
+  console.log('  ⚠ EAS secret check skipped — `eas secret:list` unavailable. ' +
+              'Run `eas login` (or `npm install -g eas-cli`) for full pre-flight ' +
+              'coverage. Continuing without verification.');
+} else {
+  const secretNames = new Set(easSecrets.map((s) => s.name));
+  // The WEB client ID is the hard requirement — without it Android
+  // signIn returns no idToken. iOS + Android client IDs are
+  // technically optional for the SDK call (iOS still works via the
+  // info.plist URL scheme + bundle ID match; Android verifies via
+  // package + SHA-1 fingerprint), but documenting them as expected
+  // keeps the setup discoverable.
+  check('EAS secret EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID is set (Android Google-Sign-In gating)',
+    secretNames.has('EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID'),
+    'create with `eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID --value "<web-client-id>.apps.googleusercontent.com"`. Without this Android Google Sign-In silently fails (no idToken).');
+  check('EAS secret EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID is set (iOS Google-Sign-In)',
+    secretNames.has('EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID'),
+    'create with `eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID --value "<ios-client-id>.apps.googleusercontent.com"`');
+  check('EAS secret EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID is set (Android OAuth client — passed to SDK for completeness)',
+    secretNames.has('EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID'),
+    'create with `eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID --value "<android-client-id>.apps.googleusercontent.com"`');
+}
+
 console.log(pass ? '[prebuild-check] ALL CHECKS PASSED' : '[prebuild-check] FAILURES — aborting build');
 process.exit(pass ? 0 : 1);

@@ -34,25 +34,79 @@ import { api } from '../../services/api';
 
 // One-shot Google config — runs the first time any AuthButtonRow
 // mounts. Configure is idempotent; subsequent calls are no-ops.
+//
+// CRITICAL BUILD-TIME REQUIREMENT (build-13 Android-Google fix):
+// `webClientId` is the gating value for Android. Without it, the
+// native Google SDK CAN run signIn() (the system picker opens, the
+// user picks an account, the call returns) — but the result has
+// NO idToken, just a profile blob. The downstream `if (!idToken)`
+// branch in handleGoogle reports "Google didn't return a sign-in
+// token. Try again." → user is stuck.
+//
+// The webClientId must be the WEB OAuth client ID from Google Cloud
+// Console (NOT the Android client ID). The Android client (with the
+// signing-cert SHA-1) still has to exist in GCC for Google to verify
+// the app, but it's referenced implicitly via the package + cert
+// fingerprint at sign-in time — it's not passed in code.
+//
+// Sourced from extras.googleClientIds.web, which app.config.js reads
+// from EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID at BUILD TIME. For EAS
+// production builds the env var must be set via eas.json's
+// build.production.env (referencing an EAS secret) — see eas.json
+// + scripts/check-production-build.js. Local Expo Go dev reads it
+// from .env at the project root.
+//
+// Diagnostic log below is structured so a future failure of this
+// class triages in seconds: search adb logcat for [auth-google-config]
+// and the masked client-id lengths immediately reveal whether the
+// build was missing the env vars.
 let googleConfigured = false;
 function ensureGoogleConfigured() {
   if (googleConfigured) return;
   const extras = (Constants.expoConfig?.extra as any) || {};
   const ids = extras.googleClientIds || {};
+  // Mask IDs in logs — they're not strictly secret (they ship in
+  // client bundles by design) but no reason to dump them in full
+  // when length + first 8 chars is enough to triage.
+  const mask = (v: string) =>
+    v && typeof v === 'string'
+      ? `${v.slice(0, 8)}…(len=${v.length})`
+      : '(MISSING)';
+  console.log(
+    `[auth-google-config] platform=${Platform.OS} ` +
+    `webClientId=${mask(ids.web)} ` +
+    `iosClientId=${mask(ids.ios)} ` +
+    `androidClientId=${mask(ids.android)}`,
+  );
+  // Hard early-warn when the gating value is missing on the
+  // platform that needs it. On Android this is the show-stopper;
+  // on iOS the SDK still works because expo-apple-authentication
+  // is the primary path. Console.error so the log line gets a
+  // higher severity tag in adb logcat (easier to spot).
+  if (Platform.OS === 'android' && !ids.web) {
+    console.error(
+      '[auth-google-config] webClientId is MISSING on Android — ' +
+      'native Google Sign-In will fail with "no idToken returned". ' +
+      'Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in eas.json build.production.env ' +
+      '(via an EAS secret) and rebuild.',
+    );
+  }
   try {
     GoogleSignin.configure({
-      // serverClientId — the audience the server's idToken verifier
-      // expects. When set, the issued idToken's `aud` claim is the
-      // web client id (regardless of which platform the user signed
-      // in on). Matches lib/auth/google.js's allowedAudiences list.
+      // webClientId — the Web OAuth client ID from Google Cloud
+      // Console. On Android this is what makes the SDK return an
+      // idToken (the token's `aud` claim is set to this value).
+      // Matches lib/auth/google.js's allowedAudiences list on the
+      // server (GOOGLE_OAUTH_CLIENT_ID_WEB).
       webClientId: ids.web || undefined,
       iosClientId: ids.ios || undefined,
-      // No need to pass scopes — the default profile+email is what
-      // we want; the verifier only needs sub + email.
+      // No scopes passed — the default profile+email is what we
+      // want; the server verifier only needs sub + email.
     });
     googleConfigured = true;
+    console.log('[auth-google-config] GoogleSignin.configure OK');
   } catch (e) {
-    console.warn('[auth-buttons] GoogleSignin.configure threw:', (e as Error)?.message);
+    console.warn('[auth-google-config] GoogleSignin.configure THREW:', (e as Error)?.message);
   }
 }
 
@@ -162,7 +216,11 @@ export function AuthButtonRow({
 
   const handleGoogle = useCallback(async () => {
     if (busy) return;
-    console.log('[auth-buttons] handleGoogle START');
+    // Re-emit config diagnostics each attempt so we see the actual
+    // values present at the moment the SDK call fires (vs only at
+    // first mount). Cheap; idempotent.
+    ensureGoogleConfigured();
+    console.log('[auth-google-native] signIn attempt — platform=' + Platform.OS);
     setBusy('google');
     setStatusMsg(null);
     try {
@@ -174,12 +232,29 @@ export function AuthButtonRow({
         result?.idToken || result?.data?.idToken;
       const userEmail: string | undefined =
         result?.user?.email || result?.data?.user?.email;
+      // Surface BOTH the success-shape AND the failure-shape inputs so
+      // the next debug pass doesn't need a separate logging round-trip.
+      // hasIdToken is the gating value; if false on Android, root cause
+      // is almost always webClientId — see [auth-google-config] above.
+      const resultKeys = result && typeof result === 'object'
+        ? Object.keys(result).slice(0, 10).join(',')
+        : '(non-object)';
+      const dataKeys = result?.data && typeof result.data === 'object'
+        ? Object.keys(result.data).slice(0, 10).join(',')
+        : '(no data)';
       console.log(
-        `[auth-buttons] Google signIn returned — idTokenLen=${idToken?.length || 0} ` +
+        `[auth-google-native] signIn result: hasIdToken=${!!idToken} ` +
+        `idTokenLen=${idToken?.length || 0} ` +
         `shape=${result?.data ? 'v13+' : 'v12-'} ` +
+        `topKeys=[${resultKeys}] dataKeys=[${dataKeys}] ` +
         `email=${userEmail ? userEmail.slice(0, 3) + '…' : '(none)'}`,
       );
       if (!idToken) {
+        console.error(
+          '[auth-google-native] No idToken returned — almost certainly a ' +
+          'webClientId misconfiguration. Check [auth-google-config] log ' +
+          'above for the actual client IDs baked into this build.',
+        );
         reportError('Google didn’t return a sign-in token. Try again.', 'google-sdk-no-token');
         return;
       }
