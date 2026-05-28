@@ -636,6 +636,7 @@ export default function ChatScreen() {
         voice: { uri, durationSec, transcript: null },
       },
     ]);
+    forceResumeAutoScroll();
     scrollToBottom();
     // Kick transcription. /api/transcribe is Whisper-backed; iOS records
     // .m4a from expo-audio's HIGH_QUALITY preset. 30s hard cap so a
@@ -673,7 +674,43 @@ export default function ChatScreen() {
     }
   }
 
+  // ===== AUTO-SCROLL: PAUSE-ON-TOUCH + PAUSE-WHEN-SCROLLED-AWAY =====
+  // Build-13 alignment: Partner chat had a felt-but-not-explicit
+  // "pause auto-scroll while user is touching" behavior. Ports that
+  // behavior to the main chat tab so both surfaces behave identically:
+  //   - default: stream → scroll-to-bottom follows the latest text
+  //   - finger on screen: scroll-to-bottom is a no-op, text stays put
+  //   - user scrolled up to read: also a no-op until they scroll back
+  //   - user sends a new turn: force-resume (we follow our own send
+  //     even if they were reading further up)
+  // Mirror of the same block in RelationshipChat — kept in lockstep.
+  const AUTOSCROLL_BOTTOM_THRESHOLD_PX = 60;
+  const userTouchingRef = useRef(false);
+  const userScrolledAwayRef = useRef(false);
+  const onScrollViewTouchStart = useCallback(() => {
+    userTouchingRef.current = true;
+  }, []);
+  const onScrollViewTouchEnd = useCallback(() => {
+    userTouchingRef.current = false;
+  }, []);
+  const onScrollViewScroll = useCallback((e: any) => {
+    const ne = e?.nativeEvent;
+    if (!ne) return;
+    const lm = ne.layoutMeasurement;
+    const co = ne.contentOffset;
+    const cs = ne.contentSize;
+    if (!lm || !co || !cs) return;
+    const distFromBottom = cs.height - (co.y + lm.height);
+    userScrolledAwayRef.current = distFromBottom > AUTOSCROLL_BOTTOM_THRESHOLD_PX;
+  }, []);
+  const forceResumeAutoScroll = useCallback(() => {
+    userTouchingRef.current = false;
+    userScrolledAwayRef.current = false;
+  }, []);
+
   function scrollToBottom() {
+    if (userTouchingRef.current) return;       // pause while finger is down
+    if (userScrolledAwayRef.current) return;   // pause while reading higher up
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
   }
 
@@ -1119,6 +1156,10 @@ export default function ChatScreen() {
       const t = threadFor(turnMode);
       const id = uuidv4();
       t.setMessages((prev) => [...prev, { id, role: 'user', text }]);
+      // User-initiated turn — even if they were scrolled up reading
+      // earlier turns, sending implies they want to follow this new
+      // exchange through.
+      forceResumeAutoScroll();
       scrollToBottom();
       t.historyRef.current.push({ role: 'user', content: text });
       // Mark the chat session as live so the Map tab icon renders its
@@ -1272,6 +1313,19 @@ export default function ChatScreen() {
             style={styles.scroll}
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
+            // Build-13 polish: pause auto-scroll on touch + when
+            // scrolled away from the bottom. Mirrors RelationshipChat
+            // so both surfaces feel identical mid-stream. See
+            // scrollToBottom() above for the guard logic.
+            onTouchStart={onScrollViewTouchStart}
+            onTouchEnd={onScrollViewTouchEnd}
+            onTouchCancel={onScrollViewTouchEnd}
+            onScroll={onScrollViewScroll}
+            scrollEventThrottle={16}
+            // Force a re-flow on bubble height finalization (build-13
+            // polish for the rare mid-word clipping reports — see
+            // matching comment in RelationshipChat.tsx).
+            onContentSizeChange={scrollToBottom}
             onScrollBeginDrag={() => Keyboard.dismiss()}
           >
             {/* The "Explore mode — building your map" micro-label was

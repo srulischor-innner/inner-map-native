@@ -133,13 +133,47 @@ export function RelationshipChat({
   const messagesRef = useRef<ChatMsg[]>([]);
   useEffect(() => { messagesRef.current = messages; });
 
-  // Initial history fetch — load all of THIS partner's prior turns.
+  // Combined mount flow: start (or resume) the session FIRST, then
+  // load only THIS session's messages. Replaces the prior two-effect
+  // pattern which loaded ALL of the user's relationship_messages and
+  // then started the session in parallel — the result was that on
+  // every entry to Partner chat, the live view contained every
+  // historical message ever sent in this relationship (build-13 bug
+  // report).
+  //
+  // Order matters:
+  //   1. /sessions/start returns the active session id (resumed if
+  //      <60min idle, fresh otherwise). The server has already
+  //      auto-ended any stale open session + fired its summary.
+  //   2. /messages?sessionId=<id> scopes to JUST that session's
+  //      turns. A freshly-minted session returns zero rows → opener
+  //      message + starter pills render, just like main Chat after
+  //      "Begin New Session".
+  //   3. If the start endpoint fails (rare — network blip), we fall
+  //      back to loading all messages so the user isn't staring at
+  //      a blank screen with their conversation history seemingly
+  //      gone. End Session disables itself in this branch since
+  //      there's nothing bracketed to close.
+  //
+  // Legacy messages (sessionId IS NULL from before sessions shipped)
+  // are EXCLUDED from this view by the server's sessionId filter.
+  // They surface in the hamburger as per-day "Partner chat" entries.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const rows = await api.listRelationshipMessages(relationshipId);
+      const startResult = await api.startRelationshipSession(relationshipId);
       if (cancelled) return;
-      // Server returns newest-first; we want oldest-first for display.
+      let sessionIdForFetch: string | null = null;
+      if (startResult?.session) {
+        setActiveSession(startResult.session);
+        sessionIdRef.current = startResult.session.id;
+        sessionIdForFetch = startResult.session.id;
+      } else {
+        console.warn('[rel-chat] session start returned null — falling back to unscoped load');
+      }
+      const rows = await api.listRelationshipMessages(relationshipId, sessionIdForFetch);
+      if (cancelled) return;
+      // Server returns newest-first; reverse for display (oldest-first).
       const ordered = rows.slice().reverse();
       const bubbles: ChatMsg[] = ordered.map((r) => ({
         id: r.id, role: r.role, text: r.content,
@@ -149,29 +183,6 @@ export function RelationshipChat({
       historyRef.current = wire;
       setLoading(false);
       requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
-    })();
-    return () => { cancelled = true; };
-  }, [relationshipId]);
-
-  // Auto-open relationship session on mount. The server's start
-  // endpoint is resume-or-fresh: if there's an open session less
-  // than 60min old it returns that; otherwise it auto-ends any
-  // stale open session (fire-and-forget summary) and mints a new
-  // one. Either way we get a session row back. Failures are
-  // tolerated — the chat still works, just without session
-  // bracketing — but the End Session button hides itself since
-  // there's nothing to close.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const result = await api.startRelationshipSession(relationshipId);
-      if (cancelled) return;
-      if (result?.session) {
-        setActiveSession(result.session);
-        sessionIdRef.current = result.session.id;
-      } else {
-        console.warn('[rel-chat] session start returned null — End Session disabled this mount');
-      }
     })();
     return () => { cancelled = true; };
   }, [relationshipId]);
@@ -186,7 +197,64 @@ export function RelationshipChat({
   // ChatInput's prefillText/onPrefillConsumed props are still
   // available for future callers but are not wired here.)
 
+  // ===== AUTO-SCROLL: PAUSE-ON-TOUCH + PAUSE-WHEN-SCROLLED-AWAY =====
+  // Streaming AI replies append new text mid-render; we want the view
+  // to follow the latest line by default so the user sees the reply
+  // unfold without scrolling manually. BUT — if the user puts a
+  // finger on the screen mid-stream (to read something they want to
+  // dwell on, or to scroll up to re-read earlier turns), pin the
+  // scroll position so text doesn't yank away.
+  //
+  // Two refs cover the two pause conditions:
+  //   userTouchingRef     — true between onTouchStart and onTouchEnd.
+  //                         Pauses for the duration of the active
+  //                         finger contact (the common case: user
+  //                         touches mid-stream to read).
+  //   userScrolledAwayRef — true while the user is scrolled more than
+  //                         AUTOSCROLL_BOTTOM_THRESHOLD_PX from the
+  //                         bottom. Pauses persistently until they
+  //                         scroll back down — covers the case where
+  //                         they touched, scrolled up, then released
+  //                         their finger but are still reading higher
+  //                         up.
+  //
+  // Resume points (auto):
+  //   - User scrolls back to bottom (userScrolledAwayRef clears via
+  //     onScroll) AND lifts their finger (userTouchingRef clears).
+  //   - A new turn starts (handleSend / handleSendVoice resets both
+  //     refs unconditionally — the user sending implies they want to
+  //     follow their new turn through).
+  const AUTOSCROLL_BOTTOM_THRESHOLD_PX = 60;
+  const userTouchingRef = useRef(false);
+  const userScrolledAwayRef = useRef(false);
+
+  const onScrollViewTouchStart = useCallback(() => {
+    userTouchingRef.current = true;
+  }, []);
+  const onScrollViewTouchEnd = useCallback(() => {
+    userTouchingRef.current = false;
+  }, []);
+  const onScrollViewScroll = useCallback((e: any) => {
+    const ne = e?.nativeEvent;
+    if (!ne) return;
+    const lm = ne.layoutMeasurement;
+    const co = ne.contentOffset;
+    const cs = ne.contentSize;
+    if (!lm || !co || !cs) return;
+    const distFromBottom = cs.height - (co.y + lm.height);
+    userScrolledAwayRef.current = distFromBottom > AUTOSCROLL_BOTTOM_THRESHOLD_PX;
+  }, []);
+  // Manual override — fires from handleSend / handleSendVoice when
+  // the user's own turn starts, so we follow our own message even if
+  // the user happened to be scrolled up reading earlier turns.
+  const forceResumeAutoScroll = useCallback(() => {
+    userTouchingRef.current = false;
+    userScrolledAwayRef.current = false;
+  }, []);
+
   const scrollToBottom = useCallback(() => {
+    if (userTouchingRef.current) return;       // pause while finger is down
+    if (userScrolledAwayRef.current) return;   // pause while reading higher up
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
   }, []);
 
@@ -402,11 +470,15 @@ export function RelationshipChat({
       userSentInSessionRef.current = true;
       setSessionTick((n) => n + 1);
     }
+    // Force-resume auto-scroll on user-initiated turn. They might have
+    // been scrolled up reading earlier turns; sending implies they
+    // want to follow the new exchange through.
+    forceResumeAutoScroll();
     // ChatInput owns its own text state and clears itself on send; we
     // just push the bubble + run the turn.
     scrollToBottom();
     runAssistantTurn();
-  }, [sending, runAssistantTurn, scrollToBottom]);
+  }, [sending, runAssistantTurn, scrollToBottom, forceResumeAutoScroll]);
 
   // Voice-note path. Identical contract to the main chat tab's
   // handleSendVoice: ChatInput hands us a recorded file URI; we drop a
@@ -422,6 +494,7 @@ export function RelationshipChat({
       ...prev,
       { id: bubbleId, role: 'user', text: '', voice: { uri, durationSec, transcript: null } },
     ]);
+    forceResumeAutoScroll();
     scrollToBottom();
     const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
     let transcript = '';
@@ -453,7 +526,7 @@ export function RelationshipChat({
       }
       runAssistantTurn();
     }
-  }, [sending, runAssistantTurn, scrollToBottom]);
+  }, [sending, runAssistantTurn, scrollToBottom, forceResumeAutoScroll]);
 
   const handleRetry = useCallback((retryText: string) => {
     // Drop the failed assistant bubble + its retry shadow, then re-send.
@@ -537,6 +610,32 @@ export function RelationshipChat({
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          // Auto-scroll pause-on-touch wiring (build 13 polish):
+          //   - onTouchStart/End drive userTouchingRef so scrollToBottom
+          //     becomes a no-op while finger is down.
+          //   - onScroll drives userScrolledAwayRef so scrollToBottom
+          //     also no-ops while the user has scrolled up to read.
+          //   - scrollEventThrottle=16 (~60 FPS) keeps the distance-
+          //     from-bottom check responsive without overspending
+          //     bridge messages during inertial scroll.
+          onTouchStart={onScrollViewTouchStart}
+          onTouchEnd={onScrollViewTouchEnd}
+          onTouchCancel={onScrollViewTouchEnd}
+          onScroll={onScrollViewScroll}
+          scrollEventThrottle={16}
+          // Force a re-flow + scroll when bubble heights finalize.
+          // Build-13 polish: occasional message clipping reports
+          // ("text cuts off mid-word but TTS reads the full
+          // sentence") trace to a streaming/layout race where the
+          // ScrollView measures content height before the final
+          // streamed tokens land. onContentSizeChange fires on
+          // every content-size delta — including the final
+          // measurement after the streaming bubble settles — so
+          // hitting scrollToBottom() here triggers a fresh layout
+          // pass that surfaces any clipped tail. Guarded by
+          // userTouching/scrolledAway refs above, so passive
+          // re-flow doesn't yank the view from a user mid-read.
+          onContentSizeChange={scrollToBottom}
           onScrollBeginDrag={() => Keyboard.dismiss()}
         >
           {/* First-visit opening. Renders only when the partner chat

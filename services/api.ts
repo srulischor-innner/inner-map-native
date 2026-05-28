@@ -1351,14 +1351,26 @@ export const api = {
    *  PRIVATE chat history — only their own rows. The other partner's
    *  chat is visible to the AI through the server-side preamble but
    *  never to the calling partner directly. */
-  async listRelationshipMessages(relationshipId: string): Promise<Array<{
+  /** GET /api/relationships/:relationshipId/messages
+   *  Defaults to ALL of the caller's messages (back-compat).
+   *  When sessionId is passed, the response is scoped to that
+   *  bracketed session ONLY (legacy NULL-sessionId messages are
+   *  excluded). Partner chat passes the active session's id so the
+   *  live view stays scoped to the current session — past sessions
+   *  are retrieved via the hamburger's session summaries. */
+  async listRelationshipMessages(
+    relationshipId: string,
+    sessionId?: string | null,
+  ): Promise<Array<{
     id: string; role: 'user' | 'assistant'; content: string; createdAt: string;
   }>> {
     try {
       const headers = await authHeaders();
-      const res = await apiFetch(`/api/relationships/${encodeURIComponent(relationshipId)}/messages`, {
-        label: 'rel-messages', method: 'GET', headers,
-      });
+      const qs = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/messages${qs}`,
+        { label: 'rel-messages', method: 'GET', headers },
+      );
       if (!res.ok) return [];
       const j: any = await res.json();
       return Array.isArray(j?.messages) ? j.messages : [];

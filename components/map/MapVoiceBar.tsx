@@ -261,6 +261,38 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
         });
       } catch {}
       await recorder.prepareToRecordAsync();
+      // STUCK-RECORDER FIX (build 13 quick-tap regression):
+      //   prepareToRecordAsync takes ~500ms on iOS cold start. If the
+      //   user has tapped + released during that window — onPressOut
+      //   has already fired, set wantRecordingRef.current = false, hit
+      //   its "no active recording, skipping dispatch" branch and
+      //   returned without doing anything (because recordingModeRef
+      //   was still null at that point). If we now blindly call
+      //   recorder.record() + setState('recording') the recorder
+      //   starts with no finger on the screen, no future release
+      //   event can fire, and the state machine is stuck on
+      //   "recording" forever — user has no path to stop.
+      //
+      //   Guard: if wantRecordingRef.current is false here, the user
+      //   already released. Abort cleanly: stop the prepared recorder,
+      //   restore the playback audio mode, surface the "Hold to record"
+      //   toast (same UX as a too-short hold), and return to idle.
+      if (!wantRecordingRef.current) {
+        const tappedMs = Date.now() - pressStartTimeRef.current;
+        console.log(`[map-voice-bar] tap detected duration=${tappedMs}ms action="discarded" — released during prepareToRecordAsync, aborting cleanly`);
+        try { await recorder.stop(); } catch {}
+        try {
+          await setAudioModeAsync({
+            allowsRecording: false, playsInSilentMode: true,
+            interruptionMode: 'doNotMix', shouldPlayInBackground: false,
+          });
+        } catch {}
+        showFallbackToast({ kind: 'hold-to-record' });
+        setState('idle');
+        setActiveMic(null);
+        recordingModeRef.current = null;
+        return;
+      }
       recorder.record();
       // recordingModeRef.current is the AUTHORITATIVE signal that a
       // recording is in flight — set the moment recorder.record() has
@@ -293,7 +325,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
       setActiveMic(null);
       recordingModeRef.current = null;
     }
-  }, [state, recorder]);
+  }, [state, recorder, showFallbackToast]);
 
   // stopAndDispatchRef holds the latest version of stopAndDispatch so
   // the max-hold setTimeout can call it without capturing a stale
