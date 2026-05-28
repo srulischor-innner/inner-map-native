@@ -86,9 +86,10 @@ const ORIENTATION_MESSAGE =
   "identifying parts. Process is for being heard, working through something, " +
   "or just talking it out. Both build your map; Process just doesn't make " +
   "that the focus.\n\n" +
-  "At first I'll be a bit more directive while we build a starter map for " +
-  "you. After that, it gets more conversational. You can pick whichever mode " +
-  "feels right.\n\n" +
+  "I'll be more directive at first while we build your starter map. What we " +
+  "build in this session is a rough sketch — it'll become sharper and more " +
+  "accurate as we go. If something I name doesn't fit, say so. 'That's not " +
+  "quite it' or 'It's more like X' is the most useful thing you can share.\n\n" +
   "Would you like to begin?";
 
 export default function ChatScreen() {
