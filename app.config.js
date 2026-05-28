@@ -65,16 +65,35 @@ const base = {
     },
     android: {
       package: 'com.srulischor.innermap',
-      // Bump to 3: missing-INTERNET fix (May 2026 outage) requires a
-      // new artifact for Android Internal Testing to pick up the
-      // corrected AndroidManifest.xml.
-      versionCode: 3,
+      // Bump to 4: main-chat keyboard layout fix (build 13) requires
+      // a new artifact for Android Internal Testing to pick up the
+      // softwareKeyboardLayoutMode change below.
+      versionCode: 4,
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
         backgroundColor: '#0a0a0f',
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
+      // ANDROID KEYBOARD LAYOUT MODE — "pan" instead of the Expo
+      // default "resize" (build-13 Android keyboard fix).
+      //
+      // "resize" shrinks the WINDOW when the keyboard opens, so the
+      // bottom flex child (our input dock) naturally sits above the
+      // keyboard — fine in theory, but combined with the manual
+      // kbHeight paddingBottom that lifts ChatInput, the input
+      // ends up double-shifted: once by the resize, once by the
+      // padding. The visible result is the input floating well
+      // above the keyboard with a blank gap, OR (depending on
+      // measure timing) hidden behind it entirely.
+      //
+      // "pan" leaves the window full-height and SLIDES it up under
+      // the keyboard. The manual paddingBottom is then the only
+      // lift, and it lands the input flush against the keyboard
+      // top — same behavior as iOS. Partner chat also uses the
+      // manual pattern, so this change makes both surfaces feel
+      // identical on Android.
+      softwareKeyboardLayoutMode: 'pan',
       // ANDROID PERMISSIONS — must include INTERNET explicitly.
       //
       // May 2026 incident: Android Internal Testing builds shipped

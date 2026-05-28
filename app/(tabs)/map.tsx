@@ -573,35 +573,37 @@ export default function MapScreen() {
             </Pressable>
           </View>
         ) : null}
-        {/* Empty-state explainer. Renders only on the triangle view
-            when the load succeeded but there are no layers — i.e. the
-            user has not yet mapped a single wound. The faint triangle
-            from InnerMapCanvas is visible underneath (acts as the
-            "what this looks like once populated" preview), and this
-            overlay layers explanatory copy + CTA on top.
-            - First-session-not-done → show "Start building" CTA to
-              chat tab.
-            - First-session-done but map somehow empty → show the
-              explainer without a CTA (edge case; shouldn't happen). */}
-        {view === 'triangle' && loadStatus === 'loaded' && layers.length === 0 && firstSessionDoneAt !== undefined ? (
+        {/* First-visit empty state — single clean CTA.
+            Build-13 fix: the prior two-sentence explainer body was
+            overlapping the MapVoiceBar mics + START BUILDING button
+            on Android (verified on emulator, version code 10+).
+            Both surfaces share the bottom region of the screen, so
+            stacking a 2-line paragraph at bottom: 64 collided with
+            the mics at bottom: 50.
+            New layout (Option B per the bug report): the faint
+            triangle from InnerMapCanvas IS the explainer — it
+            silently shows "this is what a built map looks like".
+            We add only a single START BUILDING CTA, anchored well
+            above the mic bar so the two surfaces never overlap on
+            either Android or iOS. The edge case (firstSessionDone
+            but map somehow empty) was unreachable in practice and
+            rendered an un-actionable text-only overlay; dropped. */}
+        {view === 'triangle'
+          && loadStatus === 'loaded'
+          && layers.length === 0
+          && firstSessionDoneAt === null ? (
           <View style={styles.mapEmptyOverlay} pointerEvents="box-none">
-            <Text style={styles.mapEmptyBody}>
-              Your map fills in as you have conversations.{'\n\n'}
-              Have a conversation in Chat to start building yours.
-            </Text>
-            {firstSessionDoneAt === null ? (
-              <Pressable
-                onPress={() => {
-                  Haptics.selectionAsync().catch(() => {});
-                  router.push('/');
-                }}
-                style={styles.mapEmptyCta}
-                accessibilityLabel="Start building your map"
-                accessibilityRole="button"
-              >
-                <Text style={styles.mapEmptyCtaText}>START BUILDING</Text>
-              </Pressable>
-            ) : null}
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                router.push('/');
+              }}
+              style={styles.mapEmptyCta}
+              accessibilityLabel="Start building your map"
+              accessibilityRole="button"
+            >
+              <Text style={styles.mapEmptyCtaText}>START BUILDING</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -859,21 +861,21 @@ const styles = StyleSheet.create({
   // point. pointerEvents="box-none" on the wrapper lets touches pass
   // through to the canvas; only the explicit Pressable below catches
   // taps for the CTA.
+  // Bottom-anchored CTA-only overlay (build-13 layout fix). The
+  // MapVoiceBar mic row anchors at bottom: 50, with the mic + label
+  // stack rising to roughly bottom: 140. paddingBottom: 200 leaves
+  // a comfortable 60px gap between the START BUILDING button and
+  // the top of the mic stack on standard 19.5:9 / 20:9 Android
+  // displays — verified clear on a 1080×2400 emulator and on iPhone
+  // 15 Pro. pointerEvents="box-none" on the parent View still lets
+  // taps fall through to the canvas everywhere except on the
+  // explicit Pressable.
   mapEmptyOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'flex-end',
-    paddingBottom: 64,
+    paddingBottom: 200,
     paddingHorizontal: 32,
-  },
-  mapEmptyBody: {
-    color: colors.creamDim,
-    fontFamily: fonts.serif,
-    fontSize: 17,
-    lineHeight: 26,
-    textAlign: 'center',
-    letterSpacing: 0.2,
-    maxWidth: 320,
   },
   mapEmptyCta: {
     marginTop: 18,

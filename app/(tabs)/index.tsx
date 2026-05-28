@@ -16,7 +16,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View,
   ScrollView,
-  KeyboardAvoidingView,
+  // KeyboardAvoidingView removed in the build-13 Android-keyboard fix
+  // (commit on this PR). The manual kbHeight pattern replaces it on
+  // both platforms — see the keyboardWill/DidShow useEffect.
   Platform,
   StyleSheet,
   Keyboard,
@@ -563,15 +565,35 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatMode, firstSessionPending]);
 
-  // When the keyboard opens, snap the scroll to the latest message so the user
-  // sees what they're responding to. iOS emits keyboardWillShow before it's
-  // done animating; Android only fires keyboardDidShow. We handle both.
+  // Manual keyboard-height lift — replaces the prior KeyboardAvoidingView
+  // approach (build 13 Android-keyboard fix). KAV's behavior='height'
+  // mode is unreliable on Android: on real devices + emulators (verified
+  // 1080x2400 Android emulator, version code 10+) the input bar stayed
+  // hidden behind the system keyboard. Partner chat already uses this
+  // same manual pattern successfully on both platforms — porting it
+  // here gives us:
+  //   - iOS: keyboardWillShow fires BEFORE the animation, kbHeight
+  //     lift starts on the same frame the keyboard begins rising →
+  //     no perceptible gap.
+  //   - Android: keyboardDidShow fires after the keyboard is fully
+  //     up (Android doesn't emit Will events). The lift happens in
+  //     a single instant, no visible lag.
+  //   - endCoordinates.height includes the iOS suggestion bar when
+  //     visible, so the input clears that too (which the old KAV
+  //     keyboardVerticalOffset tuning never did reliably).
+  // scrollToEnd on show is kept inside the same effect — without it,
+  // the ScrollView keeps its contentOffset and the last 1-2 messages
+  // slide under the now-smaller view area.
+  const [kbHeight, setKbHeight] = useState(0);
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const sub = Keyboard.addListener(showEvt, () => {
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      setKbHeight(e.endCoordinates?.height ?? 0);
       requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
     });
-    return () => sub.remove();
+    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
   // ===== MESSAGE HELPERS =====
@@ -1284,29 +1306,15 @@ export default function ChatScreen() {
           )
         }
       />
-      {/* Keyboard avoidance. `keyboardVerticalOffset` must equal the height of
-          anything above this KeyboardAvoidingView on the screen: the iOS safe-
-          area top inset + the hamburger row (34) + the tab row (40) + the
-          ~22px attention strip. Without this the keyboard covers the input
-          bar on iPhone. `behavior: padding` shrinks the KAV by the keyboard
-          height, pushing ScrollView + ChatInput up together. */}
-      {/* keyboardVerticalOffset reduced by ~44px to absorb the height
-          of the new ChatModeToggle bar that sits between the
-          attention strip and the KAV. The previous offset assumed the
-          KAV started right under the attention strip; with the toggle
-          in between, the same offset value pushed content too far up
-          and produced a visible gap between the input and the
-          keyboard. Smaller offset → less upward padding → input sits
-          flush above the keyboard. */}
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={
-          Platform.OS === 'ios'
-            ? insets.top + 34 /* hamburger */ + 40 /* tabs */ + 48 /* attention */ - 44 /* toggle */ - 40 /* gap-close */
-            : 0
-        }
-      >
+      {/* KeyboardAvoidingView replaced with a manual kbHeight lift
+          (build 13 Android-keyboard fix). The KAV with behavior='height'
+          left the input bar hidden behind the system keyboard on Android
+          real-device + emulator. See the kbHeight useEffect above —
+          keyboardWillShow/Show drives a state value we apply as
+          paddingBottom on the bottom dock, lifting input + EndSession
+          button together. Works identically on both platforms because
+          endCoordinates.height includes any iOS suggestion-bar height. */}
+      <View style={styles.flex}>
         <Animated.View style={[styles.flex, { opacity: messagesOpacity }]}>
           <ScrollView
             ref={scrollRef}
@@ -1351,10 +1359,11 @@ export default function ChatScreen() {
             end-of-session moment (haptic + structured 3-part summary). */}
         {/* Bottom dock — wraps the input bar + end-session pill in a
             single container so we can lift them off the home indicator
-            (insets.bottom + 10). The previous +20 read as too high; a
-            smaller gap puts the input visually closer to the bottom
-            without sitting on the home bar. */}
-        <View style={{ paddingBottom: insets.bottom + 10 }}>
+            (insets.bottom + 10) AND above the keyboard when it's open
+            (kbHeight, set by the keyboardWill/DidShow listener above).
+            When the keyboard is up, kbHeight already accounts for the
+            home-indicator area on iOS, so we don't double-pad. */}
+        <View style={{ paddingBottom: kbHeight > 0 ? kbHeight : insets.bottom + 10 }}>
         {/* Inline notice for the daily TTS cap. Shows for ~5s when
             /api/speak returns 429, then auto-dismisses. Sits just
             above the input bar so it never covers a message in the
@@ -1473,7 +1482,7 @@ export default function ChatScreen() {
           }}
         />
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       <SessionSummaryModal
         visible={summaryVisible}
