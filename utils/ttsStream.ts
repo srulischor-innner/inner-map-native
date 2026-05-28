@@ -52,6 +52,25 @@ const TTS_CACHE_FILE = (FileSystem.cacheDirectory || '') + 'tts_chunk.mp3';
 
 const SOFT_MIN_CHARS = 80;
 
+// Post-playback pause before the next chunk plays. Build-13 tuning:
+// the previous behavior was "fetch (~500-1000ms) then play" serially
+// per chunk, so the gap between sentences was dominated by /api/speak
+// round-trip time — listeners reported a noticeable dead-air pause.
+// Two changes collapse the gap:
+//   1. chainSentence now kicks off the fetch IMMEDIATELY on enqueue
+//      (see chainSentence below). By the time the worker finishes
+//      playing chunk N, chunk N+1's MP3 is usually already in hand,
+//      so the worker just awaits the (already-resolved) promise and
+//      plays. The fetch latency disappears from the perceived gap.
+//   2. After playback ends we sleep TTS_CHUNK_GAP_MS before tearing
+//      the audio session into the next player. 60ms is small enough
+//      to read as natural breath, large enough that doNotMix has a
+//      beat to settle the previous buffer's output before the next
+//      one begins — no overlap-bug regression.
+// Tune by ear: 0 = back-to-back (slight click risk on cheap codecs);
+// 100-150ms = noticeable but natural breath; 250+ = back to robotic.
+const TTS_CHUNK_GAP_MS = 60;
+
 let active = false;
 let currentMessageId: string | null = null;
 let buffer = '';                        // unconsumed text (no complete sentence yet)
@@ -72,7 +91,17 @@ let watchToken = 0;
 // one worker drains the queue at a time; new chainSentence calls
 // enqueue and kick the worker if it's idle. cancelStream clears the
 // queue immediately so muted/ended sessions can't bleed audio.
-type ChainItem = { text: string; myToken: number };
+// bufPromise — the /api/speak fetch is kicked off SYNCHRONOUSLY in
+// chainSentence at enqueue time (not lazily by the worker). The
+// worker awaits this promise instead of calling api.speak directly.
+// Multiple in-flight fetches stack in parallel; serial PLAYBACK is
+// still enforced by the single worker draining the queue one item
+// at a time, so the doNotMix audio-session guarantees still apply.
+type ChainItem = {
+  text: string;
+  myToken: number;
+  bufPromise: Promise<ArrayBuffer | null>;
+};
 const chainQueue: ChainItem[] = [];
 let chainWorkerActive = false;
 // Chain bookkeeping for the [tts] chain complete log + duplication
@@ -345,17 +374,30 @@ function flushReadyChunks(force: boolean): void {
   }
 }
 
-/** Enqueue a sentence for the sequential fetch+play worker. The
- *  worker (processChainQueue) drains items one at a time, awaiting
- *  the fetch AND the playback of each before pulling the next item
- *  off the queue. So there is exactly one /api/speak in flight and
- *  one player active at a time, in insertion order — guaranteed
- *  structurally rather than via promise-chain ordering. */
+/** Enqueue a sentence for the sequential PLAYBACK worker, but kick
+ *  off its /api/speak fetch immediately (don't wait for the worker
+ *  to dequeue + then-await). This is what makes sentence N+1's audio
+ *  ready by the time the worker finishes playing sentence N — the
+ *  gap between chunks collapses from "~500-1000ms fetch latency" to
+ *  "TTS_CHUNK_GAP_MS + player-create overhead" (~100ms total).
+ *
+ *  Playback ordering is unchanged: there is still exactly one player
+ *  active at a time and the worker drains the queue in insertion
+ *  order. Parallel FETCHES are safe; parallel PLAYBACK was the cause
+ *  of the original overlap bug, and we don't do that.
+ *
+ *  bufPromise resolves to null on fetch failure (per the api.speak
+ *  contract). The worker retries once for null, drops the chunk on
+ *  the second null. */
 function chainSentence(text: string): void {
   const myToken = watchToken;
   chainScheduled++;
-  console.log(`[tts] chainSentence ENQUEUE — chars=${text.length} myToken=${myToken} watchToken=${watchToken} queueLenBefore=${chainQueue.length} workerActive=${chainWorkerActive} active=${active}`);
-  chainQueue.push({ text, myToken });
+  console.log(`[tts] chainSentence ENQUEUE + pre-fetch — chars=${text.length} myToken=${myToken} watchToken=${watchToken} queueLenBefore=${chainQueue.length} workerActive=${chainWorkerActive} active=${active}`);
+  const bufPromise = api.speak(text).catch((e) => {
+    console.warn(`[tts] chainSentence pre-fetch threw — myToken=${myToken}:`, (e as Error)?.message);
+    return null;
+  });
+  chainQueue.push({ text, myToken, bufPromise });
   console.log(`[tts] chainSentence pushed — queueLenAfter=${chainQueue.length} chainScheduled=${chainScheduled}`);
   // Fire-and-forget kick. The worker self-guards against double-entry
   // via chainWorkerActive, so concurrent kicks are safe — the second
@@ -394,15 +436,23 @@ async function processChainQueue(): Promise<void> {
 
       let stepPlayed = false;
       try {
-        console.log(`[tts] worker iter ${iteration} → api.speak(chars=${item.text.length})…`);
-        let buf = await api.speak(item.text);
-        console.log(`[tts] worker iter ${iteration} ← api.speak returned ${buf ? `bytes=${buf.byteLength}` : 'null'} — myToken=${item.myToken} watchToken=${watchToken}`);
+        // Pre-fetched at chainSentence-enqueue time. Await may be a
+        // no-op (already resolved) or a small wait if the worker is
+        // catching up — either way faster than the previous
+        // "fetch-then-play" serial pattern.
+        console.log(`[tts] worker iter ${iteration} → awaiting pre-fetched bufPromise (chars=${item.text.length})…`);
+        let buf = await item.bufPromise;
+        console.log(`[tts] worker iter ${iteration} ← pre-fetched buf ${buf ? `bytes=${buf.byteLength}` : 'null'} — myToken=${item.myToken} watchToken=${watchToken}`);
         if (item.myToken !== watchToken) {
           console.log(`[tts] worker iter ${iteration} STALE post-fetch — dropping`);
           continue;
         }
         if (!buf) {
-          console.warn(`[tts] worker iter ${iteration} api.speak returned null — retrying once`);
+          // Pre-fetch failed (network blip, server 500, etc.). Retry
+          // synchronously here — the chain has already been waiting
+          // and we don't want to double-down on parallelism for a
+          // recovery path.
+          console.warn(`[tts] worker iter ${iteration} pre-fetch returned null — retrying once inline`);
           buf = await api.speak(item.text);
           console.log(`[tts] worker iter ${iteration} ← retry returned ${buf ? `bytes=${buf.byteLength}` : 'null'}`);
           if (item.myToken !== watchToken) {
@@ -422,6 +472,14 @@ async function processChainQueue(): Promise<void> {
             continue;
           }
           stepPlayed = true;
+          // Inter-chunk gap. Small enough to read as a natural breath,
+          // big enough that doNotMix audio session has a beat to
+          // settle the previous buffer before the next player takes
+          // over — no overlap regression. Skip the sleep on cancel
+          // so a user-initiated interrupt is still instant.
+          if (chainQueue.length > 0 && item.myToken === watchToken) {
+            await new Promise((r) => setTimeout(r, TTS_CHUNK_GAP_MS));
+          }
         }
       } catch (e) {
         console.warn(`[tts] worker iter ${iteration} chain step threw:`, (e as Error)?.message);

@@ -644,6 +644,10 @@ export default function ChatScreen() {
    *  into the chat history so the AI can reply. Empty transcript → bubble
    *  remains in the list but no AI turn is triggered. */
   async function handleSendVoice({ uri, durationSec }: { uri: string; durationSec: number }) {
+    // Hard-interrupt any in-flight TTS playback — same rule as
+    // handleSend (USER-initiated interrupt). See cancelTTSStream
+    // comment in handleSend above.
+    cancelTTSStream();
     // Lock the voice note to the thread the user is currently in —
     // a mid-transcribe mode switch shouldn't relocate the bubble.
     const turnMode = chatModeRef.current;
@@ -1174,6 +1178,17 @@ export default function ChatScreen() {
   const handleSend = useCallback(
     async (text: string) => {
       if (sending || !text.trim()) return;
+      // Hard-interrupt any in-flight TTS playback from the prior turn.
+      // Build-13 bug: if audio was still reading aloud the previous AI
+      // response when the user sent again, the chain kept draining and
+      // overlapped the new turn. cancelTTSStream bumps the watchToken,
+      // tears down the active player, and clears the queue — the next
+      // assistant turn's startTTSStream then begins a fresh chain.
+      // No overlap-bug regression: the old "first half only" cancel
+      // that broke audio fired from startStream (AI-initiated); this
+      // one fires from handleSend (USER-initiated), which is exactly
+      // when interrupt is the desired behavior.
+      cancelTTSStream();
       const turnMode = chatModeRef.current;
       const t = threadFor(turnMode);
       const id = uuidv4();

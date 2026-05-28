@@ -458,6 +458,10 @@ export function RelationshipChat({
   const handleSend = useCallback((textToSend: string) => {
     const t = textToSend.trim();
     if (!t || sending) return;
+    // Hard-interrupt any in-flight TTS playback from the prior turn —
+    // see matching comment in app/(tabs)/index.tsx handleSend. User-
+    // initiated interrupt; the new turn starts a fresh chain.
+    cancelTTSStream();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const userId = uuidv4();
     setMessages((prev) => [...prev, { id: userId, role: 'user', text: t }]);
@@ -489,6 +493,9 @@ export function RelationshipChat({
   // shared with the main chat tab.
   const handleSendVoice = useCallback(async ({ uri, durationSec }: { uri: string; durationSec: number }) => {
     if (sending) return;
+    // Hard-interrupt any in-flight TTS playback — same rule as
+    // handleSend (USER-initiated interrupt).
+    cancelTTSStream();
     const bubbleId = uuidv4();
     setMessages((prev) => [
       ...prev,
