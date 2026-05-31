@@ -19,7 +19,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, Platform,
-  Modal, TextInput, Alert,
+  Modal, TextInput, Alert, Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
@@ -139,6 +139,21 @@ export function AuthButtonRow({
   const [emailDraft, setEmailDraft] = useState('');
   const [emailSubmitting, setEmailSubmitting] = useState(false);
   const [emailSentMsg, setEmailSentMsg] = useState<string | null>(null);
+
+  // Build 14 — keyboard handling for the centered email modal. The
+  // modal previously had NO keyboard handling at all; on Android, the
+  // soft keyboard rose over the centered card and covered the email
+  // input. Apply paddingBottom: kbHeight on the backdrop so the
+  // centered card bumps upward above the keyboard. Same pattern used
+  // elsewhere in the app (Partner chat, Shared compose, SharePromptCard).
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
   // Apple Sign-In is iOS-only. expo-apple-authentication's
   // isAvailableAsync returns true on iOS 13+ and false elsewhere.
@@ -382,7 +397,7 @@ export function AuthButtonRow({
         statusBarTranslucent
       >
         <Pressable
-          style={styles.modalBackdrop}
+          style={[styles.modalBackdrop, { paddingBottom: kbHeight }]}
           onPress={() => { if (!emailSubmitting) setEmailModalOpen(false); }}
         >
           <Pressable style={styles.modalCard} onPress={() => {}}>

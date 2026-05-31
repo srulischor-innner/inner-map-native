@@ -24,10 +24,10 @@
 // user can decide to share a second time, edit the wording, or
 // ignore — each share is its own opt-in act.
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Pressable, Text, View, StyleSheet, Modal,
-  TextInput, ActivityIndicator, Alert, Platform, KeyboardAvoidingView,
+  TextInput, ActivityIndicator, Alert, Platform, Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -56,6 +56,22 @@ export function SharePromptCard({
   const [draft, setDraft] = useState(suggestion);
   const [sending, setSending] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+
+  // Build 14 — kbHeight pattern (manual lift) replaces the prior
+  // KeyboardAvoidingView. This is a CENTERED modal; when the kb
+  // opens we apply paddingBottom: kbHeight on the backdrop, which
+  // bumps the centered card upward to clear the keyboard. KAV with
+  // behavior:'height' on Android was the unreliable pattern that
+  // got the Shared compose covered. iOS Modal pans automatically;
+  // padding additively works on both.
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
   const openModal = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
@@ -130,12 +146,8 @@ export function SharePromptCard({
       </Pressable>
 
       <Modal visible={modalOpen} transparent animationType="fade" onRequestClose={closeModal}>
-        <KeyboardAvoidingView
-          style={styles.modalRoot}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalCard}>
+        <View style={[styles.modalBackdrop, { paddingBottom: kbHeight }]}>
+          <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>
                 Share with {partnerName || 'your partner'}
               </Text>
@@ -185,7 +197,6 @@ export function SharePromptCard({
               </View>
             </View>
           </View>
-        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

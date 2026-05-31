@@ -39,7 +39,7 @@ import {
   Alert,
   Platform,
   Modal,
-  KeyboardAvoidingView,
+  Keyboard,
   FlatList,
   useWindowDimensions,
   type NativeScrollEvent,
@@ -572,18 +572,21 @@ function NoRelationshipView({
   onPasteAccept: () => void;
 }) {
   const canPaste = pasteCode.length === INVITE_CODE_LENGTH && !busy;
-  // The paste-code field sits near the bottom of the scroll list; on
-  // smaller iPhones the soft keyboard can sit over the input + the
-  // CONNECT button. KeyboardAvoidingView lifts the form above the
-  // keyboard — same pattern the main chat tab uses, but without a
-  // sticky-header offset because this screen has none above it (the
-  // tab bar lives in the parent and isn't pushed when the keyboard
-  // opens).
+  // Build 14 — manual kbHeight lift, replacing KeyboardAvoidingView
+  // (behavior:'height' on Android was the known-unreliable pattern).
+  // The paste-code field sits near the bottom of the scroll list;
+  // without the lift, the soft keyboard covers the input + CONNECT
+  // button on Android in particular.
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
   return (
-    <KeyboardAvoidingView
-      style={styles.kav}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <View style={[styles.kav, { paddingBottom: kbHeight }]}>
     <ScrollView
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}
@@ -661,7 +664,7 @@ function NoRelationshipView({
         </Pressable>
       </View>
     </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

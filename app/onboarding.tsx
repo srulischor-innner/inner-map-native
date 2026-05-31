@@ -12,7 +12,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, Pressable, TextInput, ScrollView, StyleSheet,
-  KeyboardAvoidingView, Platform, FlatList, useWindowDimensions,
+  Keyboard, Platform, FlatList, useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -404,6 +404,21 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
   });
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
+  // Build 14 — manual kbHeight lift, replacing KeyboardAvoidingView
+  // (which had behavior:undefined on Android = no protection, and
+  // behavior:'padding' on iOS = OK). The intake has multiple TextInputs
+  // across 4 steps, with CTA buttons immediately below each — the
+  // keyboard previously covered both on Android, blocking the user
+  // from proceeding without dismissing the keyboard first.
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
   async function submit() {
     const ageNum = parseInt(state.age, 10);
     await api.postIntake({
@@ -420,10 +435,7 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={[styles.flex, { paddingBottom: kbHeight }]}>
       <View style={styles.stepDots}>
         {[1, 2, 3, 4].map((n) => (
           <View key={n} style={[styles.stepDot, n === step && styles.stepDotActive, n < step && styles.stepDotDone]} />
@@ -544,7 +556,7 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
           <SkipLink onPress={submit} label="Skip" />
         </StepWrap>
       ) : null}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

@@ -21,7 +21,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, StyleSheet,
-  KeyboardAvoidingView, Platform, ScrollView, Animated, Easing,
+  Platform, ScrollView, Animated, Easing, Keyboard,
   GestureResponderEvent, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -68,6 +68,21 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   const [transcribing, setTranscribing] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [saving, setSaving] = useState(false);
+  // Build 14 — manual kbHeight lift, replacing the prior
+  // KeyboardAvoidingView with behavior:'height' on Android (which
+  // is the known-unreliable pattern that left inputs hidden behind
+  // the keyboard in main chat, Partner chat, etc. before each was
+  // ported to this pattern). Inside this Modal, paddingBottom on
+  // the root SafeAreaView lifts the entire ScrollView+input+mic
+  // stack above the keyboard on both iOS and Android.
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
   // Guidance opacity — collapses to 0.2 once the user has started typing
   // or recorded a voice note. Tapping the guidance restores to 1.0.
   const guidanceOpacity = useRef(new Animated.Value(1)).current;
@@ -226,14 +241,10 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
       statusBarTranslucent
     >
       <SafeAreaView style={styles.root} edges={['bottom']}>
-        <KeyboardAvoidingView
-          // iOS handles 'padding' natively for full-screen Modals. On
-          // Android we fall back to 'height' in case windowSoftInputMode
-          // isn't set to adjustResize on a particular build.
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={0}
-          style={styles.flex}
-        >
+        {/* Manual kbHeight lift — see useEffect at the top of this
+            component. Replaces KeyboardAvoidingView, which on Android
+            (behavior:'height') was the known-unreliable pattern. */}
+        <View style={[styles.flex, { paddingBottom: kbHeight }]}>
           {/* Top bar — close (X) on the left, Save on the right. */}
           <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
             <Pressable onPress={onClose} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Close">
@@ -329,7 +340,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
               />
             </Pressable>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </SafeAreaView>
     </Modal>
   );
