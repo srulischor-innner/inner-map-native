@@ -693,6 +693,24 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: radii.md,
     maxWidth: '100%',
+    // flexShrink:1 is the canonical RN fix for "long Text in a flex-row
+    // gets clipped instead of wrapping." The Pressable is the only flex
+    // item in `row` (flexDirection:'row'). Without flexShrink, the
+    // layout engine computes the Pressable's preferred width as the
+    // Text's *single-line intrinsic width* — which for a long message
+    // is wider than the screen. maxWidth:'100%' should clamp that, but
+    // on Android with the new architecture (newArchEnabled=true in
+    // app.config.js) it often doesn't, and the Text overflows + gets
+    // clipped at the row's edge mid-word. With flexShrink:1, the engine
+    // shrinks the Pressable to the available row width and the Text
+    // inside wraps normally.
+    //
+    // AI streaming bubbles were masking this bug because every delta
+    // fired onContentSizeChange → repeated re-layout → one pass would
+    // settle the correct height. User messages render in a single
+    // pass (no streaming), so the initial mis-measure stuck. Build 14
+    // bug report: "even though she se" cut mid-word.
+    flexShrink: 1,
     position: 'relative',
   },
   assistant: {
