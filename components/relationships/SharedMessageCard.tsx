@@ -16,12 +16,14 @@
 //      - If only the user has responded: italic "Waiting for
 //        [partner_name]" status under their own response.
 
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, Pressable, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import {
+  api,
   SharedMessage, SharedMessageOption, SharedMessageResponse,
 } from '../../services/api';
 import { ResponseAffordance } from './ResponseAffordance';
@@ -57,11 +59,16 @@ export function SharedMessageCard({
   partnerName: string | null;
   onResponded: () => void;
 }) {
-  if (message.kind === 'partner_contribution') {
+  // PR 1 privacy foundation — partner_session_summary renders with the
+  // same shape as partner_contribution. Both are user-authored content
+  // in the shared layer, both deletable by the author.
+  if (message.kind === 'partner_contribution' || message.kind === 'partner_session_summary') {
     return <PartnerContributionCard
       message={message}
       isMine={message.author === myAuthor}
       partnerName={partnerName}
+      relationshipId={relationshipId}
+      onDeleted={onResponded}
     />;
   }
   return <AiMessageCard
@@ -74,20 +81,77 @@ export function SharedMessageCard({
 }
 
 function PartnerContributionCard({
-  message, isMine, partnerName,
+  message, isMine, partnerName, relationshipId, onDeleted,
 }: {
   message: SharedMessage;
   isMine: boolean;
   partnerName: string | null;
+  relationshipId: string;
+  onDeleted: () => void;
 }) {
   const author = isMine ? 'You' : (partnerName || 'Your partner');
+  const isSummary = message.kind === 'partner_session_summary';
+  const [deleting, setDeleting] = useState(false);
+
+  // PR 1 privacy foundation — long-press on an own contribution opens
+  // a delete confirmation. Only authored-by-me items get the affordance
+  // (partner's items are read-only to me). AI messages are not
+  // user-deletable; this card never renders for them.
+  const onLongPress = () => {
+    if (!isMine || deleting) return;
+    Haptics.selectionAsync().catch(() => {});
+    Alert.alert(
+      'Remove from shared?',
+      isSummary
+        ? "This will remove the session summary you shared. Your partner won't see it anymore, and the shared AI will forget about it. Your private session record is unaffected."
+        : "This will remove the message you shared. Your partner won't see it anymore, and the shared AI will forget about it.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            const res = await api.deleteSharedMessage(relationshipId, message.id);
+            setDeleting(false);
+            if (!res.ok) {
+              Alert.alert("Couldn't remove", 'Try again in a moment.');
+              return;
+            }
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            onDeleted();
+          },
+        },
+      ],
+    );
+  };
+
   return (
-    <View style={[styles.contribWrap, isMine ? styles.contribMineWrap : styles.contribTheirsWrap]}>
-      <Text style={[styles.contribAuthor, isMine && styles.contribAuthorMine]}>
-        {author}
-      </Text>
+    <Pressable
+      onLongPress={onLongPress}
+      delayLongPress={500}
+      disabled={!isMine || deleting}
+      style={[
+        styles.contribWrap,
+        isMine ? styles.contribMineWrap : styles.contribTheirsWrap,
+        isSummary && styles.contribSummary,
+      ]}
+      accessibilityLabel={
+        isMine
+          ? `${isSummary ? 'Session summary' : 'Contribution'} from you — long-press to remove from shared`
+          : `${isSummary ? 'Session summary' : 'Contribution'} from ${partnerName || 'your partner'}`
+      }
+    >
+      <View style={styles.contribHeader}>
+        <Text style={[styles.contribAuthor, isMine && styles.contribAuthorMine]}>
+          {author}{isSummary ? ' · session summary' : ''}
+        </Text>
+        {deleting ? (
+          <ActivityIndicator size="small" color={colors.amber} />
+        ) : null}
+      </View>
       <Text style={styles.contribBody}>{message.content}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -216,15 +280,28 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.12)',
     borderWidth: 0.5,
   },
+  // PR 1 — header row holds author + a small spinner during delete.
+  contribHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
   contribAuthor: {
     color: colors.creamDim,
     fontFamily: fonts.sansBold,
     fontSize: 11,
     letterSpacing: 0.6,
     textTransform: 'uppercase',
-    marginBottom: 4,
   },
   contribAuthorMine: { color: colors.amberDim },
+  // PR 1 — partner_session_summary visual: same body type as a
+  // contribution but with a slightly lighter background to read as
+  // "structured share" vs "ad-hoc message."
+  contribSummary: {
+    backgroundColor: 'rgba(230,180,122,0.06)',
+    borderColor: 'rgba(230,180,122,0.32)',
+  },
   // v1.1.0 typography (round 3): dialogue-card body matches the main
   // chat bubble — Cormorant SemiBold 17/26 ls 0.15. See
   // components/MessageBubble.styles.text for the round-3 rationale

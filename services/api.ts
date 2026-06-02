@@ -38,6 +38,12 @@ export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 // SharedMessageCard per row.
 export type SharedMessageKind =
   | 'partner_contribution'
+  // PR 1 privacy foundation — partner_session_summary is what a user
+  // creates when they approve a session summary into the shared layer
+  // via the end-of-session review modal. Rendered identically to a
+  // partner_contribution; tagged separately so the UI + AI can
+  // distinguish "ad-hoc message" from "approved session distillation."
+  | 'partner_session_summary'
   | 'ai_acknowledgment'
   | 'ai_hunch'
   | 'ai_observation'
@@ -85,6 +91,11 @@ export type RelationshipSession = {
   endedAt: string | null;
   summary: string | null;
   practices: string[];
+  // PR 1 privacy foundation. 'pending' (or null) ⇒ summary hasn't been
+  // reviewed yet; show the review modal. 'approved' ⇒ user shared into
+  // shared layer. 'held-back' ⇒ user explicitly chose not to share.
+  summaryShareStatus: 'pending' | 'approved' | 'held-back' | null;
+  summaryReviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -1512,6 +1523,93 @@ export const api = {
     } catch (e) {
       console.warn('[rel-session-get] threw:', (e as Error)?.message);
       return null;
+    }
+  },
+
+  // ===========================================================================
+  // PR 1 PRIVACY FOUNDATION — summary share-review + delete-own contribution
+  // ===========================================================================
+
+  /** POST /api/relationships/sessions/:sessionId/share-summary.
+   *  action='approve' + content → inserts the (possibly-edited) summary
+   *  into shared_messages as kind=partner_session_summary, fires the
+   *  shared AI tick, stamps summaryShareStatus='approved'.
+   *  action='hold-back' → stamps summaryShareStatus='held-back', nothing
+   *  enters the shared layer. */
+  async shareSessionSummary(
+    sessionId: string,
+    action: 'approve' | 'hold-back',
+    content?: string,
+  ): Promise<{ session: RelationshipSession; sharedMessageId: string | null } | null> {
+    try {
+      const headers = await authHeaders();
+      const body: { action: string; content?: string } = { action };
+      if (action === 'approve' && content) body.content = content;
+      const res = await apiFetch(
+        `/api/relationships/sessions/${encodeURIComponent(sessionId)}/share-summary`,
+        { label: 'rel-share-summary', method: 'POST', headers, body: JSON.stringify(body) },
+      );
+      if (!res.ok) {
+        console.warn(`[rel-share-summary] non-OK ${res.status}`);
+        return null;
+      }
+      const j: any = await res.json().catch(() => null);
+      if (!j || !j.session) return null;
+      return {
+        session: j.session as RelationshipSession,
+        sharedMessageId: typeof j.sharedMessageId === 'string' ? j.sharedMessageId : null,
+      };
+    } catch (e) {
+      console.warn('[rel-share-summary] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** GET /api/relationships/:relationshipId/pending-summary.
+   *  Returns the most recent session this user owns in this relationship
+   *  whose summary is pending review (covers the abandonment case where
+   *  the user didn't tap End Session). Native client polls this on
+   *  entry to Partner chat and surfaces a review modal if non-null. */
+  async getPendingSummary(relationshipId: string): Promise<RelationshipSession | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/pending-summary`,
+        { label: 'rel-pending-summary', method: 'GET', headers },
+      );
+      if (!res.ok) return null;
+      const j: any = await res.json().catch(() => null);
+      return (j?.session as RelationshipSession) || null;
+    } catch (e) {
+      console.warn('[rel-pending-summary] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** DELETE /api/relationships/:id/shared/:messageId.
+   *  Soft-delete the calling user's own shared contribution. Server
+   *  enforces author === caller and non-AI. Returns { ok:true } on
+   *  success or 403/404 on a misuse. */
+  async deleteSharedMessage(
+    relationshipId: string,
+    messageId: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/${encodeURIComponent(messageId)}`,
+        { label: 'rel-shared-delete', method: 'DELETE', headers },
+      );
+      if (!res.ok) {
+        let errBody = '';
+        try { errBody = (await res.json())?.error || ''; } catch {}
+        console.warn(`[rel-shared-delete] non-OK ${res.status} err=${errBody}`);
+        return { ok: false, error: errBody || `http-${res.status}` };
+      }
+      return { ok: true };
+    } catch (e) {
+      console.warn('[rel-shared-delete] threw:', (e as Error)?.message);
+      return { ok: false, error: 'threw' };
     }
   },
 

@@ -161,6 +161,29 @@ export function RelationshipChat({
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // PR 1 privacy foundation — abandonment recovery. Before starting
+      // the next session, check if the previous session's summary is
+      // still pending review. If so, surface the review modal first so
+      // the user can decide what to share before continuing. Common
+      // case: user left mid-session last time (no End tap) and is now
+      // coming back. Without this, the summary would silently never
+      // reach the share-decision point.
+      try {
+        const pending = await api.getPendingSummary(relationshipId);
+        if (cancelled) return;
+        if (pending) {
+          setSummarySession(pending);
+          setSummaryFailed(false);
+          setSummaryVisible(true);
+          // The modal's onContinue (already wired to start a fresh
+          // session) takes over from here. Do not start a new session
+          // yet — that happens when the user dismisses the modal.
+          setLoading(false);
+          return;
+        }
+      } catch (e) {
+        console.warn('[rel-chat] pending-summary check threw:', (e as Error)?.message);
+      }
       const startResult = await api.startRelationshipSession(relationshipId);
       if (cancelled) return;
       let sessionIdForFetch: string | null = null;

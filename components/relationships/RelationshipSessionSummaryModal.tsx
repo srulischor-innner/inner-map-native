@@ -27,7 +27,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Modal, View, Text, Pressable, ScrollView, StyleSheet, Share, Alert,
-  ActivityIndicator,
+  ActivityIndicator, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -64,6 +64,25 @@ export function RelationshipSessionSummaryModal({
   visible, session, failed, relationshipId, partnerName, onContinue,
 }: Props) {
   const insets = useSafeAreaInsets();
+
+  // PR 1 privacy foundation — summary share-review state. The session
+  // arrives with summaryShareStatus = 'pending' (default), 'approved'
+  // (already shared), or 'held-back' (user chose no earlier). We
+  // render editable controls on 'pending' and a static confirmation
+  // chip on the other two. Local state mirrors the session prop so
+  // the UI can flip instantly after a successful API call without
+  // waiting for the parent to refresh the row.
+  const initialPendingStatus = session?.summaryShareStatus ?? 'pending';
+  const [shareStatus, setShareStatus] = useState<
+    'pending' | 'approved' | 'held-back' | null
+  >(initialPendingStatus);
+  const [editableSummary, setEditableSummary] = useState('');
+  const [shareBusy, setShareBusy] = useState(false);
+  // Re-sync local state when the parent loads a new session row.
+  useEffect(() => {
+    setShareStatus(session?.summaryShareStatus ?? 'pending');
+    setEditableSummary((session?.summary || '').trim());
+  }, [session?.id, session?.summary, session?.summaryShareStatus]);
 
   // Soft success haptic the moment the modal becomes visible. Once
   // per visible→true transition.
@@ -148,7 +167,115 @@ export function RelationshipSessionSummaryModal({
           {hasSummary ? (
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>WHAT CAME UP</Text>
-              <Text style={styles.sectionText}>{revealedSummary.trim()}</Text>
+              {/* PR 1 privacy foundation — share-review controls.
+                  'pending' state: summary is editable, two buttons
+                    (Share / Keep private). User can adjust the text
+                    before sharing. Defaults to the full AI-generated
+                    summary; user can edit, redact, or replace.
+                  'approved' / 'held-back': read-only summary + a
+                    small confirmation chip explaining the outcome. */}
+              {shareStatus === 'pending' ? (
+                <>
+                  {/* While the reveal animation is still running, show
+                      the streaming text. Once revealed (or once the
+                      user starts editing), show the editable TextInput
+                      so they can shape the share. */}
+                  <TextInput
+                    value={editableSummary}
+                    onChangeText={setEditableSummary}
+                    multiline
+                    selectionColor={colors.amber}
+                    placeholder={revealedSummary.trim() || 'Your session summary…'}
+                    placeholderTextColor={colors.creamFaint}
+                    style={styles.summaryEditable}
+                    editable={!shareBusy}
+                  />
+                  <Text style={styles.shareHint}>
+                    Edit this if you want, then choose. Your partner will
+                    see what you send. Anything you don't send stays
+                    private to you.
+                  </Text>
+                  <View style={styles.shareActions}>
+                    <Pressable
+                      onPress={async () => {
+                        if (!session || shareBusy) return;
+                        const trimmed = editableSummary.trim();
+                        if (!trimmed) {
+                          Alert.alert('Nothing to share', 'Add some text before sharing, or tap Keep private.');
+                          return;
+                        }
+                        setShareBusy(true);
+                        const out = await api.shareSessionSummary(session.id, 'approve', trimmed);
+                        setShareBusy(false);
+                        if (!out) {
+                          Alert.alert("Couldn't share", 'Try again in a moment.');
+                          return;
+                        }
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                        setShareStatus('approved');
+                      }}
+                      disabled={shareBusy || !editableSummary.trim()}
+                      style={[
+                        styles.shareBtn, styles.shareBtnPrimary,
+                        (shareBusy || !editableSummary.trim()) && styles.shareBtnDim,
+                      ]}
+                      accessibilityLabel={`Share with ${partnerName || 'your partner'}`}
+                    >
+                      {shareBusy ? (
+                        <ActivityIndicator color={colors.background} size="small" />
+                      ) : (
+                        <Text style={styles.shareBtnPrimaryText}>
+                          SHARE WITH {(partnerName || 'PARTNER').toUpperCase()}
+                        </Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={async () => {
+                        if (!session || shareBusy) return;
+                        setShareBusy(true);
+                        const out = await api.shareSessionSummary(session.id, 'hold-back');
+                        setShareBusy(false);
+                        if (!out) {
+                          Alert.alert("Couldn't update", 'Try again in a moment.');
+                          return;
+                        }
+                        Haptics.selectionAsync().catch(() => {});
+                        setShareStatus('held-back');
+                      }}
+                      disabled={shareBusy}
+                      style={[styles.shareBtn, styles.shareBtnGhost, shareBusy && styles.shareBtnDim]}
+                      accessibilityLabel="Keep private — do not share"
+                    >
+                      <Text style={styles.shareBtnGhostText}>KEEP PRIVATE</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.sectionText}>{revealedSummary.trim()}</Text>
+                  <View style={
+                    shareStatus === 'approved'
+                      ? styles.statusChipApproved
+                      : styles.statusChipHeld
+                  }>
+                    <Ionicons
+                      name={shareStatus === 'approved' ? 'checkmark-circle' : 'lock-closed'}
+                      size={14}
+                      color={shareStatus === 'approved' ? colors.amber : colors.creamDim}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={
+                      shareStatus === 'approved'
+                        ? styles.statusChipApprovedText
+                        : styles.statusChipHeldText
+                    }>
+                      {shareStatus === 'approved'
+                        ? `Shared with ${partnerName || 'your partner'}`
+                        : 'Kept private'}
+                    </Text>
+                  </View>
+                </>
+              )}
               <View style={styles.divider} />
             </View>
           ) : null}
@@ -373,6 +500,102 @@ const styles = StyleSheet.create({
     height: 0.5,
     backgroundColor: colors.border,
     marginTop: spacing.lg,
+  },
+
+  // PR 1 — summary share-review controls.
+  summaryEditable: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    lineHeight: 22,
+    minHeight: 110,
+    maxHeight: 260,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 12,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.25)',
+    textAlignVertical: 'top',
+    marginTop: 4,
+  },
+  shareHint: {
+    color: colors.creamFaint,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 10,
+  },
+  shareActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  shareBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 999,
+    minWidth: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  shareBtnPrimary: {
+    backgroundColor: colors.amber,
+  },
+  shareBtnPrimaryText: {
+    color: colors.background,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 0.8,
+  },
+  shareBtnGhost: {
+    borderWidth: 1,
+    borderColor: 'rgba(230, 180, 122, 0.4)',
+  },
+  shareBtnGhostText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 0.8,
+  },
+  shareBtnDim: { opacity: 0.5 },
+  statusChipApproved: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(230,180,122,0.08)',
+    borderColor: 'rgba(230,180,122,0.35)',
+    borderWidth: 0.5,
+    borderRadius: 999,
+    marginTop: 12,
+  },
+  statusChipApprovedText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 0.4,
+  },
+  statusChipHeld: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 0.5,
+    borderRadius: 999,
+    marginTop: 12,
+  },
+  statusChipHeldText: {
+    color: colors.creamDim,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 0.4,
   },
 
   fallbackText: {
