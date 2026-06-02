@@ -387,7 +387,7 @@ export default function RelationshipsScreen() {
       ) : phase.kind === 'pending-intros' ? (
         <PendingIntrosView rel={phase.rel} onRefresh={refresh} onReadIntro={onReadIntro} />
       ) : (
-        <ActiveView rel={phase.rel} />
+        <ActiveView rel={phase.rel} onLeft={refresh} />
       )}
 
       {/* Partner-departure one-time notice. Fires when ANY relationship
@@ -807,10 +807,11 @@ function PendingIntrosView({
 type SubView = 'chat' | 'shared' | 'map';
 const SUB_VIEWS: SubView[] = ['chat', 'shared', 'map'];
 
-function ActiveView({ rel }: { rel: Relationship }) {
+function ActiveView({ rel, onLeft }: { rel: Relationship; onLeft: () => void }) {
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const listRef = useRef<FlatList<SubView>>(null);
+  const [leaving, setLeaving] = useState(false);
 
   const view: SubView = SUB_VIEWS[index];
 
@@ -824,6 +825,38 @@ function ActiveView({ rel }: { rel: Relationship }) {
       markPartnerSharedSeen(rel.id).catch(() => {});
     }
   }, [view, rel.id]);
+
+  // PR 3 — Leave/end-this-connection action. UNILATERAL: this user
+  // departs immediately, no approval from the other partner. The
+  // server's /leave handler wipes the entire shared layer for both
+  // partners + tombstones the relationship row. Each partner's own
+  // private chat + map + session summaries survive — those are
+  // individual data. Confirmation copy is verbatim from the PR spec.
+  const confirmLeave = useCallback(() => {
+    if (leaving) return;
+    Alert.alert(
+      "End this connection",
+      "This deletes everything you've shared together. Your own private chats and map stay with you. This can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "End connection",
+          style: "destructive",
+          onPress: async () => {
+            setLeaving(true);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+            const result = await api.leaveRelationship(rel.id);
+            setLeaving(false);
+            if (!result.ok) {
+              Alert.alert("Couldn't end this connection", result.error || "Try again in a moment.");
+              return;
+            }
+            onLeft();
+          },
+        },
+      ],
+    );
+  }, [leaving, rel.id, onLeft]);
 
   // Segment tap → programmatically page to the tapped view. Triggers
   // the same snap animation a swipe would, so the two input paths
@@ -876,19 +909,38 @@ function ActiveView({ rel }: { rel: Relationship }) {
 
   return (
     <View style={styles.activeRoot}>
-      <View style={styles.segments}>
-        {SUB_VIEWS.map((v) => (
-          <Pressable
-            key={v}
-            onPress={() => onSegmentTap(v)}
-            style={[styles.segment, view === v && styles.segmentActive]}
-            accessibilityLabel={`Switch to ${v}`}
-          >
-            <Text style={[styles.segmentText, view === v && styles.segmentTextActive]}>
-              {v.toUpperCase()}
-            </Text>
-          </Pressable>
-        ))}
+      <View style={styles.segmentsRow}>
+        <View style={styles.segments}>
+          {SUB_VIEWS.map((v) => (
+            <Pressable
+              key={v}
+              onPress={() => onSegmentTap(v)}
+              style={[styles.segment, view === v && styles.segmentActive]}
+              accessibilityLabel={`Switch to ${v}`}
+            >
+              <Text style={[styles.segmentText, view === v && styles.segmentTextActive]}>
+                {v.toUpperCase()}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {/* PR 3 — End-this-connection affordance. Subdued so it doesn't
+            compete with the three primary segments, but always reachable
+            from within an active relationship. Tapping opens the confirm
+            Alert with the exact data-cascade copy. */}
+        <Pressable
+          onPress={confirmLeave}
+          hitSlop={8}
+          style={styles.endBtn}
+          accessibilityLabel="End this connection"
+          disabled={leaving}
+        >
+          {leaving ? (
+            <ActivityIndicator size="small" color={colors.creamFaint} />
+          ) : (
+            <Ionicons name="exit-outline" size={18} color={colors.creamFaint} />
+          )}
+        </Pressable>
       </View>
       <FlatList
         ref={listRef}
@@ -1135,17 +1187,31 @@ const styles = StyleSheet.create({
 
   // Active state — Phase 6 territory; light segmented control + a stub body.
   activeRoot: { flex: 1 },
+  // PR 3 — the segments are wrapped in a row that also carries the
+  // end-this-connection kebab on the right. The kebab gets its own
+  // fixed-width column so the three segments still flex evenly.
+  segmentsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: spacing.lg,
+    paddingRight: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomColor: 'rgba(230,180,122,0.1)',
+    borderBottomWidth: 0.5,
+  },
   // Segments row leaves extra right-side padding so the absolute-
   // positioned ℹ︎ button doesn't visually overlap (or steal taps
   // from) the rightmost MAP segment.
   segments: {
+    flex: 1,
     flexDirection: 'row',
-    paddingLeft: spacing.lg,
     paddingRight: 36,
-    paddingVertical: spacing.sm,
     gap: spacing.sm,
-    borderBottomColor: 'rgba(230,180,122,0.1)',
-    borderBottomWidth: 0.5,
+  },
+  endBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginLeft: spacing.xs,
   },
   segment: {
     flex: 1,

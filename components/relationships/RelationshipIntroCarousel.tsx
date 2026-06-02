@@ -37,47 +37,61 @@ import { colors, fonts, spacing } from '../../constants/theme';
 import { GuideDots } from '../guide/GuideDots';
 import { RelationshipIntroVisual } from './RelationshipIntroVisual';
 
-// Slide content — single source of truth. Verbatim from the v1.1.0
-// polish spec. Order matters: the visuals in RelationshipIntroVisual
-// are indexed 1-based against this array.
+// Slide content — single source of truth. PR 3 (June 2026) rewrite
+// to make the data model crystal clear up-front. Six slides, mirrored
+// by the gated ConsentDocument (which uses the same content as a
+// single scrollable page for the commitment moment).
+//
+// Order matters: the visuals in RelationshipIntroVisual are indexed
+// 1-based against this array.
 const SLIDES: { title: string; body: string }[] = [
   {
-    title: 'Entering this together',
+    title: 'A space for both of you',
     body:
       'Inner Map can hold a private space for you and your partner — one where ' +
-      'you each do your own inner work, and what you both choose to share ' +
-      'becomes visible to both of you.',
+      'you each do your own inner work, and the patterns the two of you carry ' +
+      'can be seen alongside each other. The next slides describe exactly ' +
+      'what is shared and what stays private. Please read them carefully.',
   },
   {
-    title: 'Your space stays yours',
+    title: 'Your map is shared with your partner',
     body:
-      'You each have a private chat only you can see. Your partner never reads ' +
-      'what you write in yours. The shared space is for insights you’ve both ' +
-      'agreed to share — nothing crosses from private to shared without your ' +
-      'permission.',
+      'Your map — your wound, your parts, the patterns Inner Map has identified ' +
+      'in you — becomes visible to your partner. This is the whole point of ' +
+      'Partner mode: finding patterns across the two of you needs both maps ' +
+      'in view. Using Partner mode means agreeing to share your map.',
   },
   {
-    title: 'The map view',
+    title: 'What you say in private stays private',
     body:
-      'You’ll see a Map view showing both of your individual maps side by ' +
-      'side — a structural view of each person’s parts and patterns, so ' +
-      'you can see how your dynamics interact. Once you and your partner have both ' +
-      'completed this consent, your maps become visible to each other in the ' +
-      'shared Map view.',
+      'Your private chats are never shared with your partner. They can\'t read ' +
+      'what you write to the AI in your private space, and you can\'t read ' +
+      'theirs. Only your map (automatically) and session summaries that you ' +
+      'explicitly approve are shared — nothing else crosses.',
   },
   {
-    title: 'What the AI sees and does',
+    title: 'You control your summaries',
     body:
-      'To help you both, the AI sees both of your private conversations and ' +
-      'your individual maps. It uses that as background context — but it ' +
-      'never tells either of you what the other has said in private.\n\n' +
-      'In your private chats, the AI might notice something significant emerging ' +
-      'for you and suggest sharing it with your partner. The decision is always ' +
-      'yours.\n\n' +
-      'In the shared space, the AI engages freely with what you’ve both ' +
-      'chosen to share. As your contributions accumulate, it may notice patterns ' +
-      'connecting them and bring them into the conversation. You can respond, ' +
-      'push back, or take it deeper using the response options it offers.',
+      'At the end of each private session, the AI offers you a short summary ' +
+      'of what came up. You decide whether to share it, edit it first, or ' +
+      'keep it to yourself. Anything you have shared into the shared space, ' +
+      'you can delete anytime.',
+  },
+  {
+    title: 'The AI offers possibilities, not verdicts',
+    body:
+      'The shared-space AI suggests patterns it notices and invites you both to ' +
+      'consider them. It doesn\'t diagnose, judge, or take sides. When it gets ' +
+      'something wrong, tell it — your lived experience overrides its read ' +
+      'every time. The two of you are the authority on your relationship.',
+  },
+  {
+    title: 'Either of you can leave anytime',
+    body:
+      'Either of you can end the connection at any moment — alone, instantly. ' +
+      'When you leave, everything the two of you have shared together is ' +
+      'deleted for both of you. Your own private chats and your own map ' +
+      'stay with you. Leaving cannot be undone.',
   },
   {
     // Safety slide — phone numbers + tappable tel/sms links removed
@@ -87,18 +101,20 @@ const SLIDES: { title: string; body: string }[] = [
     // and editorializing on a single number risks pointing the user
     // at a service that isn't appropriate for their region or
     // situation. Crisis resources are surfaced in Settings.
-    title: 'If something doesn’t feel safe',
+    title: 'If something doesn\'t feel safe',
     body:
       'This space is for couples doing mutual inner work in good faith. If ' +
-      'you’re experiencing physical violence, threats, coercion, or fear, ' +
+      'you\'re experiencing physical violence, threats, coercion, or fear, ' +
       'please reach out to professional support. Crisis resources are in ' +
       'Settings.',
   },
   {
     title: 'Entering together',
     body:
-      'By continuing, you’re confirming you understand how this space works ' +
-      'and that you’re entering with your partner in good faith.',
+      'By continuing, you\'re confirming you understand how this space works — ' +
+      'what is shared, what stays private, that you control your own summaries, ' +
+      'and that either of you can leave at any time — and that you\'re entering ' +
+      'with your partner in good faith.',
   },
 ];
 

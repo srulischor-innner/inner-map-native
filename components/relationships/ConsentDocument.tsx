@@ -37,50 +37,78 @@ import { api } from '../../services/api';
 
 type Section = { header: string; body: string };
 
-// Section content — verbatim from the v1.1.0 TestFlight-polish spec.
-// MAP VIEW and WHAT THE AI SEES AND DOES were rewritten in this pass
-// to match the carousel slides (the carousel is the canonical content
-// surface; this document mirrors it for the commitment moment). Keep
-// the array shape so future sections can be added/reordered without
-// touching the render loop below.
+// Section content — PR 3 (June 2026) rewrite. The previous text was
+// warm but vague about the data model; this version says exactly what
+// is shared, what isn't, and what happens when someone leaves. The
+// goal is informed consent: by the time a user accepts, they
+// understand the actual mechanics, not just the vibe.
+//
+// Six sections, in order:
+//   1. Why this space exists (frame the why)
+//   2. YOUR MAP IS SHARED with your partner (the big one)
+//   3. WHAT YOU SAY IN PRIVATE STAYS PRIVATE
+//   4. YOU CONTROL YOUR SUMMARIES (per-session approval; delete anytime)
+//   5. THE AI OFFERS POSSIBILITIES, NOT VERDICTS
+//   6. EITHER OF YOU CAN LEAVE ANYTIME (leave = delete shared layer)
+//   7. IF SOMETHING DOESN'T FEEL SAFE (crisis line)
+//   8. ENTERING TOGETHER (commitment moment)
 const SECTIONS: Section[] = [
   {
-    header: 'ENTERING THIS TOGETHER',
+    header: 'WHY THIS SPACE EXISTS',
     body:
-      'Inner Map can hold a private space for you and your partner — one where ' +
-      'you each do your own inner work, and what you both choose to share ' +
-      'becomes visible to both of you.',
+      'Inner Map can hold a private space for you and your partner — one ' +
+      'where you each do your own inner work, and the patterns the two of ' +
+      'you carry can be seen alongside each other. Pattern-tracking across ' +
+      'both of you is what this feature is for. Please read the next few ' +
+      'sections carefully — they describe exactly what is shared, what is ' +
+      'not, and what happens if either of you leaves.',
   },
   {
-    header: 'YOUR SPACE STAYS YOURS',
+    header: 'YOUR MAP IS SHARED WITH YOUR PARTNER',
     body:
-      'You each have a private chat only you can see. Your partner never reads ' +
-      'what you write in yours. The shared space is for insights you\'ve both ' +
-      'agreed to share — nothing crosses from private to shared without your ' +
-      'permission.',
+      'Your map — your wound, your parts, the patterns Inner Map has identified ' +
+      'in you — becomes visible to your partner once you both accept. This ' +
+      'is the whole point of Partner mode: finding patterns ACROSS the two ' +
+      'of you requires that the two of you can see each other\'s maps. By ' +
+      'continuing, you are agreeing to share your map.',
   },
   {
-    header: 'THE MAP VIEW',
+    header: 'WHAT YOU SAY IN PRIVATE STAYS PRIVATE',
     body:
-      'You\'ll see a Map view showing both of your individual maps side by ' +
-      'side — a structural view of each person\'s parts and patterns, so you ' +
-      'can see how your dynamics interact. Once you and your partner have both ' +
-      'completed this consent, your maps become visible to each other in the ' +
-      'shared Map view.',
+      'Your private chats are never shared with your partner. Your partner ' +
+      'cannot read what you write to the AI in your private space, and ' +
+      'you cannot read theirs. Only your map (automatically) and session ' +
+      'summaries that you explicitly approve are shared — nothing else ' +
+      'crosses.',
   },
   {
-    header: 'WHAT THE AI SEES AND DOES',
+    header: 'YOU CONTROL YOUR SUMMARIES',
     body:
-      'To help you both, the AI sees both of your private conversations and ' +
-      'your individual maps. It uses that as background context — but it ' +
-      'never tells either of you what the other has said in private.\n\n' +
-      'In your private chats, the AI might notice something significant emerging ' +
-      'for you and suggest sharing it with your partner. The decision is always ' +
-      'yours.\n\n' +
-      'In the shared space, the AI engages freely with what you\'ve both ' +
-      'chosen to share. As your contributions accumulate, it may notice patterns ' +
-      'connecting them and bring them into the conversation. You can respond, ' +
-      'push back, or take it deeper using the response options it offers.',
+      'At the end of each private session, the AI offers you a short summary ' +
+      'of what came up. You decide whether to share it with your partner, ' +
+      'edit it first, or keep it entirely to yourself. Nothing personal ' +
+      'crosses without your approval. Anything you have shared into the ' +
+      'shared space — summaries, contributions — you can delete at any ' +
+      'time.',
+  },
+  {
+    header: 'THE AI OFFERS POSSIBILITIES, NOT VERDICTS',
+    body:
+      'The shared-space AI suggests patterns it notices and invites you both ' +
+      'to consider them. It does not diagnose, judge, or take sides. When it ' +
+      'gets something wrong, tell it — your lived experience overrides its ' +
+      'read every time. The two of you are the authority on your ' +
+      'relationship.',
+  },
+  {
+    header: 'EITHER OF YOU CAN LEAVE ANYTIME',
+    body:
+      'Either of you can end the connection at any moment — alone, ' +
+      'instantly, without the other\'s approval. When you leave, everything ' +
+      'the two of you have shared together is deleted for both of you: the ' +
+      'shared thread, your shared contributions, the shared patterns. Your ' +
+      'own private chats and your own map stay with you — they\'re yours. ' +
+      'Leaving cannot be undone.',
   },
   {
     header: "IF SOMETHING DOESN'T FEEL SAFE",
@@ -93,8 +121,10 @@ const SECTIONS: Section[] = [
   {
     header: 'ENTERING TOGETHER',
     body:
-      'By continuing, you\'re confirming you understand how this space works ' +
-      'and that you\'re entering with your partner in good faith.',
+      'By continuing, you\'re confirming you understand how this space works — ' +
+      'what is shared, what stays private, that you control your own ' +
+      'summaries, and that either of you can leave at any time — and that ' +
+      'you\'re entering with your partner in good faith.',
   },
 ];
 
