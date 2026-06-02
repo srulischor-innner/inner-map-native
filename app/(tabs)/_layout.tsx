@@ -21,6 +21,11 @@ import { HamburgerMenu } from '../../components/HamburgerMenu';
 import { subscribeMapPulse } from '../../utils/mapPulse';
 import { subscribeMapSeen, refreshMapSeenStatus } from '../../services/mapSeen';
 import { subscribeChatActivity } from '../../services/chatActivity';
+import {
+  subscribePartnerSharedSeen,
+  refreshPartnerSharedSeenStatus,
+} from '../../services/partnerSharedSeen';
+import { api } from '../../services/api';
 
 const TAB_ROUTES: { name: string; label: string; path: string }[] = [
   { name: 'index',         label: 'CHAT',    path: '/' },
@@ -93,6 +98,71 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
     refreshMapSeenStatus().catch(() => {});
   }, [pathname]);
 
+  // PARTNER-SHARED-SEEN DOT (PR 2). Parallel to the map-seen dot above
+  // but for the Partner tab. The dot lights when the shared space
+  // has content this user hasn't seen yet (lastSeenAt < latest non-
+  // self message). Suppressed during off-purpose freeze — there's
+  // nothing the user can act on while paused, so the indicator stays
+  // quiet.
+  //
+  // The relationshipId isn't known at layout-mount time, so we cache
+  // the most-recent-from-listRelationships id locally and refresh
+  // the seen-status against it on the usual pathname / AppState
+  // signals. Most users have at most one active pairing, so this
+  // works for the foreseeable future.
+  const [partnerHasUnread, setPartnerHasUnread] = useState(false);
+  const [activeRelIdForDot, setActiveRelIdForDot] = useState<string | null>(null);
+  useEffect(() => {
+    const unsub = subscribePartnerSharedSeen((s) => {
+      // Suppress dot during cooldown — nothing actionable.
+      const inCooldown = !!s.frozenUntil && new Date(s.frozenUntil).getTime() > Date.now();
+      setPartnerHasUnread(s.hasUnread && !inCooldown);
+    });
+    return unsub;
+  }, []);
+  // Refresh the active relationship id periodically (cheap — listed
+  // by /api/relationships, which the Partner tab already polls).
+  // We do this here only often enough to keep the dot accurate
+  // when an invite gets accepted from a different device.
+  const resolveActiveRelId = React.useCallback(async () => {
+    try {
+      const list = await api.listRelationships();
+      const active = (Array.isArray(list) ? list : []).find(
+        (r: any) => r && r.status === 'active',
+      );
+      const id = active?.id || null;
+      setActiveRelIdForDot(id);
+      return id;
+    } catch {
+      return null;
+    }
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    resolveActiveRelId().then((id) => {
+      if (!cancelled) refreshPartnerSharedSeenStatus(id).catch(() => {});
+    });
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        resolveActiveRelId().then((id) =>
+          refreshPartnerSharedSeenStatus(id).catch(() => {}),
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+      try { sub.remove(); } catch {}
+    };
+  }, [resolveActiveRelId]);
+  useEffect(() => {
+    // On any tab nav, re-poll the shared-seen status against the
+    // currently-known active relId. Don't refetch the list every
+    // nav — only the seen-status check.
+    if (activeRelIdForDot) {
+      refreshPartnerSharedSeenStatus(activeRelIdForDot).catch(() => {});
+    }
+  }, [pathname, activeRelIdForDot]);
+
   // MAP-TAB LISTENING PULSE — separate from the discrete pulseMapTab()
   // flash above. This is an ambient, slow opacity oscillation
   // (0.85 → 1.0 → 0.85, ~2s cycle) that signals "your map is
@@ -151,6 +221,7 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
               ? pathname === '/' || pathname === '/index'
               : pathname === r.path || pathname.startsWith(r.path + '/');
           const isMap = r.name === 'map';
+          const isPartner = r.name === 'relationships';
           // Interpolate the map label color between its current state (active
           // amber or inactive faint cream) and a pure full amber during pulse.
           const mapColor = isMap
@@ -201,6 +272,17 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
                     top-right corner of the label so it reads as a
                     badge without crowding the typography. */}
                 {isMap && mapHasUnseen ? (
+                  <View style={styles.tabDot} pointerEvents="none" />
+                ) : null}
+                {/* PR 2 — Unseen-partner dot. Lights on the PARTNER tab
+                    when the shared space has new content this user
+                    hasn't seen yet (server compares lastSeenAt to the
+                    newest non-self shared_messages row). Cleared
+                    optimistically when the user opens the Partner tab
+                    (services/partnerSharedSeen.markPartnerSharedSeen).
+                    Suppressed during off-purpose cooldown — see the
+                    layout's effect block above. */}
+                {isPartner && partnerHasUnread ? (
                   <View style={styles.tabDot} pointerEvents="none" />
                 ) : null}
               </Animated.View>

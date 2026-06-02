@@ -59,6 +59,7 @@ import { SharedDialogueView } from '../../components/relationships/SharedDialogu
 import { RelationshipMap } from '../../components/relationships/RelationshipMap';
 import { ConsentDocument } from '../../components/relationships/ConsentDocument';
 import { RelationshipIntroCarousel } from '../../components/relationships/RelationshipIntroCarousel';
+import { markPartnerSharedSeen } from '../../services/partnerSharedSeen';
 
 // AsyncStorage key for the one-time informational carousel. Set on
 // first GET-STARTED tap; once present, the carousel never plays
@@ -812,6 +813,17 @@ function ActiveView({ rel }: { rel: Relationship }) {
   const listRef = useRef<FlatList<SubView>>(null);
 
   const view: SubView = SUB_VIEWS[index];
+
+  // PR 2 — when the user lands on the shared subview, mark the shared
+  // space as seen so the Partner-tab new-activity dot clears. Cheap
+  // POST + optimistic local broadcast (see services/partnerSharedSeen).
+  // Fires both on mount (if shared is the initial subview) AND on any
+  // subsequent swipe/tap into the shared view.
+  useEffect(() => {
+    if (view === 'shared') {
+      markPartnerSharedSeen(rel.id).catch(() => {});
+    }
+  }, [view, rel.id]);
 
   // Segment tap → programmatically page to the tapped view. Triggers
   // the same snap animation a swipe would, so the two input paths

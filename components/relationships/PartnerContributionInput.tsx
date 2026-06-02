@@ -121,6 +121,16 @@ export function PartnerContributionInput({
     const result = await api.contributeToSharedSpace(relationshipId, trimmed);
     setSending(false);
     if ('error' in result) {
+      // PR 2 — if the server returned a freeze (shared-space-frozen),
+      // refresh the partnerSharedSeen cache so the SharedDialogueView's
+      // banner appears in the same frame as the alert. The user's
+      // typed text is preserved so they don't lose it on the bounce.
+      if (result.error === 'shared-space-frozen') {
+        try {
+          const svc = await import('../../services/partnerSharedSeen');
+          svc.refreshPartnerSharedSeenStatus(relationshipId, true).catch(() => {});
+        } catch {}
+      }
       Alert.alert(
         "Couldn't share",
         result.message || result.error || 'Try again in a moment.',

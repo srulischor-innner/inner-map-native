@@ -1738,6 +1738,48 @@ export const api = {
     }
   },
 
+  /** POST /api/relationships/:id/shared/mark-seen. Stamps lastSeenAt
+   *  for the calling user in relationship_shared_seen. Called when
+   *  the user opens the shared tab. (PR 2 — new-activity dot.) */
+  async markSharedSeen(relationshipId: string): Promise<{ ok: boolean; lastSeenAt?: string }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/mark-seen`,
+        { label: 'shared-mark-seen', method: 'POST', headers },
+      );
+      if (!res.ok) return { ok: false };
+      return await res.json();
+    } catch (e) {
+      console.warn('[shared-mark-seen] threw:', (e as Error)?.message);
+      return { ok: false };
+    }
+  },
+
+  /** GET /api/relationships/:id/shared/unread-status. Returns whether
+   *  the shared space has new content the caller hasn't seen + the
+   *  current off-purpose-cooldown freeze state (if any). Polled by the
+   *  Partner-tab dot indicator + SharedDialogueView's frozen-state UI. */
+  async getSharedUnreadStatus(relationshipId: string): Promise<{
+    unread: boolean;
+    lastSeenAt: string | null;
+    latestAt: string | null;
+    frozenUntil: string | null;
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/relationships/${encodeURIComponent(relationshipId)}/shared/unread-status`,
+        { label: 'shared-unread-status', method: 'GET', headers },
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      console.warn('[shared-unread-status] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   /** GET /api/relationships/:id/map. Returns the two-triangle visual
    *  data: each partner's wound / fixer / skeptic / self-like content
    *  (each { text, confirmed }), plus the shared-wound state (active
