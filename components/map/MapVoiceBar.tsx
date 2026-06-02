@@ -44,6 +44,7 @@ import {
 
 import { colors, fonts, spacing, radii } from '../../constants/theme';
 import { api } from '../../services/api';
+import { CrisisResourcesCard } from '../safety/CrisisResourcesCard';
 
 type VoiceState = 'idle' | 'recording' | 'thinking' | 'speaking';
 type ModalKind = null | 'explainer' | 'selfInfo' | 'selfLikeInfo' | 'selfLikeDisabled';
@@ -146,6 +147,14 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   const [selfLikeEnabled, setSelfLikeEnabled] = useState(false);
   const [activeMic, setActiveMic] = useState<ActiveMic | null>(null);
   const [fallbackToast, setFallbackToast] = useState<FallbackToast>(null);
+  // PR (crisis layer) — when the server flags crisis_detected on a
+  // turn response, surface the tappable CrisisResourcesCard as a full-
+  // screen modal. The voice still plays (the AI's spoken crisis
+  // response was already TTS'd server-side), but the user needs the
+  // tap-to-call resources on screen too. The modal blocks the surface
+  // until the user dismisses it — they shouldn't be able to press the
+  // mic again on the same turn without seeing the resources.
+  const [crisisVisible, setCrisisVisible] = useState(false);
 
   // Recording infra — same expo-audio hook the chat tab voice-note
   // path uses. HIGH_QUALITY gives m4a on iOS / mp4 on Android, both
@@ -379,6 +388,25 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
         console.warn('[map-voice-bar] turn error:', result.error, result.message);
         setState('idle');
         setActiveMic(null);
+        return;
+      }
+
+      // PR (crisis layer) — server flagged this turn as crisis content.
+      // Behavior:
+      //   1. Play the spoken crisis response audio (the AI's voice
+      //      response was already shaped by the crisis prompt block).
+      //   2. Surface the tappable CrisisResourcesCard as a modal so
+      //      the user can call/text 988 immediately from the screen.
+      //   3. Suppress part-lighting — a crisis turn must NOT light up
+      //      a part on the map; that would frame the disclosure as
+      //      "a part." Server already sets detected_part=unknown on
+      //      crisis turns, but the modal blocks the visual anyway.
+      //   4. Skip the onDetectedPart callback entirely on crisis.
+      if (result.crisis_detected) {
+        console.log('[map-voice-bar] crisis_detected — surfacing resources card');
+        setCrisisVisible(true);
+        await playReplyAudio(result.audio_base64);
+        // Don't refreshBeliefStatus here — irrelevant on crisis turn.
         return;
       }
 
@@ -699,6 +727,19 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
 
   return (
     <>
+      {/* PR (crisis layer) — full-screen tappable crisis resources card,
+          surfaced when the server flags crisis_detected on a Map Voice
+          turn. The header copy is softened from the Settings variant
+          so a card appearing mid-session reads as care, not alarm.
+          The audio response (with the AI's spoken crisis acknowledgment)
+          plays concurrently. */}
+      <CrisisResourcesCard
+        asModal
+        visible={crisisVisible}
+        onClose={() => setCrisisVisible(false)}
+        header="We're going to pause here"
+        lede="What you shared matters. The AI here isn't the right one to be with you in this — please use one of the resources below."
+      />
       <View style={styles.bar} pointerEvents="box-none">
         <View style={styles.col}>
           <Text style={styles.glyph}>●</Text>

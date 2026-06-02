@@ -730,6 +730,14 @@ export const api = {
     part_id?: string;
     part_name?: string;
     fallback?: 'missing_belief' | 'no_part_detected';
+    // PR (crisis layer): server sets crisis_detected=true on any
+    // turn where the AI surfaces 988 / hotline / safety-resource
+    // content, OR where a pre-LLM transcript scan caught explicit
+    // crisis phrases. The native client renders the tappable
+    // CrisisResourcesSection inline when this flag fires (you can't
+    // tap a voice — the resources need to appear on screen).
+    crisis_detected?: boolean;
+    crisis_tier?: 1 | 2 | null;
     audio_base64: string;
     audio_mime: string;
   } | { error: string; message?: string } | null> {
