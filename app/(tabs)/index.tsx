@@ -50,7 +50,8 @@ import { activatePartOnMap, ActivatablePart } from '../../utils/mapActivation';
 import { subscribeRateLimitNotice } from '../../utils/rateLimitNotice';
 import { consumeSelfMode } from '../../utils/selfMode';
 import { consumePendingChatMessage } from '../../utils/pendingChatMessage';
-import { MigrationModal, shouldShowMigrationModal } from '../../components/auth/MigrationModal';
+import { MigrationModal, shouldShowMigrationModal, shouldShowGraceNudge } from '../../components/auth/MigrationModal';
+import { markGraceNudgeShown } from '../../services/onboarding';
 import {
   startStream as startTTSStream, appendStreamText as appendTTSStream,
   finishStream as finishTTSStream, cancelStream as cancelTTSStream,
@@ -345,11 +346,30 @@ export default function ChatScreen() {
   // probe is fire-and-forget — a transport failure leaves the modal
   // closed so we don't trap an offline user behind it.
   const [migrationVisible, setMigrationVisible] = useState(false);
+  // Phase 2c — when the prompt is the gentle grace-window reminder (vs the
+  // Build-10 migration prompt) we force the modal soft so it never escalates
+  // or traps a user who already chose anonymous.
+  const [nudgeForceSoft, setNudgeForceSoft] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    shouldShowMigrationModal()
-      .then((show) => { if (!cancelled && show) setMigrationVisible(true); })
-      .catch(() => { /* probe failure → no modal */ });
+    (async () => {
+      try {
+        // First: the Build-10 migration prompt (unresolved sign-in choice).
+        if (await shouldShowMigrationModal()) {
+          if (!cancelled) { setNudgeForceSoft(false); setMigrationVisible(true); }
+          return;
+        }
+        // Else: the gentle grace-window nudge for already-anonymous users.
+        if (await shouldShowGraceNudge()) {
+          if (!cancelled) {
+            setNudgeForceSoft(true);
+            setMigrationVisible(true);
+            // Stamp the throttle the moment we decide to show it.
+            await markGraceNudgeShown();
+          }
+        }
+      } catch { /* probe failure → no modal */ }
+    })();
     return () => { cancelled = true; };
   }, []);
   // Wired to the "View my starter map" button on the completion bubble.
@@ -1275,6 +1295,7 @@ export default function ChatScreen() {
           above decides whether to make it visible. */}
       <MigrationModal
         visible={migrationVisible}
+        forceSoft={nudgeForceSoft}
         onResolved={() => setMigrationVisible(false)}
       />
       {/* Tiny ambient attention indicator pinned to the top-right of the

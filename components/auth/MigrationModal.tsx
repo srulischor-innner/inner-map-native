@@ -40,6 +40,7 @@ const SOFT_LIMIT_DAYS = 7;
 export function MigrationModal({
   visible,
   onResolved,
+  forceSoft = false,
 }: {
   visible: boolean;
   /** Fires when the user resolves the choice — either by signing in
@@ -48,11 +49,18 @@ export function MigrationModal({
    *  this fires; the choice is sticky for the session via the
    *  signInChoiceMade flag. */
   onResolved: (linked: boolean) => void;
+  /** Phase 2c — when true, the modal NEVER escalates to the aggressive
+   *  variant: it stays gentle + dismissible no matter the dismiss count.
+   *  Used by the grace-window provider-link nudge, which re-surfaces for
+   *  users who already chose anonymous. We respect that choice — the
+   *  reminder is a courtesy, never a trap. */
+  forceSoft?: boolean;
 }) {
   const [aggressive, setAggressive] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
+    if (forceSoft) { setAggressive(false); return; }
     let cancelled = false;
     (async () => {
       const { dismissCount, firstSeenAt } = await getMigrationDismissState();
@@ -64,7 +72,7 @@ export function MigrationModal({
       setAggressive(isAggressive);
     })();
     return () => { cancelled = true; };
-  }, [visible]);
+  }, [visible, forceSoft]);
 
   const handleSuccess = useCallback(async (_result: AuthSignInResult) => {
     await markSignInChoiceMade();
@@ -185,7 +193,9 @@ const styles = StyleSheet.create({
 //     false on any transport / storage hiccup so the modal never
 //     traps a user who's offline.
 import { api } from '../../services/api';
-import { getOnboardingState } from '../../services/onboarding';
+import {
+  getOnboardingState, getGraceNudgeState,
+} from '../../services/onboarding';
 export async function shouldShowMigrationModal(): Promise<boolean> {
   try {
     const state = await getOnboardingState();
@@ -198,6 +208,37 @@ export async function shouldShowMigrationModal(): Promise<boolean> {
     return identities.length === 0;
   } catch (e) {
     console.warn('[migration-modal] shouldShow probe threw:', (e as Error)?.message);
+    return false;
+  }
+}
+
+// Phase 2c — gentle provider-link nudge for the OTHER anonymous cohort:
+// users who already made an explicit sign-in choice (opted anonymous) and
+// so are NOT caught by shouldShowMigrationModal. During the migration grace
+// window we re-surface a soft reminder so their data survives the eventual
+// cutover (after which a bare-UUID anonymous user can no longer bootstrap).
+// Throttled hard: at most once every GRACE_NUDGE_INTERVAL_DAYS, capped at
+// GRACE_NUDGE_MAX total, always dismissible (forceSoft on the modal). The
+// network anonymity probe runs LAST so a throttled session does zero work.
+const GRACE_NUDGE_INTERVAL_DAYS = 14;
+const GRACE_NUDGE_MAX = 4;
+export async function shouldShowGraceNudge(): Promise<boolean> {
+  try {
+    const state = await getOnboardingState();
+    // Unresolved users are handled by shouldShowMigrationModal — this path
+    // is exclusively for those who already chose (anonymous).
+    if (!state.signInChoiceMade) return false;
+    if (!state.hasSeenIntro) return false;
+    const { lastShownAt, shownCount } = await getGraceNudgeState();
+    if (shownCount >= GRACE_NUDGE_MAX) return false;
+    if (lastShownAt &&
+        (Date.now() - lastShownAt) < GRACE_NUDGE_INTERVAL_DAYS * 24 * 60 * 60 * 1000) {
+      return false;
+    }
+    const { identities } = await api.authListIdentities();
+    return identities.length === 0;
+  } catch (e) {
+    console.warn('[grace-nudge] shouldShow probe threw:', (e as Error)?.message);
     return false;
   }
 }

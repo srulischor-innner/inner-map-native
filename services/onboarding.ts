@@ -39,6 +39,14 @@ const KEYS = {
   // variant that requires an explicit "continue anonymously" confirm.
   migrationDismissCount: 'onboarding.migrationDismissCount',
   migrationFirstSeenAt:  'onboarding.migrationFirstSeenAt',
+  // Phase 2c (auth migration) — throttle for the gentle provider-link
+  // nudge shown to users who ALREADY made a sign-in choice (i.e. opted
+  // into anonymous) but are still unlinked. Distinct from the migration
+  // modal's bookkeeping: this one re-surfaces periodically during the
+  // grace window without ever escalating or trapping. lastShownAt is an
+  // epoch-ms timestamp; shownCount caps the total number of reminders.
+  graceNudgeLastShownAt: 'onboarding.graceNudgeLastShownAt',
+  graceNudgeShownCount:  'onboarding.graceNudgeShownCount',
 } as const;
 
 export type OnboardingState = {
@@ -163,6 +171,39 @@ export async function hasSeenPrivacyNotice(): Promise<boolean> {
   return getBool(KEYS.privacyNoticeSeen);
 }
 
+/** Phase 2c — read the grace-nudge throttle state. lastShownAt is null
+ *  until the first reminder is shown. shownCount is the total reminders
+ *  shown so far (caps the series so we never pester indefinitely). */
+export async function getGraceNudgeState(): Promise<{
+  lastShownAt: number | null;
+  shownCount: number;
+}> {
+  try {
+    const [t, c] = await Promise.all([
+      AsyncStorage.getItem(KEYS.graceNudgeLastShownAt),
+      AsyncStorage.getItem(KEYS.graceNudgeShownCount),
+    ]);
+    return {
+      lastShownAt: t ? Math.max(0, parseInt(t, 10) || 0) || null : null,
+      shownCount: c ? Math.max(0, parseInt(c, 10) || 0) : 0,
+    };
+  } catch { return { lastShownAt: null, shownCount: 0 }; }
+}
+
+/** Phase 2c — record that a grace nudge was just shown: stamp the time
+ *  and bump the count. Called by the chat-tab mount the moment it decides
+ *  to surface the reminder, so the throttle starts immediately. */
+export async function markGraceNudgeShown(): Promise<void> {
+  try {
+    const cur = await AsyncStorage.getItem(KEYS.graceNudgeShownCount);
+    const next = (cur ? Math.max(0, parseInt(cur, 10) || 0) : 0) + 1;
+    await Promise.all([
+      AsyncStorage.setItem(KEYS.graceNudgeShownCount, String(next)),
+      AsyncStorage.setItem(KEYS.graceNudgeLastShownAt, String(Date.now())),
+    ]);
+  } catch { /* best-effort — a failed write just means we may re-nudge sooner */ }
+}
+
 /** Dev-only — wipes every flag so the next launch restarts onboarding.
  *  Includes the new privacy-notice flag so a dev-reset re-runs the
  *  full warm-onboarding experience, not a partial one. */
@@ -175,5 +216,7 @@ export async function resetOnboarding(): Promise<void> {
     AsyncStorage.removeItem(KEYS.signInChoiceMade),
     AsyncStorage.removeItem(KEYS.migrationDismissCount),
     AsyncStorage.removeItem(KEYS.migrationFirstSeenAt),
+    AsyncStorage.removeItem(KEYS.graceNudgeLastShownAt),
+    AsyncStorage.removeItem(KEYS.graceNudgeShownCount),
   ]);
 }

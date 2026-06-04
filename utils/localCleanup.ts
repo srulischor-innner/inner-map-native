@@ -27,12 +27,19 @@
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as encryptedStorage from './encryptedStorage';
+import { clearTokens } from '../services/user';
 
 // Keys we own and need to clear on account deletion. The match is
 // EXACT for these — any future addition to AsyncStorage should
 // be added here too if it represents per-account state.
 const ASYNC_KEYS_TO_CLEAR = [
   'innerMapUserId',
+  // Phase 2b auth tokens (dual-stored — also in SECURE_KEYS_TO_CLEAR). The
+  // server already revoked the refresh_tokens rows in the delete cascade;
+  // wiping the local copies stops the device retrying a dead refresh token.
+  'innerMapAccessToken',
+  'innerMapRefreshToken',
+  'innerMapRefreshExpiresAt',
   'hasSeenWelcome',
   'experienceLevel.v1',
   'faceIdEnabled',
@@ -56,6 +63,10 @@ const ASYNC_PREFIXES_TO_CLEAR = [
 
 const SECURE_KEYS_TO_CLEAR = [
   'innerMapUserId',
+  // Phase 2b auth tokens (canonical store).
+  'innerMapAccessToken',
+  'innerMapRefreshToken',
+  'innerMapRefreshExpiresAt',
   'mmkv.encryptionKey',
 ];
 
@@ -110,6 +121,17 @@ export async function wipeLocalAccountData(): Promise<{
     }
   } catch (e) {
     console.warn('[local-cleanup] prefix-match removeItem failed:', (e as Error)?.message);
+  }
+
+  // Reset the in-memory token cache too — the disk keys above are gone,
+  // but services/user.ts holds a module-level _tokenCache that would
+  // otherwise keep serving the deleted account's (now server-revoked)
+  // tokens until a JS reload. clearTokens() resets it (and idempotently
+  // re-deletes the keys).
+  try {
+    await clearTokens();
+  } catch (e) {
+    console.warn('[local-cleanup] clearTokens failed:', (e as Error)?.message);
   }
 
   console.log(`[local-cleanup] journal=${journalCleared} secureKeys=${secureKeysCleared}/${SECURE_KEYS_TO_CLEAR.length} asyncKeys=${asyncKeysCleared}`);

@@ -13,7 +13,7 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { getUserId } from './user';
+import { buildIdentityHeaders } from './user';
 
 const TOKEN_STORE_KEY = 'push.expoToken';
 
@@ -79,15 +79,16 @@ export async function registerForPushNotifications(): Promise<string | null> {
     );
     await AsyncStorage.setItem(TOKEN_STORE_KEY, token);
     // Best-effort server registration. If the endpoint isn't live yet, we still
-    // have the token stashed locally and can resync on next boot.
+    // have the token stashed locally and can resync on next boot. Headers go
+    // through the shared injector (X-User-Id + Bearer) — this is a raw fetch
+    // (not apiFetch), so it gets no 401-retry, which is fine for best-effort.
     try {
-      const userId = await getUserId();
       await fetch(
         ((Constants.expoConfig?.extra as any)?.apiBaseUrl ||
           'https://inner-map-production.up.railway.app') + '/api/push-token',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-User-Id': userId },
+          headers: await buildIdentityHeaders(),
           body: JSON.stringify({ token, platform: Platform.OS }),
         },
       );

@@ -12,7 +12,10 @@
 //   data: {"type":"error","error":"..."}
 
 import Constants from 'expo-constants';
-import { getUserId, peekUserId, setUserId } from './user';
+import {
+  peekUserId, setUserId,
+  buildIdentityHeaders, getTokens, getAccessToken, setTokens, clearTokens,
+} from './user';
 import { emitRateLimitNotice } from '../utils/rateLimitNotice';
 
 const BASE_URL: string =
@@ -100,12 +103,11 @@ export type RelationshipSession = {
   updatedAt: string;
 };
 
+// All auth headers now funnel through buildIdentityHeaders (services/user.ts)
+// — the single injection point for X-User-Id + Bearer. authHeaders is the
+// standard JSON-endpoint variant (mints a UUID on first launch).
 async function authHeaders(): Promise<Record<string, string>> {
-  const userId = await getUserId();
-  return {
-    'Content-Type': 'application/json',
-    'X-User-Id': userId,
-  };
+  return buildIdentityHeaders();
 }
 
 // ============================================================================
@@ -116,9 +118,83 @@ type ApiFetchOpts = RequestInit & {
   label: string;                // what the caller calls it, e.g. "chat" or "journey"
   timeoutMs?: number;           // defaults to 25s — chat streams can be long
   expectStream?: boolean;       // if true, don't try to read the body on error
+  _retried?: boolean;           // internal — set on the post-refresh replay so we never loop
 };
 
-async function apiFetch(path: string, opts: ApiFetchOpts): Promise<Response> {
+// ============================================================================
+// SINGLE-FLIGHT TOKEN REFRESH (Phase 2b).
+//
+// Refresh tokens are SINGLE-USE and rotated on every refresh. If two
+// requests both 401 at once and each fired its own refresh, the second
+// would present a refresh token the first already rotated → the server's
+// reuse-detection treats it as a stolen-token replay and chain-revokes the
+// whole family → the user is force-logged-out for no reason. So at most ONE
+// refresh may be in flight: concurrent callers AWAIT the same promise and
+// all replay with the single new access token it produces.
+// ============================================================================
+let _refreshInFlight: Promise<boolean> | null = null;
+
+async function performRefresh(): Promise<boolean> {
+  const { refreshToken } = await getTokens();
+  if (!refreshToken) {
+    console.warn('[api] refresh — no refresh token stored; cannot refresh');
+    return false;
+  }
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (!res.ok) {
+      // 401 reuse-detected / expired refresh token → it's dead. Drop the
+      // token pair so we fall back to the X-User-Id legacy path (which
+      // still resolves identity while REQUIRE_BEARER is off). We do NOT
+      // clear the user id — that would orphan the user from their data.
+      console.warn(`[api] refresh ✗ ${res.status} — clearing tokens, falling back to X-User-Id`);
+      await clearTokens();
+      return false;
+    }
+    const j: any = await res.json().catch(() => null);
+    if (!j || typeof j.accessToken !== 'string') {
+      console.warn('[api] refresh — malformed response; clearing tokens');
+      await clearTokens();
+      return false;
+    }
+    await setTokens({
+      accessToken: j.accessToken,
+      refreshToken: typeof j.refreshToken === 'string' ? j.refreshToken : undefined,
+      refreshExpiresAt: typeof j.refreshExpiresAt === 'string' ? j.refreshExpiresAt : undefined,
+    });
+    console.log('[api] refresh ✓ — new access token stored');
+    return true;
+  } catch (e) {
+    console.warn('[api] refresh threw:', (e as Error)?.message);
+    return false;
+  }
+}
+
+/** Returns the in-flight refresh promise if one is running, else starts a
+ *  new one. The `.finally` clears the slot so the NEXT 401 (after this
+ *  refresh settles) can start a fresh refresh. */
+function refreshAccessToken(): Promise<boolean> {
+  if (_refreshInFlight) return _refreshInFlight;
+  _refreshInFlight = performRefresh().finally(() => { _refreshInFlight = null; });
+  return _refreshInFlight;
+}
+
+// The auth endpoints themselves must never trigger a refresh-and-retry: a
+// 401 from /api/auth/* is a real credential failure, not a stale access
+// token. (Also avoids infinite recursion through /api/auth/refresh.)
+function isAuthEndpoint(path: string): boolean {
+  return path.startsWith('/api/auth/');
+}
+
+// ============================================================================
+// Instrumented fetch wrapper. Everything goes through here so we get a single
+// consistent log line per request — and transparent 401 → refresh → replay.
+// ============================================================================
+async function apiFetchOnce(path: string, opts: ApiFetchOpts): Promise<Response> {
   const url = `${BASE_URL}${path}`;
   const t0 = Date.now();
   const ctl = new AbortController();
@@ -152,6 +228,31 @@ async function apiFetch(path: string, opts: ApiFetchOpts): Promise<Response> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function apiFetch(path: string, opts: ApiFetchOpts): Promise<Response> {
+  let res = await apiFetchOnce(path, opts);
+  // Transparent single-flight refresh on 401. Only for non-auth endpoints,
+  // only once per request, only when we actually hold a refresh token to
+  // spend. When REQUIRE_BEARER is OFF (default) endpoints resolve via
+  // X-User-Id and rarely 401, so this path is mostly dormant until the
+  // server-side cutover — at which point an expired access token starts
+  // 401ing and this silently re-mints + replays so the user sees no blip.
+  if (res.status === 401 && !isAuthEndpoint(path) && !opts._retried) {
+    const { refreshToken } = await getTokens();
+    if (refreshToken) {
+      console.log(`[api] ${opts.label} ← 401; attempting single-flight token refresh`);
+      const ok = await refreshAccessToken();
+      if (ok) {
+        const fresh = await getAccessToken();
+        const merged: Record<string, string> = { ...((opts.headers as Record<string, string>) || {}) };
+        if (fresh) merged['Authorization'] = `Bearer ${fresh}`;
+        console.log(`[api] ${opts.label} → replaying with refreshed access token`);
+        res = await apiFetchOnce(path, { ...opts, headers: merged, _retried: true });
+      }
+    }
+  }
+  return res;
 }
 
 /** Payload the server sends when a per-user daily rate limit is
@@ -743,13 +844,12 @@ export const api = {
   } | { error: string; message?: string } | null> {
     const t0 = Date.now();
     try {
-      const userId = await getUserId();
       const fileRes = await fetch(uri);
       const blob = await fileRes.blob();
       console.log(`[map-voice] turn POST mode=${mode} uri=${uri.slice(-60)} mime=${mime} blobSize=${blob.size}B`);
       const up = await apiFetch(`/api/map-voice/turn?mode=${encodeURIComponent(mode)}`, {
         label: 'map-voice-turn', method: 'POST',
-        headers: { 'Content-Type': mime, 'X-User-Id': userId },
+        headers: await buildIdentityHeaders({ contentType: mime }),
         body: blob as any,
         // The whole STT → LLM → TTS chain runs server-side; give it
         // a generous budget. ElevenLabs alone can take ~1s. Self-like
@@ -1035,7 +1135,6 @@ export const api = {
   async transcribe(uri: string, mime: string): Promise<string | null> {
     const t0 = Date.now();
     try {
-      const userId = await getUserId();
       // Read the local recording file. RN's fetch supports file:// URIs on both
       // iOS and Android; the Blob API is also native. If this ever fails we'll
       // see the apiFetch log entry for /api/transcribe not firing.
@@ -1050,7 +1149,7 @@ export const api = {
       console.log(`[voice-note] transcribe — uri=${uri.slice(-60)} mime=${mime} blobSize=${blob.size}B`);
       const up = await apiFetch('/api/transcribe', {
         label: 'transcribe', method: 'POST',
-        headers: { 'Content-Type': mime, 'X-User-Id': userId },
+        headers: await buildIdentityHeaders({ contentType: mime }),
         body: blob as any,
         timeoutMs: 30000,
       });
@@ -1932,10 +2031,71 @@ export const api = {
   // if none exists yet. Used only by the sign-in path so we don't
   // burn a UUID on first launch just to throw it away seconds later.
   async _authSignInHeaders(): Promise<Record<string, string>> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const existing = await peekUserId();
-    if (existing) headers['X-User-Id'] = existing;
-    return headers;
+    // 'peek' → never mints a UUID just to throw it away. Routes through the
+    // same injector as everything else (it'll also attach a Bearer if one
+    // happens to exist — harmless on sign-in; the server resolves identity
+    // from the credential + any X-User-Id migration claim).
+    return buildIdentityHeaders({ mode: 'peek' });
+  },
+
+  /** POST /api/auth/bootstrap — Phase 2b bootstrap-on-launch.
+   *
+   *  An EXISTING anonymous user with a stored UUID but no token pair trades
+   *  the UUID for tokens exactly once. The server mints a token pair whose
+   *  `sub` is byte-identical to that UUID, so every existing row
+   *  (parts.id = `${userId}::…`, hashed departedUserId, etc.) still
+   *  resolves — no data is orphaned.
+   *
+   *  Idempotent + best-effort + SAFE BY DEFAULT:
+   *    - already have tokens   → no-op (returns 'have-tokens')
+   *    - no stored UUID yet    → no-op; brand-new install establishes its
+   *                              UUID through the normal getUserId flow and
+   *                              a later launch bootstraps it ('no-uuid')
+   *    - server/ network fails → no-op; the app keeps working on the
+   *                              X-User-Id dual-accept path ('failed')
+   *
+   *  Because it only ADDS tokens (never clears the UUID), running it on
+   *  every launch is harmless. Returns a short status string for logging. */
+  async bootstrapTokens(): Promise<'have-tokens' | 'bootstrapped' | 'no-uuid' | 'failed'> {
+    try {
+      const { accessToken, refreshToken } = await getTokens();
+      if (accessToken && refreshToken) return 'have-tokens';
+      const existing = await peekUserId();
+      if (!existing) {
+        console.log('[bootstrap] no stored UUID yet — deferring token bootstrap to a later launch');
+        return 'no-uuid';
+      }
+      console.log(`[bootstrap] existing anon UUID, no tokens — bootstrapping ${existing.slice(0, 8)}…`);
+      // peek-mode injector sends X-User-Id=existing (we hold no Bearer yet).
+      // Server bootstrap branch (b) issues a pair for that exact UUID while
+      // BOOTSTRAP_GRACE_OPEN is true (the default).
+      const res = await apiFetch('/api/auth/bootstrap', {
+        label: 'auth-bootstrap', method: 'POST',
+        headers: await buildIdentityHeaders({ mode: 'peek' }),
+        body: JSON.stringify({ deviceLabel: 'native' }),
+      });
+      if (!res.ok) {
+        // 401 = BOOTSTRAP_GRACE_OPEN closed (post-cutover) — the user must
+        // sign in with a provider. Until then this never fires (grace open).
+        console.warn(`[bootstrap] non-OK ${res.status} — staying on X-User-Id`);
+        return 'failed';
+      }
+      const j: any = await res.json().catch(() => null);
+      if (j && typeof j.accessToken === 'string' && typeof j.refreshToken === 'string') {
+        await setTokens({
+          accessToken: j.accessToken,
+          refreshToken: j.refreshToken,
+          refreshExpiresAt: typeof j.refreshExpiresAt === 'string' ? j.refreshExpiresAt : null,
+        });
+        console.log('[bootstrap] tokens stored — now on Bearer (+ X-User-Id during migration)');
+        return 'bootstrapped';
+      }
+      console.warn('[bootstrap] response missing tokens — staying on X-User-Id');
+      return 'failed';
+    } catch (e) {
+      console.warn('[bootstrap] threw — staying on X-User-Id:', (e as Error)?.message);
+      return 'failed';
+    }
   },
 
   /** POST /api/auth/sign-in. Verify a provider credential and resolve
@@ -2002,6 +2162,26 @@ export const api = {
       // actual identity-store of the resolved id.
       try { await setUserId(j.userId); } catch (e) {
         console.warn('[auth-sign-in:client] setUserId threw:', (e as Error)?.message);
+      }
+      // Phase 2b — capture the token pair sign-in issues. From here on
+      // requests carry a Bearer (alongside X-User-Id during the migration
+      // window). A missing token field is non-fatal: the build still
+      // works via X-User-Id. setUserId above already dropped any prior
+      // identity's tokens when the id changed, so setTokens writes the new
+      // identity's pair without risk of a stale carry-over.
+      if (typeof j.accessToken === 'string' && typeof j.refreshToken === 'string') {
+        try {
+          await setTokens({
+            accessToken: j.accessToken,
+            refreshToken: j.refreshToken,
+            refreshExpiresAt: typeof j.refreshExpiresAt === 'string' ? j.refreshExpiresAt : null,
+          });
+          console.log('[auth-sign-in:client] tokens captured');
+        } catch (e) {
+          console.warn('[auth-sign-in:client] setTokens threw:', (e as Error)?.message);
+        }
+      } else {
+        console.log('[auth-sign-in:client] no tokens in response (older server) — X-User-Id only');
       }
       return {
         userId: j.userId,

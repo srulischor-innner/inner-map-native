@@ -356,6 +356,17 @@ export default function RootLayout() {
     // app reaches the main tabs regardless.
     (async () => {
       try {
+        // Phase 2b — bootstrap-on-launch. Fire-and-forget so it never
+        // blocks routing. An existing anonymous user with a stored UUID but
+        // no tokens trades the UUID for a token pair (sub = same UUID, all
+        // data preserved). No-op once tokens exist, or on a brand-new
+        // install with no UUID yet, or on any failure (stays on X-User-Id
+        // dual-accept). Runs regardless of onboarding state — fully
+        // onboarded testers need to migrate to tokens too.
+        api.bootstrapTokens()
+          .then((r) => console.log('[boot] bootstrapTokens →', r))
+          .catch((e) => console.warn('[boot] bootstrapTokens threw:', (e as Error)?.message));
+
         console.log('[boot] step 1/3 — reading onboarding flags');
         // If AsyncStorage hangs, fall through at 3s. Fallback "everything
         // complete" is safer than spinning forever — per-screen flags

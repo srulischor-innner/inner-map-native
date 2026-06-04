@@ -176,7 +176,17 @@ export async function getUserId(): Promise<string> {
 export async function setUserId(id: string): Promise<string> {
   const trimmed = String(id || '').trim();
   if (!trimmed) throw new Error('setUserId: empty id');
-  console.warn(`[user] setUserId — overriding identity to ${trimmed.slice(0, 8)}…`);
+  const changed = _cached !== null && _cached !== trimmed;
+  console.warn(`[user] setUserId — overriding identity to ${trimmed.slice(0, 8)}… (changed=${changed})`);
+  // Tokens are bound to a specific sub (= user id). If the identity is
+  // actually CHANGING (cross-device restore to a different account, or the
+  // dev recovery override), the old identity's access/refresh tokens are
+  // invalid for the new one — drop them. The caller (e.g. authSignIn)
+  // writes the new identity's tokens via setTokens immediately after. When
+  // the id is UNCHANGED (the common migration case: server returns the same
+  // anonymous UUID) we leave tokens alone so a same-id re-sign-in doesn't
+  // needlessly churn a still-valid pair before setTokens overwrites it.
+  if (changed) await clearTokens();
   // Cache FIRST so any in-flight getUserId() picks up the override
   // immediately, even if the disk writes stall.
   _cached = trimmed;
@@ -228,8 +238,153 @@ export async function peekUserId(): Promise<string | null> {
 export async function clearUserId(): Promise<void> {
   console.warn('[user] clearUserId — wiping identity (sign-out)');
   _cached = null;
+  // Sign-out also drops the token pair — a different identity must not
+  // inherit the previous user's Bearer. (Phase 2b token store below.)
+  await clearTokens();
   await Promise.allSettled([
     withTimeout(SecureStore.deleteItemAsync(KEY), SECURE_WRITE_TIMEOUT_MS, 'SecureStore delete'),
     withTimeout(AsyncStorage.removeItem(KEY), ASYNC_TIMEOUT_MS, 'AsyncStorage delete'),
   ]);
+}
+
+// ===========================================================================
+// AUTH TOKENS (Phase 2b) — signed JWT access token + opaque refresh token.
+// ===========================================================================
+// Stored in the SAME dual-store (SecureStore primary, AsyncStorage backup)
+// as the user id, for the same cold-boot-resilience reasons. The access
+// token is short-lived (15 min) and re-minted by the single-flight refresh
+// in services/api.ts; the refresh token is long-lived (90 days), single-use,
+// and rotated on every refresh. refreshExpiresAt lets the client know when
+// the refresh token itself has expired (→ must re-bootstrap / sign in).
+//
+// IMPORTANT: during the migration window the client sends BOTH the Bearer
+// (when present) AND X-User-Id. The server dual-accepts (Bearer wins). So
+// a missing/expired token is NOT fatal while REQUIRE_BEARER is off — the
+// request still resolves via X-User-Id. Tokens "fail open" to the legacy
+// path until the server-side cutover flag is flipped.
+
+const ACCESS_TOKEN_KEY = 'innerMapAccessToken';
+const REFRESH_TOKEN_KEY = 'innerMapRefreshToken';
+const REFRESH_EXPIRES_KEY = 'innerMapRefreshExpiresAt';
+
+export type TokenPair = {
+  accessToken: string | null;
+  refreshToken: string | null;
+  refreshExpiresAt: string | null;
+};
+
+// Module-level token cache — same rationale as _cached for the user id:
+// avoid hammering SecureStore on every request, and keep a single source
+// of truth within a process. Set by readTokens(), setTokens(), clearTokens().
+let _tokenCache: TokenPair | null = null;
+
+async function readKey(key: string, label: string): Promise<string | null> {
+  const s = await withTimeout(SecureStore.getItemAsync(key), SECURE_READ_TIMEOUT_MS, `SecureStore read ${label}`);
+  if (s.ok && typeof s.value === 'string' && s.value) return s.value;
+  const a = await withTimeout(AsyncStorage.getItem(key), ASYNC_TIMEOUT_MS, `AsyncStorage read ${label}`);
+  if (a.ok && typeof a.value === 'string' && a.value) return a.value;
+  return null;
+}
+
+async function writeKey(key: string, value: string): Promise<void> {
+  await Promise.allSettled([
+    withTimeout(SecureStore.setItemAsync(key, value), SECURE_WRITE_TIMEOUT_MS, `SecureStore write ${key}`),
+    withTimeout(AsyncStorage.setItem(key, value), ASYNC_TIMEOUT_MS, `AsyncStorage write ${key}`),
+  ]);
+}
+
+async function deleteKey(key: string): Promise<void> {
+  await Promise.allSettled([
+    withTimeout(SecureStore.deleteItemAsync(key), SECURE_WRITE_TIMEOUT_MS, `SecureStore delete ${key}`),
+    withTimeout(AsyncStorage.removeItem(key), ASYNC_TIMEOUT_MS, `AsyncStorage delete ${key}`),
+  ]);
+}
+
+/** Read the stored token pair (cached). Returns nulls when no tokens are
+ *  stored yet (anonymous user who hasn't bootstrapped, or pre-token build). */
+export async function getTokens(): Promise<TokenPair> {
+  if (_tokenCache) return _tokenCache;
+  const [accessToken, refreshToken, refreshExpiresAt] = await Promise.all([
+    readKey(ACCESS_TOKEN_KEY, 'access'),
+    readKey(REFRESH_TOKEN_KEY, 'refresh'),
+    readKey(REFRESH_EXPIRES_KEY, 'refreshExp'),
+  ]);
+  _tokenCache = { accessToken, refreshToken, refreshExpiresAt };
+  return _tokenCache;
+}
+
+/** Convenience: just the access token (or null). Used by the Bearer header
+ *  injector + the single-flight refresh retry. */
+export async function getAccessToken(): Promise<string | null> {
+  return (await getTokens()).accessToken;
+}
+
+/** Persist a token pair from sign-in / bootstrap / refresh. Partial pairs
+ *  are tolerated — a refresh response may rotate only access+refresh while
+ *  the caller keeps the prior refreshExpiresAt. Any field left undefined is
+ *  preserved; pass null to explicitly clear a field. */
+export async function setTokens(pair: Partial<TokenPair>): Promise<void> {
+  const current = await getTokens();
+  const next: TokenPair = {
+    accessToken: pair.accessToken !== undefined ? pair.accessToken : current.accessToken,
+    refreshToken: pair.refreshToken !== undefined ? pair.refreshToken : current.refreshToken,
+    refreshExpiresAt: pair.refreshExpiresAt !== undefined ? pair.refreshExpiresAt : current.refreshExpiresAt,
+  };
+  // Cache FIRST so in-flight requests see the new token immediately even
+  // if the disk write stalls.
+  _tokenCache = next;
+  const ops: Promise<void>[] = [];
+  if (next.accessToken) ops.push(writeKey(ACCESS_TOKEN_KEY, next.accessToken)); else ops.push(deleteKey(ACCESS_TOKEN_KEY));
+  if (next.refreshToken) ops.push(writeKey(REFRESH_TOKEN_KEY, next.refreshToken)); else ops.push(deleteKey(REFRESH_TOKEN_KEY));
+  if (next.refreshExpiresAt) ops.push(writeKey(REFRESH_EXPIRES_KEY, next.refreshExpiresAt)); else ops.push(deleteKey(REFRESH_EXPIRES_KEY));
+  await Promise.allSettled(ops);
+  console.log(`[user] setTokens — access=${next.accessToken ? 'set' : 'cleared'} refresh=${next.refreshToken ? 'set' : 'cleared'}`);
+}
+
+/** Wipe all tokens (sign-out, refresh-token theft/expiry, account delete).
+ *  Leaves the user id intact — clearing tokens drops the user to the
+ *  X-User-Id legacy path (which still works while REQUIRE_BEARER is off),
+ *  it does NOT orphan their data. */
+export async function clearTokens(): Promise<void> {
+  _tokenCache = { accessToken: null, refreshToken: null, refreshExpiresAt: null };
+  await Promise.allSettled([
+    deleteKey(ACCESS_TOKEN_KEY),
+    deleteKey(REFRESH_TOKEN_KEY),
+    deleteKey(REFRESH_EXPIRES_KEY),
+  ]);
+}
+
+// ===========================================================================
+// ONE HEADER INJECTOR (Phase 2a) — every outbound request builds its auth
+// headers here. Centralizing means the Phase-2b Bearer addition + any future
+// header change happens in exactly ONE place, not 5 scattered sites.
+// ===========================================================================
+export type IdentityHeaderOpts = {
+  /** 'mint' (default) → getUserId (mints a UUID on genuine first launch).
+   *  'peek' → peekUserId (never mints) — the sign-in path uses this so we
+   *  don't burn a throwaway UUID before the server resolves the identity. */
+  mode?: 'mint' | 'peek';
+  /** Content-Type to set. Defaults to application/json; the binary upload
+   *  sites (map-voice turn, transcribe) pass the recording's mime. */
+  contentType?: string;
+};
+
+export async function buildIdentityHeaders(
+  opts: IdentityHeaderOpts = {},
+): Promise<Record<string, string>> {
+  const mode = opts.mode ?? 'mint';
+  const headers: Record<string, string> = {
+    'Content-Type': opts.contentType ?? 'application/json',
+  };
+  const userId = mode === 'peek' ? await peekUserId() : await getUserId();
+  // X-User-Id stays on EVERY request during the migration window — the
+  // server dual-accepts (Bearer wins) so un-flipped servers + the
+  // bootstrap/migration paths keep working. It's removed only after the
+  // server-side REQUIRE_BEARER cutover (which ignores it anyway).
+  if (userId) headers['X-User-Id'] = userId;
+  // Phase 2b — attach the Bearer access token when we have one. A missing
+  // token is non-fatal: the request resolves via X-User-Id (dual-accept).
+  const accessToken = (await getTokens()).accessToken;
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+  return headers;
 }
