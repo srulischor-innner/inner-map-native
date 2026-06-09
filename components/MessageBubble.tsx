@@ -71,10 +71,16 @@ export type ChatMsg = {
 };
 
 export function MessageBubble({
-  msg, onRetry, onViewStarterMap, onFlagKeyMoment, relationshipId, partnerName,
+  msg, onRetry, onViewStarterMap, onFlagKeyMoment, relationshipId, partnerName, isOpening,
 }: {
   msg: ChatMsg;
   onRetry?: (text: string) => void;
+  /** Presentation-only (home-screen redesign): when true, this assistant
+   *  bubble renders its text slightly larger with more line-height, giving
+   *  the opening greeting more presence as the screen's anchor. Default
+   *  false — every other bubble (and RelationshipChat) is unchanged. Does
+   *  not touch chat logic, markers, or data. */
+  isOpening?: boolean;
   /** Fires when the user taps "View my starter map" on a first-session
    *  completion bubble (msg.starterMapComplete=true). The chat tab
    *  wires this to a router.push('/map') so the moment lands on the
@@ -218,6 +224,7 @@ export function MessageBubble({
             streaming={!!msg.streaming}
             relationshipId={relationshipId}
             partnerName={partnerName ?? null}
+            isOpening={isOpening}
           />
         )}
         {!isUser && msg.detectedPart ? (
@@ -289,12 +296,13 @@ export function MessageBubble({
 //     positioned in document order.
 // ============================================================================
 function AssistantBubbleBody({
-  text, streaming, relationshipId, partnerName,
+  text, streaming, relationshipId, partnerName, isOpening,
 }: {
   text: string;
   streaming: boolean;
   relationshipId?: string;
   partnerName?: string | null;
+  isOpening?: boolean;
 }) {
   // Find every inline marker that has a renderable component:
   //   - ADDED_TO_MAP    → <MapPill name=... />
@@ -336,7 +344,7 @@ function AssistantBubbleBody({
 
   if (splices.length === 0) {
     return (
-      <Text style={styles.text}>
+      <Text style={[styles.text, isOpening && styles.openingText]}>
         {text}
         {streaming ? <StreamCaret /> : null}
       </Text>
@@ -755,6 +763,15 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 26,
     letterSpacing: 0.15,
+  },
+  // Home-screen redesign — opening greeting as the screen's anchor: a touch
+  // larger with more line-height + a little top room to breathe. Applied
+  // only to the opening assistant bubble (isOpening); all other bubbles use
+  // `text`. Presentation-only.
+  openingText: {
+    fontSize: 20,
+    lineHeight: 31,
+    marginTop: 6,
   },
   caret: { color: colors.amber, fontSize: 14 },
   // Retry pill for failed assistant messages — small inline affordance

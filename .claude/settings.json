@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(server.js)",
+      "Edit(prompts/**)",
+      "Edit(utils/**)",
+      "Edit(app/**)",
+      "Edit(components/**)",
+      "Edit(db.js)",
+      "Edit(*.ts)",
+      "Edit(*.tsx)",
+      "Edit(*.js)",
+      "Edit(*.json)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(npm install*)",
+      "Bash(npm run*)",
+      "Bash(npx tsc*)",
+      "Bash(mkdir*)",
+      "Bash(touch*)"
+    ],
+    "deny": [
+      "Edit(.env*)",
+      "Edit(.env.local)",
+      "Edit(.env.production)",
+      "Bash(rm -rf*)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)"
+    ]
+  }
+}

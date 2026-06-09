@@ -5,10 +5,14 @@
 // do with it, what we never do, third parties we use, your rights,
 // and how to contact us.
 //
-// The same text is mirrored at the public URL
-// https://inner-map-production.up.railway.app/privacy (served by the
-// Express app under /privacy) so the App Store / Play Store listings
-// have a public link that matches.
+// CONSOLIDATION (Option A): this screen is an explicitly NON-binding,
+// plain-language summary. The full, legally-binding Privacy Policy lives at
+// my-inner-map.com/privacy-policy.html (canonical, authored in the
+// inner-map-legal repo). A banner at the top and a repeated link at the
+// bottom make the live document the authoritative source; this screen exists
+// only so users get a quick, offline-readable overview. We no longer mirror
+// the full policy text here — that prevented the three-copy drift we kept
+// having to reconcile.
 
 import React from 'react';
 import {
@@ -19,6 +23,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import { colors, fonts, spacing } from '../constants/theme';
+import {
+  PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, openLegalDoc,
+} from '../utils/legalDocs';
 
 const CONTACT_EMAIL = 'privacy@my-inner-map.com';
 
@@ -43,13 +50,31 @@ export default function PrivacyScreen() {
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.h1}>Privacy Policy for Inner Map</Text>
-        <Text style={styles.updated}>Last updated: May 5, 2026</Text>
+        <Text style={styles.h1}>Privacy at a glance</Text>
+        <Text style={styles.updated}>Reflects the policy last updated: May 19, 2026</Text>
 
-        <Text style={styles.paragraph}>
-          Inner Map respects your privacy. This policy explains how we handle
-          your data.
-        </Text>
+        <View style={styles.banner}>
+          <Text style={styles.bannerTitle}>This is a summary.</Text>
+          <Text style={styles.bannerBody}>
+            The full Privacy Policy is the legally-binding version. This screen
+            is a plain-language overview to help you understand it quickly — it
+            doesn't replace the document itself.
+          </Text>
+          <Pressable
+            style={styles.docLinkBtn}
+            onPress={() => openLegalDoc(PRIVACY_POLICY_URL)}
+            accessibilityLabel="Read the full Privacy Policy"
+          >
+            <Text style={styles.docLinkText}>Read the full Privacy Policy ↗</Text>
+          </Pressable>
+          <Pressable
+            style={styles.docLinkBtn}
+            onPress={() => openLegalDoc(TERMS_OF_SERVICE_URL)}
+            accessibilityLabel="Read the full Terms of Service"
+          >
+            <Text style={styles.docLinkText}>Read the full Terms of Service ↗</Text>
+          </Pressable>
+        </View>
 
         <Text style={styles.h2}>What we collect</Text>
         <Bullet>Conversation content you share with the AI</Bullet>
@@ -76,17 +101,20 @@ export default function PrivacyScreen() {
         <Text style={styles.h2}>What we don't do</Text>
         <Bullet>We do not sell your data</Bullet>
         <Bullet>We do not share your data with advertisers</Bullet>
+        <Bullet>We do not train any Inner Map AI model on your conversations</Bullet>
         <Bullet>
-          We do not use your conversations to train external AI models without
-          your explicit consent
+          We do not provide your conversations to any third party for model
+          training
         </Bullet>
 
         <Text style={styles.h2}>Third parties we use</Text>
         <Bullet>OpenAI: for audio transcription and text-to-speech</Bullet>
         <Bullet>Anthropic: for AI conversation</Bullet>
         <Text style={styles.paragraph}>
-          Both have their own privacy policies that govern their handling of
-          data passed to them.
+          Our AI providers (Anthropic, OpenAI) process your messages to
+          generate responses and do not retain or train on them, per our API
+          agreements. Both also have their own privacy policies that govern
+          their handling of data passed to them.
         </Text>
 
         <Text style={styles.h2}>Your rights</Text>
@@ -101,6 +129,28 @@ export default function PrivacyScreen() {
           self-reflection companion. If you are in crisis, please contact 988
           (Suicide and Crisis Lifeline) or your local emergency services.
         </Text>
+
+        <View style={styles.endNote}>
+          <Text style={styles.endNoteText}>
+            This page is a summary. The Privacy Policy at my-inner-map.com is
+            the authoritative, legally-binding document — read it for the full
+            detail on data use, retention, your rights, and third parties.
+          </Text>
+          <Pressable
+            style={styles.docLinkBtn}
+            onPress={() => openLegalDoc(PRIVACY_POLICY_URL)}
+            accessibilityLabel="Read the full Privacy Policy"
+          >
+            <Text style={styles.docLinkText}>Read the full Privacy Policy ↗</Text>
+          </Pressable>
+          <Pressable
+            style={styles.docLinkBtn}
+            onPress={() => openLegalDoc(TERMS_OF_SERVICE_URL)}
+            accessibilityLabel="Read the full Terms of Service"
+          >
+            <Text style={styles.docLinkText}>Read the full Terms of Service ↗</Text>
+          </Pressable>
+        </View>
 
         <Text style={styles.contactLine}>
           Contact:{' '}
@@ -203,6 +253,56 @@ const styles = StyleSheet.create({
   contactLink: {
     color: colors.amber,
     textDecorationLine: 'underline',
+  },
+  banner: {
+    borderWidth: 1,
+    borderColor: 'rgba(230,180,122,0.45)',
+    backgroundColor: 'rgba(230,180,122,0.07)',
+    borderRadius: 14,
+    padding: spacing.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  bannerTitle: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 15,
+    letterSpacing: 0.3,
+    marginBottom: 6,
+  },
+  bannerBody: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    lineHeight: 21,
+    marginBottom: spacing.sm,
+  },
+  endNote: {
+    borderTopWidth: 0.5,
+    borderTopColor: colors.border,
+    marginTop: spacing.xl,
+    paddingTop: spacing.lg,
+  },
+  endNoteText: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: spacing.md,
+  },
+  docLinkBtn: {
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.4)',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  docLinkText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 14,
+    letterSpacing: 0.3,
   },
   updated: {
     color: colors.creamFaint,

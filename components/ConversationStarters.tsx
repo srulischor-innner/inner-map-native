@@ -46,12 +46,14 @@ export function ConversationStarters({
 const styles = StyleSheet.create({
   wrap: {
     flexDirection: 'column',
-    gap: 8,
-    // polish round 4: marginTop trimmed (spacing.sm → spacing.xs) so
-    // the starter pills sit closer to the AI opening message instead
-    // of a wide gap between them.
-    marginTop: spacing.xs,
-    marginBottom: spacing.xs,
+    // Redesign (June 2026): center the chips + drop them lower with more
+    // air, so the opening composition isn't top-heavy (greeting up top,
+    // chips beneath with breathing room). Shape stays rounded (distinct
+    // from the squared mode pills + the circular center ring).
+    alignItems: 'center',
+    gap: 10,
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
     paddingHorizontal: 0,
   },
   chip: {
@@ -63,7 +65,9 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     borderColor: 'rgba(230,180,122,0.4)',
     backgroundColor: 'rgba(230,180,122,0.08)',
-    alignSelf: 'flex-start',
+    // Centered (was flex-start) so each chip hugs its own text, centered
+    // in the column rather than left-aligned.
+    alignSelf: 'center',
   },
   // v1.1.0 typography (round 2): starter pills are conversational
   // content on a chat surface, not UI affordances — they sit

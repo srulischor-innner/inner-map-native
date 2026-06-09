@@ -20,6 +20,7 @@ import {
   // (commit on this PR). The manual kbHeight pattern replaces it on
   // both platforms — see the keyboardWill/DidShow useEffect.
   Platform,
+  Pressable,
   StyleSheet,
   Keyboard,
   Animated,
@@ -68,6 +69,8 @@ import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
 import { ConversationStarters } from '../../components/ConversationStarters';
 import { EndSessionButton } from '../../components/EndSessionButton';
+import { CrisisResourcesCard } from '../../components/safety/CrisisResourcesCard';
+import { WarmRadialBackground } from '../../components/WarmRadialBackground';
 
 // ms/word reveal cadence — matches the web app's `perWordMs: 45`.
 const PER_WORD_MS = 45;
@@ -207,6 +210,14 @@ export default function ChatScreen() {
   // are handled separately as a card inline in the conversation
   // flow (StreamCallbacks.onRateLimit path).
   const [speakNoticeText, setSpeakNoticeText] = useState<string | null>(null);
+  // Crisis enforcement (June 2026). When the server gates a turn
+  // (crisis_detected on the /api/chat response), exploration STOPS: the
+  // composer is blocked, the crisis resources surface, and the only action
+  // is "I understand" → api.acknowledgeCrisis() which clears the server
+  // gate and reopens the composer. Detection is unconditional server-side,
+  // so if crisis content reappears after acknowledging, the gate re-fires.
+  const [crisisGated, setCrisisGated] = useState(false);
+  const [crisisAcking, setCrisisAcking] = useState(false);
   useEffect(() => {
     let dismissTimer: ReturnType<typeof setTimeout> | null = null;
     const unsub = subscribeRateLimitNotice((notice) => {
@@ -1182,6 +1193,18 @@ export default function ChatScreen() {
               setSending(false);
               setTyping(false);
             },
+            // Crisis enforcement — the server gated this turn. The referral
+            // already rendered as the AI bubble via onDone; now lock the
+            // surface into the gated state (composer blocked + resources +
+            // acknowledge action below the dock).
+            onCrisis: () => {
+              console.log('[chat] crisis_detected — entering gated state');
+              streamDone = true;
+              setAttentionState('idle');
+              setSending(false);
+              setTyping(false);
+              setCrisisGated(true);
+            },
           },
         );
       } catch (e) {
@@ -1199,6 +1222,10 @@ export default function ChatScreen() {
   const handleSend = useCallback(
     async (text: string) => {
       if (sending || !text.trim()) return;
+      // Crisis gate — while gated, exploration is stopped. The composer is
+      // already disabled, but guard here too so no programmatic send path
+      // (conversation starters, retry) can slip a turn past the gate.
+      if (crisisGated) return;
       // Hard-interrupt any in-flight TTS playback from the prior turn.
       // Build-13 bug: if audio was still reading aloud the previous AI
       // response when the user sent again, the chain kept draining and
@@ -1228,8 +1255,21 @@ export default function ChatScreen() {
       setChatSessionActive(true);
       runAssistantTurn(turnMode);
     },
-    [sending, runAssistantTurn],
+    [sending, crisisGated, runAssistantTurn],
   );
+
+  // Acknowledge the crisis referral → clear the server gate + reopen the
+  // composer. If the server clear fails we still drop the local lock so the
+  // user is never trapped; the server re-gates on the next crisis input
+  // regardless (detection is unconditional).
+  const handleAcknowledgeCrisis = useCallback(async () => {
+    if (crisisAcking) return;
+    setCrisisAcking(true);
+    try { await api.acknowledgeCrisis(); }
+    catch (e) { console.warn('[chat] acknowledgeCrisis threw:', (e as Error)?.message); }
+    setCrisisAcking(false);
+    setCrisisGated(false);
+  }, [crisisAcking]);
 
   // Unmount cleanup: clear the chat-active pulse so a stranded "true"
   // doesn't leak past the chat tab's lifetime. Doesn't cancel an
@@ -1282,6 +1322,12 @@ export default function ChatScreen() {
         onRetry={handleRetry}
         onViewStarterMap={handleViewStarterMap}
         onFlagKeyMoment={handleFlagKeyMoment}
+        // Home-screen redesign: the opening greeting (the sole assistant
+        // bubble before any user turn) renders with more presence as the
+        // screen's anchor. Reverts to normal the moment the conversation
+        // grows. Presentation-only — derived from the existing thread, not
+        // new state.
+        isOpening={activeMessages.length === 1 && m.role === 'assistant'}
       />
     )),
     [activeMessages],
@@ -1289,6 +1335,11 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
+      {/* Home-screen redesign — subtle warm radial depth behind everything
+          (slightly warmer toward center, true black at the edges). Static,
+          pointerEvents none, sits behind all content. Replaces the flat
+          black background. */}
+      <WarmRadialBackground />
       {/* Build 11 — soft migration prompt for existing anonymous testers.
           Mounts as a Modal so it overlays the entire chat tab without
           affecting any layout below. The probe in the boot effect
@@ -1413,11 +1464,39 @@ export default function ChatScreen() {
             </View>
           </View>
         ) : null}
-        <ChatInput
-          disabled={sending}
-          onSend={handleSend}
-          onSendVoice={handleSendVoice}
-        />
+        {/* Crisis gate — replaces the composer while gated. The referral has
+            already rendered as the AI bubble above; this surfaces the
+            tappable resources + the only way forward: acknowledge, which
+            clears the server gate and reopens the composer. Exploration is
+            genuinely stopped (composer not rendered) — not just discouraged. */}
+        {crisisGated ? (
+          <ScrollView
+            style={styles.crisisGateWrap}
+            contentContainerStyle={styles.crisisGateContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <CrisisResourcesCard
+              header="LET'S PAUSE HERE"
+              lede="What you shared matters. This space isn't the right place to be with something this heavy — please reach out to one of these now."
+            />
+            <Pressable
+              onPress={handleAcknowledgeCrisis}
+              disabled={crisisAcking}
+              style={[styles.crisisAckBtn, crisisAcking && { opacity: 0.6 }]}
+              accessibilityLabel="I understand — continue"
+            >
+              <Text style={styles.crisisAckText}>
+                {crisisAcking ? 'One moment…' : 'I understand — continue'}
+              </Text>
+            </Pressable>
+          </ScrollView>
+        ) : (
+          <ChatInput
+            disabled={sending}
+            onSend={handleSend}
+            onSendVoice={handleSendVoice}
+          />
+        )}
         {/* End session: only appears once a real back-and-forth has happened.
             On commit, flush the transcript to /api/summary + /api/sessions so
             the reflection + title land in the Journal tab immediately. */}
@@ -1630,5 +1709,29 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     letterSpacing: 0.2,
     textAlign: 'center',
+  },
+  // Crisis gate — replaces the composer while gated.
+  crisisGateWrap: {
+    maxHeight: 380,
+    paddingHorizontal: spacing.md,
+  },
+  crisisGateContent: {
+    paddingBottom: spacing.md,
+  },
+  crisisAckBtn: {
+    marginTop: spacing.md,
+    alignSelf: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: spacing.xl,
+    borderRadius: 28,
+    backgroundColor: colors.amber,
+    minWidth: 240,
+    alignItems: 'center',
+  },
+  crisisAckText: {
+    color: colors.background,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 });

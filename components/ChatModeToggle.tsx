@@ -180,11 +180,15 @@ const styles = StyleSheet.create({
     // pill text baselines instead of drifting toward the bar's top.
     alignItems: 'center',
     justifyContent: 'space-between',
-    // Symmetric vertical padding so the pills sit on the optical
-    // center of the bar. polish round 4: trimmed 6 → 3 each side to
-    // pull chat content higher up the screen.
+    // Redesign (June 2026): the center ring is taller than the pills and
+    // its "present/forming/added" label is absolutely pinned just below the
+    // ring (see PartConfidenceIndicator). alignItems:'center' centers the
+    // pills to the RING's vertical midpoint (the ring box is the tallest
+    // in-flow child; the label doesn't add height). The extra paddingBottom
+    // reserves room so that absolute label lands inside the bar, above the
+    // divider — instead of overflowing into the conversation below.
     paddingTop: 3,
-    paddingBottom: 3,
+    paddingBottom: 16,
     paddingHorizontal: 20,
     borderBottomWidth: 0.5,
     borderBottomColor: 'rgba(230,180,122,0.1)',
@@ -206,7 +210,10 @@ const styles = StyleSheet.create({
     paddingLeft: 14,
     paddingRight: 8,
     paddingVertical: 6,
-    borderRadius: 18,
+    // Squared-but-rounded (redesign): intentional + distinct from the more
+    // rounded suggestion chips below (borderRadius ~20) and from the circular
+    // center ring. Three deliberate shape categories on the home row.
+    borderRadius: 9,
     borderWidth: 0.5,
   },
   pillActive: {

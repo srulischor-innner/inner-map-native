@@ -19,6 +19,13 @@ import { useRouter } from 'expo-router';
 import { colors, fonts, spacing } from '../constants/theme';
 import { AuthButtonRow, AuthSignInResult } from '../components/auth/AuthButtonRow';
 import { markSignInChoiceMade } from '../services/onboarding';
+// Canonical, legally-binding documents (hosted). The acceptance footer below
+// links to the full live versions via the shared helper.
+import {
+  PRIVACY_POLICY_URL as PRIVACY_URL,
+  TERMS_OF_SERVICE_URL as TERMS_URL,
+  openLegalDoc,
+} from '../utils/legalDocs';
 
 export default function SignInScreen() {
   const router = useRouter();
@@ -82,6 +89,18 @@ export default function SignInScreen() {
           >
             <Text style={styles.anonymousLinkText}>Use anonymously instead</Text>
           </Pressable>
+
+          <Text style={styles.acceptanceText}>
+            By continuing, you agree to our{' '}
+            <Text style={styles.acceptanceLink} onPress={() => openLegalDoc(TERMS_URL)}>
+              Terms of Service
+            </Text>
+            {' '}and{' '}
+            <Text style={styles.acceptanceLink} onPress={() => openLegalDoc(PRIVACY_URL)}>
+              Privacy Policy
+            </Text>
+            .
+          </Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -109,5 +128,14 @@ const styles = StyleSheet.create({
   anonymousLinkText: {
     color: colors.creamFaint, fontFamily: fonts.sans, fontSize: 13,
     letterSpacing: 0.3, textDecorationLine: 'underline', opacity: 0.7,
+  },
+  acceptanceText: {
+    color: colors.creamFaint, fontFamily: fonts.sans, fontSize: 12,
+    lineHeight: 18, textAlign: 'center', marginTop: spacing.lg,
+    paddingHorizontal: spacing.md,
+  },
+  acceptanceLink: {
+    color: colors.amber, fontFamily: fonts.sansBold,
+    textDecorationLine: 'underline',
   },
 });

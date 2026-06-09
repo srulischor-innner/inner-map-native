@@ -14,26 +14,58 @@
 // info modal explaining what the ring means. Modal style matches
 // the Process/Explore info modal in ChatModeToggle.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Modal } from 'react-native';
-import { Canvas, Path, Skia } from '@shopify/react-native-skia';
+import { Canvas, Path, Skia, BlurMask } from '@shopify/react-native-skia';
 import Animated, {
-  useSharedValue, withTiming, withSequence, withDelay,
+  useSharedValue, withTiming, withSequence, withRepeat,
   useAnimatedStyle, Easing, useDerivedValue,
 } from 'react-native-reanimated';
 
-const SIZE = 44;
-const STROKE = 3;
+// =============================================================================
+// TUNABLES — eyeball + dial in on a real device. (Redesign, June 2026.)
+// The ring is the home-screen's living centerpiece between Explore/Process.
+// It is ALWAYS softly lit and slowly breathing; detection only changes the
+// fill sweep, glow strength, and the word beneath. The state SOURCE
+// (part/confidence) is untouched — this is purely how those states render.
+// =============================================================================
+const SIZE = 44;                 // ring diameter
+const STROKE = 2.5;              // track + fill stroke
 const RADIUS = (SIZE - STROKE) / 2;
-// Track is faint by design — the ring should always be visible as a
-// quiet outline in Explore mode, even when nothing is detected. Fill
-// brightens up as confidence grows.
-const TRACK_COLOR = 'rgba(230,180,122,0.15)';
-const FILL_COLOR = 'rgba(230,180,122,0.9)';
-// Baseline opacity for the wrapper when no detection is active. We
-// never go fully invisible — the empty outline stays as a subtle hint
-// so the user knows the indicator exists and can tap it.
-const IDLE_OPACITY = 0.55;
+const GLOW_STROKE = 6;           // glowing-ring stroke (pre-blur) → soft halo
+const GLOW_BLUR = 7;             // halo softness
+const GLOW_PAD = 13;             // canvas breathing room around the ring for the bloom
+const BOX = SIZE + GLOW_PAD * 2; // Skia canvas square (ring centered inside)
+
+// Breathing pulse — subtle + CALM, never a fast blink (a blink reads as a
+// loading error). Opacity-only on the ring+glow layer (transform/opacity →
+// runs on the UI thread). Full inhale→exhale cycle ≈ BREATH_PERIOD_MS.
+const BREATH_MIN = 0.70;         // trough opacity
+const BREATH_MAX = 1.0;          // peak opacity
+const BREATH_PERIOD_MS = 2600;   // ~2.6s full cycle (spec: 2–3s)
+
+// Fill sweep per state. "Forming" is a MOOD signal ("something is actively
+// forming, almost there") — NOT a literal percentage.
+const FORMING_PROGRESS = 0.8;    // ~75–85%
+const COMPLETE_PROGRESS = 1.0;
+
+// Glow strength per state (Skia opacity on the blurred halo ring).
+const GLOW_IDLE = 0.18;
+const GLOW_FORMING = 0.36;
+const GLOW_COMPLETE = 0.55;
+
+// How long "added" holds before settling back to idle "present".
+const COMPLETE_HOLD_MS = 1400;
+
+const TRACK_COLOR = 'rgba(230,180,122,0.18)';
+const FILL_COLOR = 'rgba(230,180,122,0.95)';
+const GLOW_COLOR = 'rgba(230,180,122,1)';
+
+// OPTIONAL fallback — if the empty ring + pulse reads too stark on device,
+// flip to true for a faint ~15% base arc even at idle (a hint of fill).
+// Default: empty ring (per spec).
+const IDLE_BASE_FILL = false;
+const IDLE_BASE_PROGRESS = 0.15;
 
 export type PartConfidence = 'partial' | 'confirmed';
 
@@ -43,53 +75,77 @@ type Props = {
 };
 
 export function PartConfidenceIndicator({ part, confidence }: Props) {
-  // 0..1 progress around the ring. partial=0.5, confirmed=1.0.
-  const progress = useSharedValue(0);
-  // Pulse + fade on confirmed: scale 1→1.15→1, opacity 1→0.4 over a beat.
+  // 0..1 fill sweep. idle=0 (or IDLE_BASE_PROGRESS), forming≈0.8, complete=1.
+  const progress = useSharedValue(IDLE_BASE_FILL ? IDLE_BASE_PROGRESS : 0);
+  // Brief scale bump on complete (transform-only).
   const pulse = useSharedValue(1);
-  // Start at IDLE_OPACITY so the empty outline is always faintly
-  // visible the moment the component mounts in Explore mode.
-  const wrapOpacity = useSharedValue(IDLE_OPACITY);
+  // Always-on slow breath (opacity multiplier on ring + glow).
+  const breath = useSharedValue(BREATH_MAX);
+  // Glow halo strength (Skia opacity on the blurred ring).
+  const glow = useSharedValue(GLOW_IDLE);
   const [showInfo, setShowInfo] = useState(false);
+  // The word beneath the ring: present | forming | added. Derived from the
+  // existing state source; "added" briefly holds on complete, then settles
+  // back to "present". Presentation-only — no detection state added.
+  const [word, setWord] = useState<'present' | 'forming' | 'added'>('present');
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Kick off the always-on breathing once, on mount.
+  useEffect(() => {
+    breath.value = withRepeat(
+      withTiming(BREATH_MIN, {
+        duration: BREATH_PERIOD_MS / 2,
+        easing: Easing.inOut(Easing.ease),
+      }),
+      -1,   // forever
+      true, // reverse → smooth inhale/exhale
+    );
+  }, [breath]);
 
   useEffect(() => {
+    if (settleTimer.current) { clearTimeout(settleTimer.current); settleTimer.current = null; }
     if (!part || !confidence) {
-      // No active detection → return to the always-visible idle state.
-      // The empty track outline stays so the user can still see/tap it.
-      wrapOpacity.value = withTiming(IDLE_OPACITY, { duration: 350 });
-      progress.value = withTiming(0, { duration: 200 });
-      pulse.value = 1;
+      // Idle ("present") — empty ring (faint base arc only if the flag is on),
+      // soft glow, the word "present".
+      progress.value = withTiming(IDLE_BASE_FILL ? IDLE_BASE_PROGRESS : 0, { duration: 300 });
+      glow.value = withTiming(GLOW_IDLE, { duration: 400 });
+      pulse.value = withTiming(1, { duration: 200 });
+      setWord('present');
       return;
     }
-    // Active detection → bring to full opacity.
-    wrapOpacity.value = withTiming(1, { duration: 350 });
     if (confidence === 'partial') {
-      progress.value = withTiming(0.5, { duration: 600, easing: Easing.out(Easing.ease) });
-      pulse.value = 1;
-    } else {
-      // confirmed — fill, pulse, then fade BACK TO IDLE (not invisible).
-      progress.value = withTiming(1, { duration: 500, easing: Easing.out(Easing.ease) });
-      pulse.value = withSequence(
-        withTiming(1.15, { duration: 280, easing: Easing.out(Easing.ease) }),
-        withTiming(1.0, { duration: 320, easing: Easing.in(Easing.ease) }),
-      );
-      // After holding the confirmed state, ease back to the faint idle
-      // outline so the next detection has somewhere to grow from.
-      wrapOpacity.value = withDelay(
-        1500,
-        withTiming(IDLE_OPACITY, { duration: 600, easing: Easing.in(Easing.ease) }),
-      );
+      // Forming — ring fills to a mood-level ~80%, glow strengthens.
+      progress.value = withTiming(FORMING_PROGRESS, { duration: 650, easing: Easing.out(Easing.ease) });
+      glow.value = withTiming(GLOW_FORMING, { duration: 450 });
+      pulse.value = withTiming(1, { duration: 200 });
+      setWord('forming');
+      return;
     }
-  }, [part, confidence, progress, pulse, wrapOpacity]);
+    // Complete — fill to 100%, brighter glow, brief scale pulse, word "added".
+    // Then settle back to idle "present" after a short hold.
+    progress.value = withTiming(COMPLETE_PROGRESS, { duration: 450, easing: Easing.out(Easing.ease) });
+    glow.value = withTiming(GLOW_COMPLETE, { duration: 300 });
+    pulse.value = withSequence(
+      withTiming(1.12, { duration: 260, easing: Easing.out(Easing.ease) }),
+      withTiming(1.0, { duration: 300, easing: Easing.in(Easing.ease) }),
+    );
+    setWord('added');
+    settleTimer.current = setTimeout(() => {
+      progress.value = withTiming(IDLE_BASE_FILL ? IDLE_BASE_PROGRESS : 0, { duration: 600, easing: Easing.in(Easing.ease) });
+      glow.value = withTiming(GLOW_IDLE, { duration: 600 });
+      setWord('present');
+    }, COMPLETE_HOLD_MS);
+  }, [part, confidence, progress, pulse, glow]);
 
-  // Build a circular arc path whose sweep grows with `progress`. We
-  // build the path inside useDerivedValue so the path object is
-  // recomputed on the UI thread when progress changes.
+  // Clean up the settle timer on unmount.
+  useEffect(() => () => { if (settleTimer.current) clearTimeout(settleTimer.current); }, []);
+
+  // Arc path (fill sweep), recomputed on the UI thread as progress changes.
   const arcPath = useDerivedValue(() => {
     const p = Skia.Path.Make();
     if (progress.value <= 0) return p;
-    const cx = SIZE / 2;
-    const cy = SIZE / 2;
+    const cx = BOX / 2;
+    const cy = BOX / 2;
     const start = -90;                // top of circle
     const sweep = 360 * progress.value;
     p.addArc(
@@ -100,38 +156,45 @@ export function PartConfidenceIndicator({ part, confidence }: Props) {
     return p;
   }, [progress]);
 
-  const wrapStyle = useAnimatedStyle(() => ({
-    opacity: wrapOpacity.value,
+  // Ring + glow breathe together (opacity) and bump on complete (scale).
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: breath.value,
     transform: [{ scale: pulse.value }],
   }));
 
+  const fullCircle = React.useMemo(() => {
+    const p = Skia.Path.Make();
+    p.addCircle(BOX / 2, BOX / 2, RADIUS);
+    return p;
+  }, []);
+
   return (
     <>
-      {/* Tappable wrapper — always tappable, even when the ring itself is
-          invisible, so the user can ask "what is this circle?" at any
-          time. The Animated.View inside carries the visual fade/pulse;
-          pointerEvents on it is "none" so the press lands on the
-          Pressable. */}
-      <Pressable
-        onPress={() => setShowInfo(true)}
-        style={styles.tapTarget}
-        hitSlop={8}
-        accessibilityLabel="What does this confidence ring mean"
-      >
-        <Animated.View style={[styles.root, wrapStyle]} pointerEvents="none">
-          <Canvas style={{ width: SIZE, height: SIZE }}>
-            {/* Track — full ring at low alpha. */}
+      <View style={styles.root} pointerEvents="box-none">
+        {/* Ring + glow layer — breathes + pulses. pointerEvents none so the
+            press lands on the "i" affordance below, not the canvas. */}
+        <Animated.View style={[styles.canvasWrap, ringStyle]} pointerEvents="none">
+          <Canvas style={{ width: BOX, height: BOX }}>
+            {/* Glow halo — a blurred amber ring stroke behind the track.
+                Empty center (it's a stroke, not a fill); the blur blooms it
+                into a soft halo. Opacity tracks the state via `glow`. */}
             <Path
-              path={(() => {
-                const p = Skia.Path.Make();
-                p.addCircle(SIZE / 2, SIZE / 2, RADIUS);
-                return p;
-              })()}
+              path={fullCircle}
+              color={GLOW_COLOR}
+              style="stroke"
+              strokeWidth={GLOW_STROKE}
+              opacity={glow}
+            >
+              <BlurMask blur={GLOW_BLUR} style="normal" />
+            </Path>
+            {/* Track — faint full ring, always present. */}
+            <Path
+              path={fullCircle}
               color={TRACK_COLOR}
               style="stroke"
               strokeWidth={STROKE}
             />
-            {/* Fill — clockwise arc from top, animated. */}
+            {/* Fill — clockwise sweep from the top, animated. */}
             <Path
               path={arcPath}
               color={FILL_COLOR}
@@ -140,13 +203,29 @@ export function PartConfidenceIndicator({ part, confidence }: Props) {
               strokeCap="round"
             />
           </Canvas>
-          {part ? (
-            <Text style={styles.label} numberOfLines={1}>
-              {part}
-            </Text>
-          ) : null}
         </Animated.View>
-      </Pressable>
+
+        {/* Label + "i" affordance, pinned just below the ring. Absolute so
+            it does NOT add to the layout height — the parent toggle row
+            then centers the Explore/Process pills to the RING's midpoint
+            (the box), not to the taller ring+label stack. The "i" carries
+            a ~44px tap target via hitSlop and opens the existing
+            "Your map is building" explainer. */}
+        <View style={styles.labelRow}>
+          <Text style={styles.label} numberOfLines={1}>{word}</Text>
+          <Pressable
+            onPress={() => setShowInfo(true)}
+            hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+            accessibilityRole="button"
+            accessibilityLabel="What does this ring mean"
+            style={styles.infoBtn}
+          >
+            <View style={styles.infoCircle}>
+              <Text style={styles.infoChar}>i</Text>
+            </View>
+          </Pressable>
+        </View>
+      </View>
 
       <Modal
         visible={showInfo}
@@ -193,31 +272,59 @@ export function PartConfidenceIndicator({ part, confidence }: Props) {
 }
 
 const styles = StyleSheet.create({
-  tapTarget: {
-    // Explicit width pins the indicator to its natural square so a
-    // wide flex parent (e.g. the ChatModeToggle centerSlot) can't
-    // stretch the Canvas horizontally and render the circle as an
-    // oval. Height stays auto so the part-name label below the ring
-    // can extend the box vertically.
-    width: SIZE,
+  // The ring's box defines the layout size (BOX×BOX). The label+"i" below
+  // is absolutely positioned so it does NOT grow this box — that lets the
+  // parent toggle row center the pills to the ring's vertical midpoint.
+  root: {
+    width: BOX,
+    height: BOX,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  root: {
-    // Width pinned to the ring's natural diameter — height stays
-    // auto so the part-name label can sit beneath the ring with the
-    // gap below. Without a width pin, a wide flex parent stretched
-    // the Canvas into an oval.
-    width: SIZE,
+  canvasWrap: {
+    width: BOX,
+    height: BOX,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+  },
+  labelRow: {
+    position: 'absolute',
+    // Sits just below the ring box. The parent toggle bar reserves a bit of
+    // bottom padding so this lands inside the bar, above the divider.
+    top: BOX - 6,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
   },
   label: {
     fontFamily: 'CormorantGaramond_400Regular_Italic',
-    fontSize: 11,
-    color: 'rgba(230,180,122,0.6)',
-    letterSpacing: 0.3,
+    fontSize: 12,
+    color: 'rgba(230,180,122,0.7)',
+    letterSpacing: 0.4,
+  },
+  infoBtn: {
+    // Small visible glyph; the ~44px tap target comes from hitSlop above.
+    paddingHorizontal: 1,
+    paddingVertical: 1,
+  },
+  infoCircle: {
+    width: 15,
+    height: 15,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoChar: {
+    fontFamily: 'CormorantGaramond_400Regular_Italic',
+    fontSize: 10,
+    lineHeight: 12,
+    color: 'rgba(230,180,122,0.65)',
+    marginTop: -1,
   },
 
   backdrop: {

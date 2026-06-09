@@ -304,6 +304,12 @@ export type StreamCallbacks = {
    *  to reference. Absent on legacy paths where the server didn't
    *  surface ids — bubbles without an id hide the menu option. */
   onMessageIds?: (ids: { user: string; ai: string }) => void;
+  /** Crisis enforcement (June 2026) — fires when the server gated this turn
+   *  (crisis_detected on the /api/chat response). The `reply` already
+   *  arrived via onDelta/onDone as the referral text; this signals the chat
+   *  screen to enter the gated state (block the composer, surface crisis
+   *  resources, show the acknowledge action). tier is 1 (acute) or 2. */
+  onCrisis?: (info: { tier: number | null }) => void;
 };
 
 export const api = {
@@ -317,6 +323,23 @@ export const api = {
       return { ok: res.ok, ms: Date.now() - t0, status: res.status };
     } catch (e) {
       return { ok: false, ms: Date.now() - t0, error: (e as Error)?.message || 'unknown' };
+    }
+  },
+
+  /** POST /api/crisis/acknowledge — the user saw the crisis referral and
+   *  chooses to continue. Clears the server-side gate and reopens
+   *  exploration. Returns true on success. Detection is unaffected: the
+   *  next crisis input re-gates identically (no suppression). */
+  async acknowledgeCrisis(): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/crisis/acknowledge', {
+        label: 'crisis-acknowledge', method: 'POST', headers, body: JSON.stringify({}),
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[crisis-acknowledge] threw:', (e as Error)?.message);
+      return false;
     }
   },
 
@@ -436,12 +459,18 @@ export const api = {
           let fullText = '';
           let serverError: string | null = null;
           let rateLimitInfo: RateLimitInfo | null = null;
+          let crisisTier: number | null | undefined = undefined;
           for (const line of raw.split('\n')) {
             if (!line.startsWith('data: ')) continue;
             try {
               const evt = JSON.parse(line.slice(6));
               if (evt.type === 'delta' && typeof evt.text === 'string') fullText += evt.text;
               else if (evt.type === 'done') fullText = evt.text || fullText;
+              else if (evt.type === 'crisis') {
+                // Crisis enforcement SSE frame — server gated this turn.
+                fullText = evt.reply || fullText;
+                crisisTier = typeof evt.crisis_tier === 'number' ? evt.crisis_tier : null;
+              }
               else if (evt.type === 'error') {
                 // Surface rate-limit specifically — the server can emit a
                 // 200-with-SSE-error frame in rare paths, so guard both
@@ -468,12 +497,16 @@ export const api = {
           if (fullText) {
             cb.onDelta(fullText);
             cb.onDone(fullText);
+            if (crisisTier !== undefined) cb.onCrisis?.({ tier: crisisTier });
             return;
           }
           cb.onError('empty reply');
           return;
         }
         // Normal JSON path — server returns { reply: "...", savedBeliefs?: [...] }.
+        // Crisis enforcement: a gated turn returns { reply: <referral>,
+        // crisis_detected: true, crisis_tier }. The referral still renders
+        // as the AI bubble; onCrisis then puts the screen in the gated state.
         const j: any = await res.json().catch(() => null);
         const reply = (j && (j.reply || j.text)) || '';
         if (!reply) {
@@ -482,6 +515,10 @@ export const api = {
         }
         cb.onDelta(reply);
         cb.onDone(reply);
+        if (j?.crisis_detected) {
+          cb.onCrisis?.({ tier: typeof j.crisis_tier === 'number' ? j.crisis_tier : null });
+          return;
+        }
         // Phase 2 — surface savedBeliefs from the response after the
         // reply has landed. The server has already stripped the
         // [SAVE_BELIEF:...] markers from `reply`, so the cards are

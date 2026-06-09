@@ -33,9 +33,13 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
+import {
+  PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, openLegalDoc as openLegalDocLive,
+} from '../utils/legalDocs';
 import { getUserId, setUserId as overrideUserId, clearUserId } from '../services/user';
 import { resetOnboarding } from '../services/onboarding';
 import { AuthButtonRow } from '../components/auth/AuthButtonRow';
+import { CrisisResourcesCard } from '../components/safety/CrisisResourcesCard';
 import {
   useExperienceLevel, loadExperienceLevel, setExperienceLevel,
   LEVEL_LABELS, ExperienceLevel,
@@ -650,61 +654,13 @@ function useAccountExport() {
 // expo Linking (already imported as `Linking` for the existing email
 // row). tel: → dialer; sms: → Messages; https: → default browser.
 // =============================================================================
+// Now a thin wrapper around the SHARED CrisisResourcesCard (inline variant)
+// so the Settings resource list is single-sourced with the Map Voice / in-
+// chat surfacing. Previously this was a separate inline copy that had
+// DRIFTED — it omitted the Domestic Violence + Eating Disorders numbers the
+// shared card carries. One source of truth now.
 function CrisisResourcesSection() {
-  const open = useCallback((url: string) => {
-    Haptics.selectionAsync().catch(() => {});
-    Linking.openURL(url).catch((e) =>
-      console.warn('[settings/crisis] Linking.openURL threw:', (e as Error)?.message),
-    );
-  }, []);
-  return (
-    <View style={styles.crisisCard}>
-      <Text style={styles.crisisTitle}>IF YOU'RE IN CRISIS</Text>
-      <Text style={styles.crisisLede}>
-        You're not alone. These resources are available 24/7.
-      </Text>
-
-      <Text style={styles.crisisLocaleLabel}>UNITED STATES</Text>
-      <View style={styles.crisisRow}>
-        <Pressable onPress={() => open('tel:988')} style={styles.crisisBtn}>
-          <Text style={styles.crisisBtnText}>Call 988</Text>
-        </Pressable>
-        <Pressable onPress={() => open('sms:988')} style={styles.crisisBtn}>
-          <Text style={styles.crisisBtnText}>Text 988</Text>
-        </Pressable>
-      </View>
-      <Text style={styles.crisisSub}>Suicide &amp; Crisis Lifeline</Text>
-
-      <Text style={[styles.crisisLocaleLabel, styles.crisisLocaleLabelTop]}>UNITED KINGDOM</Text>
-      <View style={styles.crisisRow}>
-        <Pressable onPress={() => open('tel:116123')} style={styles.crisisBtn}>
-          <Text style={styles.crisisBtnText}>Call Samaritans</Text>
-        </Pressable>
-      </View>
-      <Text style={styles.crisisSub}>116 123</Text>
-
-      <Text style={[styles.crisisLocaleLabel, styles.crisisLocaleLabelTop]}>INTERNATIONAL</Text>
-      <View style={styles.crisisRow}>
-        <Pressable onPress={() => open('https://findahelpline.com')} style={styles.crisisBtn}>
-          <Text style={styles.crisisBtnText}>Find a helpline</Text>
-        </Pressable>
-      </View>
-      <Text style={styles.crisisSub}>findahelpline.com</Text>
-
-      <Text style={[styles.crisisLocaleLabel, styles.crisisLocaleLabelTop]}>EMERGENCY</Text>
-      <Text style={styles.crisisBody}>
-        For immediate danger, call your local emergency number (911 in the US,
-        999 in the UK, 112 in much of Europe).
-      </Text>
-
-      <Text style={[styles.crisisLocaleLabel, styles.crisisLocaleLabelTop]}>A NOTE</Text>
-      <Text style={styles.crisisBody}>
-        Inner Map is a reflection tool, not a crisis service. If you need real-time
-        help, please use the resources above. The AI here can't replace a human in
-        a moment like that.
-      </Text>
-    </View>
-  );
+  return <CrisisResourcesCard />;
 }
 
 // =============================================================================
@@ -839,8 +795,12 @@ function AccountSection() {
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>You're using Inner Map anonymously.</Text>
               <Text style={styles.rowSub}>
-                Your data only exists on this device. If you lose this phone,
-                your data will be lost.
+                No email, no account. Your conversations and your map are
+                stored on our servers, linked to this device. Your journal
+                stays on this phone only, encrypted. If you lose this phone,
+                you'll lose access to your saved conversations and map. Add an
+                email or sign-in any time to recover your account on a new
+                device.
               </Text>
             </View>
           </View>
@@ -929,10 +889,39 @@ function PrivacyDataSection() {
       console.warn('[settings/privacy] mailto threw:', (e as Error)?.message),
     );
   };
+  // Canonical, legally-binding documents (hosted). This section is a
+  // plain-language summary; these open the full live versions via the shared
+  // helper (utils/legalDocs) so the open mechanism is consistent app-wide.
+  const openLegalDoc = (url: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    openLegalDocLive(url);
+  };
 
   return (
     <>
       <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>PRIVACY &amp; DATA</Text>
+
+      <View style={styles.privacyBlock}>
+        <Text style={styles.privacyH3}>THE FULL DOCUMENTS</Text>
+        <Text style={styles.privacyBody}>
+          The notes below are a plain-language summary. The full,
+          legally-binding documents live on the web:
+        </Text>
+        <Pressable
+          onPress={() => openLegalDoc(PRIVACY_POLICY_URL)}
+          style={styles.privacyActionBtn}
+          accessibilityLabel="Read the full Privacy Policy"
+        >
+          <Text style={styles.privacyActionBtnText}>READ THE FULL PRIVACY POLICY ↗</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => openLegalDoc(TERMS_OF_SERVICE_URL)}
+          style={[styles.privacyActionBtn, { marginTop: spacing.sm }]}
+          accessibilityLabel="Read the full Terms of Service"
+        >
+          <Text style={styles.privacyActionBtnText}>READ THE FULL TERMS OF SERVICE ↗</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.privacyBlock}>
         <Text style={styles.privacyH3}>WHAT WE STORE</Text>

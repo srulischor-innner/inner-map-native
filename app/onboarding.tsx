@@ -33,6 +33,16 @@ import { WELCOME_SLIDES } from '../utils/guideContent';
 // re-runs the cinematic experience as static reference. Set the moment
 // the user taps B E G I N on the last onboarding slide.
 const HAS_SEEN_WELCOME_KEY = 'hasSeenWelcome';
+
+// Canonical, legally-binding documents (hosted). Onboarding's privacy/terms
+// copy is a plain-language summary; these links always reach the full live
+// versions via the shared helper. Acceptance ("I have read and agree…")
+// references these.
+import {
+  PRIVACY_POLICY_URL as PRIVACY_URL,
+  TERMS_OF_SERVICE_URL as TERMS_URL,
+  openLegalDoc,
+} from '../utils/legalDocs';
 import {
   ExperienceLevel, LEVEL_OPTIONS, setExperienceLevel,
 } from '../services/experienceLevel';
@@ -251,6 +261,17 @@ function PrivacyNoticeScreen({ onAcknowledge }: { onAcknowledge: () => void }) {
       <Text style={[styles.privacyNoticeBody, styles.privacyNoticeClose]}>
         Inner work is private work. We treat it that way.
       </Text>
+      <Text style={styles.privacyNoticeLinks}>
+        Read the full{' '}
+        <Text style={styles.privacyNoticeLink} onPress={() => openLegalDoc(PRIVACY_URL)}>
+          Privacy Policy
+        </Text>
+        {' '}and{' '}
+        <Text style={styles.privacyNoticeLink} onPress={() => openLegalDoc(TERMS_URL)}>
+          Terms of Service
+        </Text>
+        .
+      </Text>
       <Pressable
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -358,6 +379,18 @@ function TermsScreen({ onAccept }: { onAccept: () => void }) {
         or share it with third parties.
       </Text>
 
+      <Text style={styles.termsDocLinks}>
+        Read the full{' '}
+        <Text style={styles.termsDocLink} onPress={() => openLegalDoc(TERMS_URL)}>
+          Terms of Service
+        </Text>
+        {' '}and{' '}
+        <Text style={styles.termsDocLink} onPress={() => openLegalDoc(PRIVACY_URL)}>
+          Privacy Policy
+        </Text>
+        .
+      </Text>
+
       <Pressable
         onPress={() => { Haptics.selectionAsync().catch(() => {}); setChecked((c) => !c); }}
         style={styles.termsCheck}
@@ -365,7 +398,9 @@ function TermsScreen({ onAccept }: { onAccept: () => void }) {
         <View style={[styles.checkbox, checked && styles.checkboxOn]}>
           {checked ? <Text style={styles.checkmark}>✓</Text> : null}
         </View>
-        <Text style={styles.termsCheckLabel}>I have read and agree to the terms above.</Text>
+        <Text style={styles.termsCheckLabel}>
+          I have read and agree to the Terms of Service and Privacy Policy.
+        </Text>
       </Pressable>
 
       <Pressable
@@ -823,7 +858,9 @@ const styles = StyleSheet.create({
   termsBullet: { flexDirection: 'row', gap: 10, marginBottom: 8 },
   termsDot: { color: colors.amber, fontSize: 14 },
   termsBulletText: { flex: 1, color: colors.cream, fontSize: 14, lineHeight: 22 },
-  termsPrivacy: { color: colors.creamFaint, fontSize: 12, fontStyle: 'italic', marginTop: spacing.md, marginBottom: spacing.lg, lineHeight: 18 },
+  termsPrivacy: { color: colors.creamFaint, fontSize: 12, fontStyle: 'italic', marginTop: spacing.md, marginBottom: spacing.md, lineHeight: 18 },
+  termsDocLinks: { color: colors.cream, fontSize: 14, lineHeight: 22, marginBottom: spacing.lg },
+  termsDocLink: { color: colors.amber, fontFamily: fonts.sansBold, textDecorationLine: 'underline' },
   termsCheck: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: spacing.xl },
   checkbox: {
     width: 22, height: 22, borderRadius: 5,
@@ -1028,5 +1065,18 @@ const styles = StyleSheet.create({
     color: colors.amber,
     textAlign: 'center',
     marginTop: spacing.sm,
+  },
+  privacyNoticeLinks: {
+    color: colors.cream,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginTop: spacing.lg,
+  },
+  privacyNoticeLink: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    textDecorationLine: 'underline',
   },
 });
