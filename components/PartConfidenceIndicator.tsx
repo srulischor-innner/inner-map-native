@@ -1,14 +1,17 @@
-// Live part-confidence indicator for the Chat tab in EXPLORE mode.
+// Live part-confidence indicator for the Chat tab — BOTH modes.
 //
 // Visualizes MAP_UPDATE markers as they fire on the assistant stream:
 //   confidence: 'partial'   → ring fills to ~50%
 //   confidence: 'confirmed' → ring fills to 100%, briefly pulses,
-//                              fades, then resets to invisible
-//   part === null           → entire indicator is invisible
+//                              fades, then settles back to idle
+//   part === null           → idle: softly lit, slowly breathing
 //
 // Below the ring sits the current part name in Cormorant italic
-// amber. Process mode never shows this indicator at all — the
-// triangle attention indicator covers Process.
+// amber. The centerSlot in index.tsx time-shares this with the
+// AttentionIndicator triangle: triangle during generation
+// (thinking/streaming/detected), ring the rest of the time — in
+// Process AND Explore (Process previously never rendered the ring,
+// which made its background mapping invisible).
 //
 // Tapping the indicator (always — even when invisible) opens an
 // info modal explaining what the ring means. Modal style matches

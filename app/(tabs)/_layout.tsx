@@ -17,9 +17,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, fonts } from '../../constants/theme';
+import { PARTNER_ENABLED } from '../../constants/features';
 import { HamburgerMenu } from '../../components/HamburgerMenu';
 import { subscribeMapPulse } from '../../utils/mapPulse';
 import { subscribeMapSeen, refreshMapSeenStatus } from '../../services/mapSeen';
+import { refreshInboxStatus } from '../../services/messagesInbox';
 import { subscribeChatActivity } from '../../services/chatActivity';
 import {
   subscribePartnerSharedSeen,
@@ -35,7 +37,11 @@ const TAB_ROUTES: { name: string; label: string; path: string }[] = [
   // Relationships tab. Label rendered as PARTNER (7 chars) to fit the
   // 1/6 horizontal allotment alongside the longer existing tabs;
   // the screen header still calls itself "Relationships" in full.
-  { name: 'relationships', label: 'PARTNER', path: '/relationships' },
+  // Hidden behind PARTNER_ENABLED for v1 launch (constants/features.ts);
+  // the bar's flex layout spaces the remaining five tabs evenly.
+  ...(PARTNER_ENABLED
+    ? [{ name: 'relationships', label: 'PARTNER', path: '/relationships' }]
+    : []),
   { name: 'guide',         label: 'GUIDE',   path: '/guide' },
 ];
 
@@ -82,8 +88,14 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
   useEffect(() => {
     const unsub = subscribeMapSeen((s) => setMapHasUnseen(s.hasUnseen));
     refreshMapSeenStatus().catch(() => {});
+    // Inbox badge piggybacks the same foreground signal — the GET also
+    // runs the server's lazy abandoned-session sweep.
+    refreshInboxStatus().catch(() => {});
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') refreshMapSeenStatus().catch(() => {});
+      if (next === 'active') {
+        refreshMapSeenStatus().catch(() => {});
+        refreshInboxStatus().catch(() => {});
+      }
     });
     return () => {
       unsub();
@@ -110,9 +122,14 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
   // the seen-status against it on the usual pathname / AppState
   // signals. Most users have at most one active pairing, so this
   // works for the foreseeable future.
+  // All three effects below early-return when PARTNER_ENABLED is false —
+  // the tab isn't in the bar, so the dot can't render and the polling
+  // would be wasted network traffic. Hooks stay unconditional; only the
+  // bodies are gated.
   const [partnerHasUnread, setPartnerHasUnread] = useState(false);
   const [activeRelIdForDot, setActiveRelIdForDot] = useState<string | null>(null);
   useEffect(() => {
+    if (!PARTNER_ENABLED) return;
     const unsub = subscribePartnerSharedSeen((s) => {
       // Suppress dot during cooldown — nothing actionable.
       const inCooldown = !!s.frozenUntil && new Date(s.frozenUntil).getTime() > Date.now();
@@ -138,6 +155,7 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
     }
   }, []);
   useEffect(() => {
+    if (!PARTNER_ENABLED) return;
     let cancelled = false;
     resolveActiveRelId().then((id) => {
       if (!cancelled) refreshPartnerSharedSeenStatus(id).catch(() => {});
@@ -155,6 +173,7 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
     };
   }, [resolveActiveRelId]);
   useEffect(() => {
+    if (!PARTNER_ENABLED) return;
     // On any tab nav, re-poll the shared-seen status against the
     // currently-known active relId. Don't refetch the list every
     // nav — only the seen-status check.
@@ -311,7 +330,12 @@ export default function TabsLayout() {
         <Tabs.Screen name="map"           options={{ title: 'Map' }} />
         <Tabs.Screen name="journal"       options={{ title: 'Journal' }} />
         <Tabs.Screen name="journey"       options={{ title: 'Journey' }} />
-        <Tabs.Screen name="relationships" options={{ title: 'Relationships' }} />
+        {/* Partner hidden for v1 — the route file still exists (expo-router
+            auto-registers it) but with no tab button and no nav calls it is
+            unreachable. Gated alongside TAB_ROUTES above. */}
+        {PARTNER_ENABLED ? (
+          <Tabs.Screen name="relationships" options={{ title: 'Relationships' }} />
+        ) : null}
         <Tabs.Screen name="guide"         options={{ title: 'Guide' }} />
       </Tabs>
       <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} />

@@ -35,8 +35,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { useRouter, useFocusEffect } from 'expo-router';
 
 import { api, ChatMessage } from '../../services/api';
-import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete } from '../../utils/markers';
-import { setAttentionState, setNoticedPart, resetAttentionState } from '../../utils/attentionState';
+import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete, holdBackBoundary } from '../../utils/markers';
+import { setAttentionState, setNoticedPart, resetAttentionState, useAttentionState } from '../../utils/attentionState';
+import { refreshInboxStatus } from '../../services/messagesInbox';
+import { emitBeliefChanged } from '../../utils/beliefEvents';
 // (Polish round 7) clearMapVoiceHistory removed alongside the
 // services/mapVoiceHistory module — Map Voice is now turn-based
 // and carries no client-side conversation history. The two
@@ -72,8 +74,6 @@ import { EndSessionButton } from '../../components/EndSessionButton';
 import { CrisisResourcesCard } from '../../components/safety/CrisisResourcesCard';
 import { WarmRadialBackground } from '../../components/WarmRadialBackground';
 
-// ms/word reveal cadence — matches the web app's `perWordMs: 45`.
-const PER_WORD_MS = 45;
 // Default friendly greeting if the /api/returning-greeting endpoint doesn't respond.
 const FALLBACK_GREETING = "Something went quiet on my end — but I'm here. What's on your mind?";
 
@@ -199,6 +199,15 @@ export default function ChatScreen() {
   const [livePart, setLivePart] = useState<string | null>(null);
   const [liveConfidence, setLiveConfidence] = useState<PartConfidence | null>(null);
   const livePartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // One-shot guard for the end-of-session NOTICED gathering ask. Flips
+  // true on the first End Session tap (whether or not items existed) so
+  // the second tap always proceeds to the summary; reset on session reset.
+  const gatheredNoticedRef = useRef(false);
+  // Drives the centerSlot swap: AttentionIndicator triangle during
+  // generation, part-confidence ring otherwise — in both chat modes.
+  const attentionState = useAttentionState();
+  const isGenerating =
+    attentionState === 'thinking' || attentionState === 'streaming' || attentionState === 'detected';
   const [audioEnabled, setAudioEnabled] = useState(false);
   const audioEnabledRef = useRef(audioEnabled);
   useEffect(() => { audioEnabledRef.current = audioEnabled; }, [audioEnabled]);
@@ -797,7 +806,6 @@ export default function ChatScreen() {
 
       // Create the streaming assistant bubble up front; its `text` grows as deltas arrive.
       const streamId = uuidv4();
-      let revealed = 0;            // number of chars currently displayed
       let target = '';             // cleaned accumulated text (markers stripped)
       let rawAccum = '';           // raw accumulated text (includes possible CHAT_META)
       let detectedPart: string | null = null;
@@ -809,33 +817,27 @@ export default function ChatScreen() {
       // tab focus. Set to true on the first match so we don't re-
       // broadcast on every subsequent delta of the same turn.
       let addedToMapFired = false;
-      let revealTimer: any = null;
 
-      // Word-by-word reveal: advance `revealed` toward target.length, one word at a time.
-      function tickReveal() {
-        if (revealed >= target.length) { revealTimer = null; return; }
-        let i = revealed;
-        while (i < target.length && /\s/.test(target[i])) i++;
-        while (i < target.length && !/\s/.test(target[i])) i++;
-        revealed = i;
+      // Build 14 — real streaming replaced the 45ms/word reveal theater.
+      // The bubble renders each delta as it arrives; pacing comes from
+      // the model's actual token cadence now, not a client timer.
+      function updateBubble(text: string, streaming: boolean, extra?: Record<string, unknown>) {
         turnThread.setMessages((prev) =>
           prev.map((m) =>
             m.id === streamId
               ? {
                   ...m,
-                  text: target.slice(0, revealed),
-                  streaming: revealed < target.length || !streamDone,
+                  text,
+                  streaming,
                   detectedPart: detectedPart || m.detectedPart,
                   partLabel: partLabel ?? m.partLabel,
+                  ...(extra || {}),
                 }
               : m,
           ),
         );
         scrollToBottom();
-        revealTimer = setTimeout(tickReveal, PER_WORD_MS);
       }
-
-      let streamDone = false;
 
       // Push an empty streaming bubble into the list now.
       turnThread.setMessages((prev) => [
@@ -867,18 +869,21 @@ export default function ChatScreen() {
           {
             onDelta: (delta) => {
               rawAccum += delta;
-              // target drives the bubble's reveal animation + final
-              // displayed text. In __DEV__ stripMarkersForDisplay is a
-              // pass-through, so devs see markers stream into the
-              // bubble word-by-word for live debugging. In production
-              // builds it strips like stripMarkers — bubble stays
-              // clean. TTS, history saves, and any path that feeds
-              // back to the model continue to use stripMarkers below
-              // so a dev build never speaks a marker aloud or echoes
-              // one back to the AI on the next turn.
-              target = stripMarkersForDisplay(rawAccum);
+              // Build 14 — TAIL HOLD-BACK. Markers now arrive split across
+              // real deltas ("CHAT_ME" … "TA:{…}"), and the strip functions
+              // only remove COMPLETE markers — so the displayed text is cut
+              // at holdBackBoundary, which withholds any trailing text that
+              // could still grow into a marker (line-anchored prefixes +
+              // the bracketed [ADDED_TO_MAP form) until it's confirmed
+              // marker (stripped/pill) or confirmed prose (released).
+              // In __DEV__ the boundary is skipped along with the strip
+              // (stripMarkersForDisplay pass-through) so devs see raw
+              // markers stream in for live debugging.
+              target = stripMarkersForDisplay(
+                __DEV__ ? rawAccum : rawAccum.slice(0, holdBackBoundary(rawAccum)),
+              );
               if (typing) setTyping(false);
-              if (!revealTimer) revealTimer = setTimeout(tickReveal, PER_WORD_MS);
+              updateBubble(target, true);
               // First delta means the AI has actually started replying;
               // flip attention indicator from fast 'thinking' pulse to
               // bright steady 'streaming' breath. setAttentionState is
@@ -980,18 +985,25 @@ export default function ChatScreen() {
               // chunk on sentence boundaries (≥80 chars per chunk) and
               // queue audio so playback begins shortly after the first
               // sentence finishes streaming, instead of after the full
-              // reply lands. ALWAYS pass through stripMarkers, never
-              // the dev-display pass-through — the model would
-              // otherwise speak "MAP_UPDATE colon brace…" out loud.
-              if (streamingTTSStarted) appendTTSStream(stripMarkers(rawAccum));
+              // reply lands. ALWAYS pass through stripMarkers AND the
+              // hold-back boundary (even in dev) — a partial trailing
+              // marker would otherwise be spoken aloud as "MAP_UPDATE
+              // colon brace…" before its closing bytes arrive.
+              if (streamingTTSStarted) {
+                appendTTSStream(stripMarkers(rawAccum.slice(0, holdBackBoundary(rawAccum))));
+              }
             },
             onDone: (full) => {
+              // `full` is the server's canonical final text (the done
+              // frame's cleaned reply — or, on a crisis/crisis_replace
+              // frame, the deterministic referral, which REPLACES any
+              // partial model text already shown). No hold-back here:
+              // the text is complete, so every marker is whole and the
+              // strip functions produce output identical to the old
+              // buffered path.
               rawAccum = full || rawAccum;
-              // Same split as onDelta: target = display, cleanText =
-              // canonical stripped value used for history + saves.
               target = stripMarkersForDisplay(rawAccum);
               const cleanText = stripMarkers(rawAccum);
-              streamDone = true;
               // Diagnostic — confirms whether the AI actually emitted any
               // map / part markers in this turn. If you see "no markers"
               // here while the chat text says a part was detected, the
@@ -1020,32 +1032,9 @@ export default function ChatScreen() {
               // session-ending signal — only meaningful once the full
               // message has landed.
               const starterMapDone = hasStarterMapComplete(rawAccum);
-              if (!revealTimer) {
-                // Flush synchronously — no pending reveal loop running.
-                turnThread.setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === streamId
-                      ? {
-                          ...m,
-                          text: target, streaming: false,
-                          detectedPart: detectedPart || m.detectedPart,
-                          partLabel: partLabel ?? m.partLabel,
-                          ...(starterMapDone ? { starterMapComplete: true } : {}),
-                        }
-                      : m,
-                  ),
-                );
-              } else if (starterMapDone) {
-                // tickReveal is still walking forward. Attach the flag
-                // now so MessageBubble can render the CTA as soon as the
-                // reveal completes; the next setMessages inside tickReveal
-                // preserves it.
-                turnThread.setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === streamId ? { ...m, starterMapComplete: true } : m,
-                  ),
-                );
-              }
+              // Final flush — full text, streaming off. Replaces any
+              // partial display (including held-back tails) atomically.
+              updateBubble(target, false, starterMapDone ? { starterMapComplete: true } : undefined);
               if (starterMapDone) {
                 // Banner disappears the moment we know the starter map
                 // is complete. The server has already written
@@ -1129,6 +1118,11 @@ export default function ChatScreen() {
                 ]);
               }
               scrollToBottom();
+              // Push the change to belief-dependent surfaces — the Map
+              // tab's Self-like mic stays mounted across tab switches,
+              // so without this its locked state goes stale until an
+              // app restart (its belief check only ran on mount).
+              emitBeliefChanged();
             },
             onRateLimit: (info) => {
               // Daily chat cap. Replace the streaming bubble with a
@@ -1136,7 +1130,6 @@ export default function ChatScreen() {
               // message. No retry pill — retrying within the window
               // would just hit the same 429.
               console.log('[chat] rate-limited:', info.message);
-              streamDone = true;
               setAttentionState('idle');
               turnThread.setMessages((prev) =>
                 prev.map((m) =>
@@ -1161,7 +1154,6 @@ export default function ChatScreen() {
             },
             onError: (err) => {
               console.warn('[chat] stream error:', err);
-              streamDone = true;
               setAttentionState('idle');
               turnThread.setMessages((prev) =>
                 prev.map((m) =>
@@ -1199,7 +1191,6 @@ export default function ChatScreen() {
             // acknowledge action below the dock).
             onCrisis: () => {
               console.log('[chat] crisis_detected — entering gated state');
-              streamDone = true;
               setAttentionState('idle');
               setSending(false);
               setTyping(false);
@@ -1386,11 +1377,19 @@ export default function ChatScreen() {
       <ChatModeToggle
         mode={chatMode}
         onChange={setChatMode}
+        // Both modes share the centerSlot now (previously the ring was
+        // Explore-only and Process showed the triangle permanently —
+        // which made Process-mode mapping invisible). The split is
+        // TEMPORAL, not modal: the AttentionIndicator triangle owns the
+        // slot during generation ('thinking' / 'streaming' / 'detected'),
+        // and the part-confidence ring owns it the rest of the time, in
+        // BOTH modes. The ring's MAP_UPDATE-driven live state was already
+        // wired mode-agnostically; it just never rendered in Process.
         centerSlot={
-          chatMode === 'explore' ? (
-            <PartConfidenceIndicator part={livePart} confidence={liveConfidence} />
-          ) : (
+          isGenerating ? (
             <AttentionIndicator />
+          ) : (
+            <PartConfidenceIndicator part={livePart} confidence={liveConfidence} />
           )
         }
       />
@@ -1508,6 +1507,34 @@ export default function ChatScreen() {
           // user happens to be looking at an empty Explore thread.
           visible={(processHistoryRef.current.some((m) => m.role === 'user') || exploreHistoryRef.current.some((m) => m.role === 'user')) && !endingTransition}
           onEnd={async () => {
+            // === END-OF-SESSION NOTICED GATHERING (one-shot) ===
+            // Before any ending transition: if the AI parked NOTICED
+            // observations this session (parts it saw but never found a
+            // seam to offer), the server returns ONE consolidated warm
+            // closing ask and marks the items asked. We render it as a
+            // normal assistant bubble and DON'T end yet — the user
+            // answers in-chat (consents fire MAP_UPDATE through the
+            // regular send path), then taps End Session again, which now
+            // finds nothing pending and proceeds to the summary. The ref
+            // guarantees we never block ending twice, even on errors.
+            if (!gatheredNoticedRef.current) {
+              gatheredNoticedRef.current = true;
+              try {
+                const gMode = chatModeRef.current;
+                const gThread = threadFor(gMode);
+                const g = await api.gatherNoticed(
+                  sessionIdRef.current,
+                  gThread.historyRef.current.slice(),
+                  gMode,
+                );
+                if (g.needed && g.text && g.text.trim()) {
+                  const ask = g.text.trim();
+                  addAssistantMessage(ask);
+                  gThread.historyRef.current.push({ role: 'assistant', content: ask });
+                  return; // defer ending — next End tap proceeds to summary
+                }
+              } catch {}
+            }
             // === END SESSION TRANSITION ===
             // 1) Fade messages out (400ms — per latest spec, slightly faster
             //    than before so the summary screen lands quickly).
@@ -1577,6 +1604,10 @@ export default function ChatScreen() {
               setChatMode('explore');          // new session starts in active map-building mode
               setLivePart(null); setLiveConfidence(null);
               if (livePartTimerRef.current) { clearTimeout(livePartTimerRef.current); livePartTimerRef.current = null; }
+              gatheredNoticedRef.current = false; // re-arm gathering for the next session
+              // Inbox badge refresh — a just-ended session may have left
+              // parked NOTICED items that the next sweep will bundle.
+              refreshInboxStatus(true).catch(() => {});
               clearMapVoiceHistory();           // start map voice fresh next session
               // Reset BOTH threads — both arrays + both refs cleared.
               processHistoryRef.current = [];

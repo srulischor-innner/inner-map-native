@@ -28,6 +28,7 @@ import {
   LEVEL_OPTIONS, LEVEL_LABELS, ExperienceLevel,
 } from '../services/experienceLevel';
 import { resetOnboarding } from '../services/onboarding';
+import { subscribeInbox, refreshInboxStatus } from '../services/messagesInbox';
 import { PART_COLOR } from '../utils/markers';
 import { SessionDetailModal } from './session/SessionDetailModal';
 import { RelationshipSessionSummaryModal } from './relationships/RelationshipSessionSummaryModal';
@@ -58,10 +59,16 @@ export function HamburgerMenu({
   const [selectedRelMeta, setSelectedRelMeta] =
     useState<{ relationshipId: string; partnerName: string | null } | null>(null);
   const [relSummaryFailed, setRelSummaryFailed] = useState(false);
+  // Messages-inbox unread count — quiet badge on the Messages row.
+  // Subscribed for the menu's lifetime; refreshed each time the menu
+  // opens (the GET also runs the server's abandoned-session sweep).
+  const [inboxUnread, setInboxUnread] = useState(0);
+  useEffect(() => subscribeInbox((s) => setInboxUnread(s.unreadCount)), []);
   const router = useRouter();
 
   useEffect(() => {
     if (!visible) return;
+    refreshInboxStatus().catch(() => {});
     (async () => {
       const [intake, settings, sessionList] = await Promise.all([
         api.getIntake(),
@@ -232,6 +239,12 @@ export function HamburgerMenu({
           label="About Inner Map"
           onPress={() => go('/guide')}
           icon="book-outline"
+        />
+        <LinkRow
+          label="Messages"
+          onPress={() => go('/messages')}
+          icon="file-tray-outline"
+          badge={inboxUnread}
         />
         <LinkRow
           label="Send feedback"
@@ -447,13 +460,19 @@ function Row({ label, sub, right }: { label: string; sub?: string; right: React.
   );
 }
 function LinkRow({
-  label, onPress, icon,
-}: { label: string; onPress: () => void; icon: keyof typeof Ionicons.glyphMap }) {
+  label, onPress, icon, badge,
+}: { label: string; onPress: () => void; icon: keyof typeof Ionicons.glyphMap; badge?: number }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.linkRow, pressed && { opacity: 0.6 }]}>
       <Ionicons name={icon} size={18} color={colors.amber} style={{ marginRight: 12 }} />
       <Text style={styles.rowLabel}>{label}</Text>
       <View style={{ flex: 1 }} />
+      {/* Quiet unread badge — small static count, no animation. */}
+      {badge && badge > 0 ? (
+        <View style={styles.rowBadge}>
+          <Text style={styles.rowBadgeText}>{badge > 9 ? '9+' : badge}</Text>
+        </View>
+      ) : null}
       <Ionicons name="chevron-forward" size={16} color={colors.creamFaint} />
     </Pressable>
   );
@@ -533,6 +552,23 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderBottomColor: colors.border,
     borderBottomWidth: 0.5,
+  },
+  // Quiet unread-count badge on the Messages row — small static pill,
+  // no animation (the inbox is a low-urgency surface).
+  rowBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: colors.amber,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  rowBadgeText: {
+    color: colors.background,
+    fontSize: 11,
+    fontWeight: '700',
   },
 
   resetRow: {

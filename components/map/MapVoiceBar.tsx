@@ -44,6 +44,7 @@ import {
 
 import { colors, fonts, spacing, radii } from '../../constants/theme';
 import { api } from '../../services/api';
+import { subscribeBeliefChanged } from '../../utils/beliefEvents';
 import { CrisisResourcesCard } from '../safety/CrisisResourcesCard';
 
 type VoiceState = 'idle' | 'recording' | 'thinking' | 'speaking';
@@ -117,22 +118,31 @@ const EXPLAINER_SELF_LINE =
   '🎙 Self — "I see you. I\'m here." Pure presence. When you need to be witnessed and settle — without being managed.';
 const EXPLAINER_SELF_LIKE_LINE =
   '🎙 Self-like part — "I hear you, AND we\'re going a different way." Active leadership. When you need to hold a line with a part — make a different choice, redirect.';
+// "Part on your map" framing is deliberate in the three strings below:
+// the mic itself is ALSO labeled SELF-LIKE, so "tap Self-like" alone was
+// ambiguous (users tapped the mic again). Every pointer names the PART on
+// the map — the diamond on the triangle — so it can't be read as the mic.
 const EXPLAINER_FOOTNOTE =
-  "(Self-like part voice becomes available once you've established your own belief separate from your parts. Tap the Self-like part on the map to begin.)";
+  "(Self-like part voice becomes available once you've established your own belief separate from your parts. Tap the SELF-LIKE part on your map — the diamond on the triangle — to begin.)";
 
 const SELF_INFO_BODY =
   "Self — pure presence. Speak; the part you're blended with lights up; Self responds to that part. Use when you need to be witnessed and settle.";
 const SELF_LIKE_INFO_BODY =
   "Self-like part — active leadership. Speak; the part lights up; Self-like part responds from your established belief. Use when you need help holding a line with a part.";
 const SELF_LIKE_DISABLED_BODY =
-  "Self-like part — for active leadership when you need to hold a line with a part. Requires your own belief separate from the parts first. Tap the Self-like part on the map to begin.";
+  "To use this voice, first develop your Self-like belief — tap the SELF-LIKE part on your map (the diamond on the triangle, not this mic) to get started.";
 
 type Props = {
   sessionId: string;
   onDetectedPart?: (part: string, label?: string | null) => void;
+  /** Reports the mic bar's top edge in WINDOW coordinates whenever its
+   *  layout settles. The Map tab uses this to shrink the triangle
+   *  geometry so the bottom orbs never render under the mics — measured
+   *  per-device, no aspect-ratio special-casing. */
+  onBarTop?: (windowY: number) => void;
 };
 
-export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
+export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop }: Props) {
   const [state, setState] = useState<VoiceState>('idle');
   const [modal, setModal] = useState<ModalKind>(null);
   const [explainerSeen, setExplainerSeen] = useState<boolean | undefined>(undefined);
@@ -147,6 +157,8 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   const [selfLikeEnabled, setSelfLikeEnabled] = useState(false);
   const [activeMic, setActiveMic] = useState<ActiveMic | null>(null);
   const [fallbackToast, setFallbackToast] = useState<FallbackToast>(null);
+  // Ref on the bar View for the onBarTop window measurement.
+  const barRef = useRef<View>(null);
   // PR (crisis layer) — when the server flags crisis_detected on a
   // turn response, surface the tappable CrisisResourcesCard as a full-
   // screen modal. The voice still plays (the AI's spoken crisis
@@ -209,6 +221,15 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
   }, []);
 
   useEffect(() => { refreshBeliefStatus(); }, [refreshBeliefStatus]);
+
+  // PUSH refresh — the mount-time check above goes stale because the Map
+  // tab (and this bar) stays mounted across tab switches. Both belief
+  // mutation paths emit on utils/beliefEvents after the server write
+  // lands: the develop-belief chat flow (SAVE_BELIEF marker → chat tab's
+  // onSavedBeliefs) and the Self-like folder's belief editor (save AND
+  // clear — clear re-locks). Subscribing here means the mic unlocks the
+  // moment the belief exists, no app restart, no focus dance.
+  useEffect(() => subscribeBeliefChanged(() => { refreshBeliefStatus(); }), [refreshBeliefStatus]);
 
   // Unmount cleanup — make sure no recorder / player is left running.
   useEffect(() => () => {
@@ -740,7 +761,21 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
         header="We're going to pause here"
         lede="What you shared matters. The AI here isn't the right one to be with you in this — please use one of the resources below."
       />
-      <View style={styles.bar} pointerEvents="box-none">
+      <View
+        ref={barRef}
+        style={styles.bar}
+        pointerEvents="box-none"
+        onLayout={() => {
+          // Report the bar's top in window coords for the Map tab's
+          // mic-clearance geometry. rAF so the measurement runs after
+          // the frame settles (Android first-layout accuracy).
+          requestAnimationFrame(() => {
+            barRef.current?.measureInWindow((_x, y) => {
+              if (Number.isFinite(y)) onBarTop?.(y);
+            });
+          });
+        }}
+      >
         <View style={styles.col}>
           <Text style={styles.glyph}>●</Text>
           <View
@@ -873,7 +908,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart }: Props) {
           <View style={styles.toast}>
             <Text style={styles.toastText}>
               {fallbackToast.kind === 'missing_belief'
-                ? 'Tap the Self-like part on the map to establish your belief.'
+                ? 'To develop your belief, tap the SELF-LIKE part on your map — the diamond on the triangle.'
                 : fallbackToast.kind === 'no_part_detected'
                   ? 'Couldn’t identify a single part — try again with one specific situation.'
                   : fallbackToast.kind === 'hold-to-record'

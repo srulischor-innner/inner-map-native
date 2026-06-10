@@ -44,6 +44,7 @@ import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { playPreFetchedAudio } from '../../utils/ttsStream';
 import { armPendingChatMessage } from '../../utils/pendingChatMessage';
+import { emitBeliefChanged } from '../../utils/beliefEvents';
 import type { NodeKey } from './InnerMapCanvas';
 
 // Round 9 correction (single-belief model): the user has ONE belief
@@ -270,7 +271,7 @@ export function PartFolderModal({
               marker (it tolerates the row not existing yet by
               creating one when the user has at least begun mapping). */}
           {BELIEF_PART_TYPES.has(String(partKey)) ? (
-            <BeliefSection part={part} color={meta.color} />
+            <BeliefSection part={part} color={meta.color} onClose={onClose} />
           ) : null}
 
           {/* Per-part section rendering. Every section is ALWAYS visible —
@@ -348,7 +349,7 @@ function Section({
 // level on the next /api/parts pull. The local state is what the user
 // sees within this session of the folder being open.
 // ============================================================================
-function BeliefSection({ part, color }: { part: any; color: string }) {
+function BeliefSection({ part, color, onClose }: { part: any; color: string; onClose?: () => void }) {
   const router = useRouter();
   const [belief, setBelief] = useState<string>(typeof part?.belief === 'string' ? part.belief : '');
   const [editing, setEditing] = useState(false);
@@ -369,8 +370,13 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
     const text =
       "I want to work on my own belief — what I stand on that's separate from my parts.";
     armPendingChatMessage(text, 'explore');
+    // Close the folder BEFORE navigating — otherwise the sheet stays
+    // open behind the chat handoff and the map is in a confusing state
+    // when the user comes back. (Mirrors the Self folder's
+    // onEnterSelfMode path, which closes via map.tsx before pushing.)
+    onClose?.();
     router.push('/');
-  }, [router]);
+  }, [router, onClose]);
 
   const handleStartEdit = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
@@ -394,6 +400,10 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
         setBelief(result.belief);
         setEditing(false);
         setDraft('');
+        // Unlock the Self-like mic immediately — this save happens ON
+        // the Map tab (no focus change, no remount), so the mic's
+        // mount-time belief check would otherwise stay stale.
+        emitBeliefChanged();
       } else {
         Alert.alert(
           'Couldn’t save',
@@ -419,6 +429,8 @@ function BeliefSection({ part, color }: { part: any; color: string }) {
             const ok = await api.deletePartBelief(String(part.id));
             if (ok) {
               setBelief('');
+              // Re-LOCK the Self-like mic — same staleness in reverse.
+              emitBeliefChanged();
             } else {
               Alert.alert(
                 'Couldn’t clear',

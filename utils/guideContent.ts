@@ -2,6 +2,8 @@
 // Three sections: the map, healing, using it.
 // Editing copy here is the single source of truth for the mobile Guide tab.
 
+import { PARTNER_ENABLED } from '../constants/features';
+
 // Every slide has its own distinct visual. See GuideNodeVisual.tsx for the
 // Skia render for each kind. Names match the slide concepts so the intent is
 // obvious at the point of assignment.
@@ -443,15 +445,20 @@ export const USING_FEATURES: GuideFeature[] = [
       "Use the Self-like mic when you're ready to work on a part's belief. Tap a part on the map first to focus on it, then press the Self-like mic. This is more active — helping you find a different premise for the part to operate from. Once articulated, you can save it to that part's folder.",
     ],
   },
-  {
-    icon: 'partner',
-    title: 'Partner',
-    body: [
-      "Partner mode is for relationship work — between you and one person you've connected with through the app. Your private chat is yours; the AI helps you notice patterns about you and them.",
-      "First time in, the AI does a short intake — how long you've been together, how you met, what's working, what isn't. After that, sessions are open-ended.",
-      "Anything you choose to share with your partner goes through a consent step — nothing is forwarded automatically. Each session ends with a summary and a few practices, which you can keep private, send to your partner, or forward to anyone you want.",
-    ],
-  },
+  // Partner card hidden behind PARTNER_ENABLED for v1 launch — the Guide
+  // shouldn't describe a tab that isn't in the bar. Flips back on with
+  // the flag (constants/features.ts).
+  ...(PARTNER_ENABLED
+    ? [{
+        icon: 'partner' as const,
+        title: 'Partner',
+        body: [
+          "Partner mode is for relationship work — between you and one person you've connected with through the app. Your private chat is yours; the AI helps you notice patterns about you and them.",
+          "First time in, the AI does a short intake — how long you've been together, how you met, what's working, what isn't. After that, sessions are open-ended.",
+          "Anything you choose to share with your partner goes through a consent step — nothing is forwarded automatically. Each session ends with a summary and a few practices, which you can keep private, send to your partner, or forward to anyone you want.",
+        ],
+      }]
+    : []),
   {
     icon: 'journal',
     title: 'Journal',

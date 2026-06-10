@@ -22,6 +22,12 @@ const BASE_URL: string =
   (Constants.expoConfig?.extra as any)?.apiBaseUrl ||
   'https://inner-map-production.up.railway.app';
 
+// Build 14 — main-chat true streaming kill switch. `false` reverts every
+// chat turn to the legacy buffered JSON path (one-line change, no other
+// edits needed). Independent of this flag, any streaming-transport failure
+// before the first delta auto-falls back to the JSON path per request.
+const CHAT_STREAMING_ENABLED = true;
+
 // Re-exported so the root layout (and anything else) can log + reach
 // the same resolved URL the rest of the API client uses — without
 // duplicating the Constants.expoConfig lookup. The May 2026 Android
@@ -282,6 +288,26 @@ export type SavedBelief = {
   belief: string;
 };
 
+/** One row of the in-app messages inbox (GET /api/messages). kind
+ *  'pending_parts' payloads carry parked part-observations from an
+ *  abandoned session: { sessionId, sessionDate, items: [{ part, name,
+ *  context }] }. Other kinds render read-only. */
+export type InboxMessage = {
+  id: string;
+  kind: 'pending_parts' | 'system_note' | 'release_note';
+  payload: {
+    sessionId?: string;
+    sessionDate?: string | null;
+    items?: { part: string; name: string; context: string }[];
+    title?: string;
+    body?: string;
+  };
+  createdAt: string;
+  readAt: string | null;
+  actedAt: string | null;
+  expiresAt: string | null;
+};
+
 export type StreamCallbacks = {
   onDelta: (text: string) => void;
   onDone: (fullText: string) => void;
@@ -343,13 +369,21 @@ export const api = {
     }
   },
 
-  /** POST /api/chat — non-streaming on native. We used to ask the server for SSE
-   *  (`stream:true`) but React Native Hermes doesn't reliably expose
-   *  `response.body.getReader()` for POST responses, which made every chat turn
-   *  fail with "streaming not supported". Native now requests a plain JSON reply
-   *  and delivers it as a single delta; the screen's word-by-word reveal runs
-   *  client-side so the UX is identical. Keep the StreamCallbacks shape so callers
-   *  don't have to change. */
+  /** POST /api/chat — TRUE STREAMING on native (build 14).
+   *
+   *  History: native sent `stream:false` since April because Hermes'
+   *  `response.body.getReader()` was unreliable on POST. Guide-chat later
+   *  proved the XHR `onprogress` pattern streams reliably on every RN
+   *  version we support (see streamGuide below) — this ports that
+   *  transport to main chat, consuming the server's SSE branch frame by
+   *  frame. Deltas drive cb.onDelta as they arrive; the `done` /
+   *  `crisis` / `crisis_replace` / `error` frames terminate.
+   *
+   *  Fallback: CHAT_STREAMING_ENABLED below is the one-line kill switch;
+   *  independently, any transport failure BEFORE the first delta frame
+   *  auto-falls back to the legacy JSON path for that request (after a
+   *  delta has rendered we surface the error instead — re-sending would
+   *  bill a second generation). */
   async streamChat(
     params: {
       messages: ChatMessage[];
@@ -377,7 +411,6 @@ export const api = {
     },
     cb: StreamCallbacks,
   ): Promise<() => void> {
-    const controller = new AbortController();
     const headers = await authHeaders();
     const bodyObj: any = {
       messages: params.messages,
@@ -392,10 +425,16 @@ export const api = {
     if (params.chatMode) bodyObj.chatMode = params.chatMode;
     if (params.relationshipId) bodyObj.relationshipId = params.relationshipId;
     console.log(
-      `[chat] sending mode=${bodyObj.mode} msgCount=${params.messages.length} lastRole=${params.messages[params.messages.length - 1]?.role}`,
+      `[chat] sending mode=${bodyObj.mode} stream=${CHAT_STREAMING_ENABLED} msgCount=${params.messages.length} lastRole=${params.messages[params.messages.length - 1]?.role}`,
     );
 
-    (async () => {
+    // ===== Legacy JSON path — the pre-build-14 behavior, kept verbatim =====
+    // Used when CHAT_STREAMING_ENABLED is false (kill switch) or as the
+    // automatic per-request fallback when the streaming transport fails
+    // before the first delta.
+    const runJson = (): (() => void) => {
+      const controller = new AbortController();
+      (async () => {
       try {
         const res = await apiFetch('/api/chat', {
           label: 'chat', method: 'POST', headers, body: JSON.stringify(bodyObj),
@@ -544,9 +583,178 @@ export const api = {
         if ((e as any)?.name === 'AbortError') return;
         cb.onError((e as Error)?.message || 'network error');
       }
-    })();
+      })();
+      return () => controller.abort();
+    };
 
-    return () => controller.abort();
+    if (!CHAT_STREAMING_ENABLED) return runJson();
+
+    // ===== Streaming transport (build 14) — XHR onprogress over the =====
+    // ===== server's SSE branch, same pattern as streamGuide below.  =====
+    const xhr = new XMLHttpRequest();
+    let consumed = 0;          // chars of responseText already pumped
+    let buffer = '';           // unparsed partial SSE tail
+    let acc = '';              // accumulated delta text (done-frame fallback)
+    let finished = false;      // a terminal frame/error has been handled
+    let gotDelta = false;      // at least one delta rendered — no fallback after this
+    let fellBack = false;
+    let fallbackAbort: (() => void) | null = null;
+
+    const fallbackToJson = (reason: string) => {
+      if (finished || fellBack) return;
+      fellBack = true;
+      try { xhr.abort(); } catch {}
+      console.warn(`[chat] streaming transport failed pre-delta (${reason}) — falling back to JSON path`);
+      fallbackAbort = runJson();
+    };
+
+    const emitRateLimit = (evt: any) => {
+      const info: RateLimitInfo = {
+        endpoint: String(evt.endpoint || 'chat'),
+        message: String(evt.message || ''),
+        limit: typeof evt.limit === 'number' ? evt.limit : undefined,
+        windowHours: typeof evt.windowHours === 'number' ? evt.windowHours : undefined,
+      };
+      if (cb.onRateLimit) cb.onRateLimit(info);
+      else cb.onError(info.message || 'rate limited');
+    };
+
+    const handleFrame = (evt: any) => {
+      if (!evt || typeof evt !== 'object') return;
+      switch (evt.type) {
+        case 'delta':
+          if (typeof evt.text === 'string' && evt.text) {
+            gotDelta = true;
+            acc += evt.text;
+            cb.onDelta(evt.text);
+          }
+          break;
+        case 'done': {
+          finished = true;
+          const full = (typeof evt.text === 'string' && evt.text) ? evt.text : acc;
+          cb.onDone(full);
+          if (evt.messageIds && typeof evt.messageIds.user === 'string' && typeof evt.messageIds.ai === 'string') {
+            cb.onMessageIds?.({ user: evt.messageIds.user, ai: evt.messageIds.ai });
+          }
+          if (Array.isArray(evt.savedBeliefs) && evt.savedBeliefs.length > 0) {
+            const records: SavedBelief[] = evt.savedBeliefs
+              .filter((r: any) => r && typeof r.part_id === 'string' && typeof r.belief === 'string')
+              .map((r: any) => ({
+                part_id: String(r.part_id),
+                part_name: String(r.part_name || ''),
+                belief: String(r.belief || ''),
+              }));
+            if (records.length > 0) cb.onSavedBeliefs?.(records);
+          }
+          break;
+        }
+        // 'crisis' — pre-LLM input gate fired; the referral is the whole
+        // reply (no deltas preceded it). 'crisis_replace' — the stream-end
+        // model-output scan fired AFTER deltas were shown; the client must
+        // REPLACE the displayed text with the deterministic referral.
+        // Both flow through onDone (which overwrites the bubble from the
+        // full text) + onCrisis (which locks the surface) — the exact
+        // contract the JSON path established.
+        case 'crisis':
+        case 'crisis_replace': {
+          finished = true;
+          const referral = String(evt.reply || evt.referral || '') || acc;
+          cb.onDone(referral);
+          cb.onCrisis?.({ tier: typeof evt.crisis_tier === 'number' ? evt.crisis_tier : null });
+          break;
+        }
+        case 'error':
+          finished = true;
+          if (evt.error === 'rate-limit-exceeded') emitRateLimit(evt);
+          else cb.onError(String(evt.error || 'unknown error'));
+          break;
+      }
+    };
+
+    // Parse complete SSE events (separated by blank line) out of the
+    // cumulative responseText; ': ping' heartbeats carry no 'data: '
+    // line and fall through harmlessly.
+    const pump = () => {
+      if (finished || fellBack) return;
+      const txt = xhr.responseText || '';
+      if (txt.length <= consumed) return;
+      buffer += txt.slice(consumed);
+      consumed = txt.length;
+      let idx;
+      while (!finished && (idx = buffer.indexOf('\n\n')) !== -1) {
+        const rawEvt = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        for (const line of rawEvt.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          try { handleFrame(JSON.parse(line.slice(6))); } catch { /* partial/garbled frame — skip */ }
+          if (finished) break;
+        }
+      }
+    };
+
+    xhr.open('POST', `${BASE_URL}/api/chat`, true);
+    xhr.timeout = 120000;
+    Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, String(v)));
+
+    xhr.onprogress = () => {
+      try {
+        if (xhr.status && xhr.status >= 400) return; // onload owns error statuses
+        pump();
+      } catch (e) {
+        console.warn('[chat] stream onprogress threw:', (e as Error)?.message);
+      }
+    };
+    xhr.onload = () => {
+      if (finished || fellBack) return;
+      if (xhr.status === 429) {
+        // Rate limit — the server sets 429 then writes the SSE error
+        // frame. Parse it for the styled card; never fall back (the
+        // JSON path would just 429 again).
+        finished = true;
+        let handled = false;
+        for (const line of (xhr.responseText || '').split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.type === 'error' && evt.error === 'rate-limit-exceeded') { emitRateLimit(evt); handled = true; break; }
+          } catch {}
+        }
+        if (!handled) cb.onError('chat 429');
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        pump(); // flush bytes that landed after the last onprogress
+        if (!finished) {
+          if (acc) { finished = true; cb.onDone(acc); }      // stream ended without a terminal frame
+          else fallbackToJson('empty stream');
+        }
+      } else {
+        if (!gotDelta) fallbackToJson(`status ${xhr.status}`);
+        else { finished = true; cb.onError(`chat ${xhr.status}`); }
+      }
+    };
+    xhr.onerror = () => {
+      if (finished || fellBack) return;
+      if (!gotDelta) fallbackToJson('network error');
+      else { finished = true; cb.onError('network error'); }
+    };
+    xhr.ontimeout = () => {
+      if (finished || fellBack) return;
+      if (!gotDelta) fallbackToJson('timeout');
+      else { finished = true; cb.onError('timeout'); }
+    };
+
+    try {
+      xhr.send(JSON.stringify({ ...bodyObj, stream: true }));
+    } catch (e) {
+      fallbackToJson((e as Error)?.message || 'send failed');
+    }
+
+    return () => {
+      finished = true;
+      try { xhr.abort(); } catch {}
+      if (fallbackAbort) fallbackAbort();
+    };
   },
 
   /** GET /api/intake — returns the user's stored intake JSON (name, age, etc).
@@ -750,6 +958,89 @@ export const api = {
     } catch (e) {
       console.warn('[session-summary] fetch failed:', (e as Error)?.message);
       return null;
+    }
+  },
+
+  /** POST /api/sessions/:id/gather-noticed — end-of-session NOTICED
+   *  gathering. Called when the user taps End Session, before the
+   *  summary fetch. When the session holds parts the AI noticed but
+   *  never offered, the server marks them asked and returns ONE warm
+   *  consolidated closing ask; the client renders it as a normal
+   *  assistant bubble and defers the summary to the next End tap.
+   *  { needed: false } means nothing pending — proceed to summary. */
+  async gatherNoticed(
+    sessionId: string,
+    messages: ChatMessage[],
+    chatMode?: 'process' | 'explore',
+  ): Promise<{ needed: boolean; text?: string }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/gather-noticed`, {
+        label: 'gather-noticed',
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ messages, chatMode }),
+        timeoutMs: 30000,
+      });
+      if (!res.ok) return { needed: false };
+      const j: any = await res.json();
+      if (!j || typeof j !== 'object' || !j.needed) return { needed: false };
+      return { needed: true, text: String(j.text || '') };
+    } catch (e) {
+      console.warn('[gather-noticed] fetch failed:', (e as Error)?.message);
+      return { needed: false };
+    }
+  },
+
+  /** GET /api/messages — the in-app messages inbox (hamburger Messages
+   *  center). Server runs the lazy abandoned-session sweep before
+   *  listing, so the first call after a 6h-stale session materializes
+   *  its pending_parts message. Expired messages are filtered
+   *  server-side (auto-archive). */
+  async listMessages(): Promise<{ messages: InboxMessage[]; unreadCount: number }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/messages', {
+        label: 'messages-list', method: 'GET', headers, timeoutMs: 15000,
+      });
+      if (!res.ok) return { messages: [], unreadCount: 0 };
+      const j: any = await res.json();
+      const messages = Array.isArray(j?.messages) ? j.messages : [];
+      return { messages, unreadCount: Number(j?.unreadCount || 0) };
+    } catch (e) {
+      console.warn('[inbox] list failed:', (e as Error)?.message);
+      return { messages: [], unreadCount: 0 };
+    }
+  },
+
+  /** POST /api/messages/:id/read — stamp a message read (idempotent). */
+  async markMessageRead(messageId: string): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/messages/${encodeURIComponent(messageId)}/read`, {
+        label: 'messages-read', method: 'POST', headers, timeoutMs: 10000,
+      });
+      return res.ok;
+    } catch { return false; }
+  },
+
+  /** POST /api/messages/:id/act — consume a pending_parts message with
+   *  the subset of item indices the user checked. Each consented item
+   *  writes to the map through the normal parts path (confidence
+   *  'confirmed' — the tap IS the consent). */
+  async actOnMessage(messageId: string, itemIndices: number[]): Promise<{ ok: boolean; written: number }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/messages/${encodeURIComponent(messageId)}/act`, {
+        label: 'messages-act', method: 'POST', headers,
+        body: JSON.stringify({ itemIndices }), timeoutMs: 20000,
+      });
+      if (!res.ok) return { ok: false, written: 0 };
+      const j: any = await res.json();
+      return { ok: !!j?.ok, written: Number(j?.written || 0) };
+    } catch (e) {
+      console.warn('[inbox] act failed:', (e as Error)?.message);
+      return { ok: false, written: 0 };
     }
   },
 

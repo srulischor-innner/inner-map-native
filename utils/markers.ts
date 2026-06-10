@@ -186,8 +186,12 @@ export function stripMarkers(text: string): string {
     .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)(?:\s*\|\s*part:\s*[a-z-]+)?\s*\]?/gi, '')
     // Line-anchored bare forms emitted by the new MAPPING prompt at the
     // very end of replies — same set as the bracketed versions above.
-    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
+    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META|NOTICED):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
+    // NOTICED — parked part-observation marker (server persists onto the
+    // session's noticedParts; consumed by end-session gathering). Never
+    // user-visible in any mode — strip bracketed fallback shape too.
+    .replace(/\[NOTICED:\s*\{[\s\S]*?\}\s*\]/g, '')
     // ADDED_TO_MAP — user-facing pill marker. Stripped here for TTS +
     // history + saves. The display path preserves it (see
     // stripMarkersForDisplay) so the bubble renderer can splice in a
@@ -224,6 +228,79 @@ export function stripMarkers(text: string): string {
     .trim();
 }
 
+// ===== STREAMING TAIL HOLD-BACK ============================================
+// With true streaming (build 14+), marker text arrives split across deltas —
+// "CHAT_ME" in one chunk, "TA:{...}" in the next. The strip functions only
+// remove COMPLETE markers, so a partial trailing marker would flash in the
+// bubble (or get spoken by TTS) before its closing bytes arrive.
+// holdBackBoundary returns the index up to which the accumulated text is SAFE
+// to display/speak; the caller slices there and re-evaluates on every delta.
+// Two candidate hold points, earliest wins:
+//   (a) the last '[' that could still grow into a bracketed marker
+//       ([ADDED_TO_MAP: …], [SAVE_BELIEF:{…}], [STARTER_MAP_COMPLETE], …)
+//       and has no closing ']' yet, and
+//   (b) the final line, when it could still grow into a line-anchored
+//       marker (MAP_UPDATE:, CHAT_META:, NOTICED:, …) — either a pure
+//       uppercase run that prefixes a known token ("MAP_UPD") or a full
+//       "NAME:" already present with its payload still streaming.
+// Prose releases immediately: "[sic]" closes its bracket; "Maybe" stops
+// being a candidate the moment its lowercase 'a' arrives. Held text is only
+// ever transiently withheld — once complete, markers are stripped (or, for
+// ADDED_TO_MAP, rendered as a pill) by the normal display path.
+
+// Line-anchored marker tokens the server/prompts emit at end of reply.
+const LINE_MARKER_TOKENS = [
+  'MAP_UPDATE:', 'MAP_READY:', 'MAP_FILL:', 'MAP_SECONDARY:',
+  'CHAT_META:', 'SUMMARY_META:', 'SPECTRUM_UPDATE:', 'PART_UPDATE:',
+  'PART_SUMMARY_UPDATE:', 'ATTENTION_STATE:', 'NOTICED:', 'INTAKE_COMPLETE:',
+];
+// Names that appear in bracketed form ('[NAME…]'). STARTER_MAP_COMPLETE has
+// no colon; the prefix test below treats the name itself as the token.
+const BRACKET_MARKER_TOKENS = [
+  'ADDED_TO_MAP:', 'SHARE_SUGGEST:', 'SAVE_BELIEF:', 'KEY_MOMENT:',
+  'STARTER_MAP_COMPLETE', 'CHAT_META:', 'MAP_UPDATE:', 'MAP_READY:',
+  'MAP_FILL:', 'MAP_SECONDARY:', 'SPECTRUM_UPDATE:', 'SUMMARY_META:',
+  'NOTICED:', 'CRISIS_DETECTED:',
+];
+
+function couldBeTokenPrefix(s: string, tokens: string[]): boolean {
+  for (const t of tokens) {
+    if (t.startsWith(s) || s.startsWith(t)) return true;
+  }
+  return false;
+}
+
+export function holdBackBoundary(text: string): number {
+  if (!text) return 0;
+  let boundary = text.length;
+
+  // (a) Bracket candidate — last '[' with no ']' after it.
+  const lb = text.lastIndexOf('[');
+  if (lb >= 0 && text.indexOf(']', lb) === -1) {
+    const after = text.slice(lb + 1);
+    // Could this still become a bracketed marker? Either the name is
+    // still being typed (pure uppercase/underscore run), or a known
+    // token is already present and we're mid-payload.
+    if (/^[A-Z_]*$/.test(after) || couldBeTokenPrefix(after, BRACKET_MARKER_TOKENS)) {
+      boundary = Math.min(boundary, lb);
+    }
+  }
+
+  // (b) Line candidate — the final (newline-unterminated) line.
+  const nl = text.lastIndexOf('\n');
+  const lineStart = nl + 1; // 0 when no newline
+  const line = text.slice(lineStart).replace(/^\s+/, '');
+  if (line.length > 0) {
+    const fullToken = LINE_MARKER_TOKENS.find((t) => line.startsWith(t));
+    const pureRun = /^[A-Z_]+$/.test(line) && couldBeTokenPrefix(line, LINE_MARKER_TOKENS);
+    if (fullToken || pureRun) {
+      boundary = Math.min(boundary, lineStart);
+    }
+  }
+
+  return boundary;
+}
+
 /**
  * Display-time stripper used by the chat-bubble render path. In production
  * builds it strips most markers but PRESERVES [ADDED_TO_MAP: ...] so the
@@ -250,9 +327,9 @@ export function stripMarkersForDisplay(text: string): string {
   // replacements so the markers survive intact.
   return text
     .replace(/\[CHAT_META:[\s\S]*?\]/g, '')
-    .replace(/\[(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|SUMMARY_META):[\s\S]*?\]/g, '')
+    .replace(/\[(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|SUMMARY_META|NOTICED):[\s\S]*?\]/g, '')
     .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)(?:\s*\|\s*part:\s*[a-z-]+)?\s*\]?/gi, '')
-    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
+    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META|NOTICED):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
     // ADDED_TO_MAP and SHARE_SUGGEST intentionally NOT stripped here.
     // STARTER_MAP_COMPLETE — UNLIKE the pill markers, this one IS

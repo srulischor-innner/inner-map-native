@@ -20,6 +20,7 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
+import { PARTNER_ENABLED } from '../constants/features';
 import {
   markIntroSeen, markTermsAccepted, markIntakeComplete,
   markPrivacyNoticeSeen, hasSeenPrivacyNotice,
@@ -95,8 +96,12 @@ export default function OnboardingScreen() {
   const router = useRouter();
 
   useEffect(() => {
+    // PARTNER_ENABLED gate (v1 launch): with the Partner tab hidden, the
+    // shortened invitee path (→ /relationships) must not fire even for a
+    // user with a legacy stashed invite code — they'd land on an
+    // unreachable screen. They take the full self-explorer flow instead.
     AsyncStorage.getItem(PENDING_INVITE_CODE_KEY)
-      .then((v) => setIsInvitee(!!v))
+      .then((v) => setIsInvitee(PARTNER_ENABLED && !!v))
       .catch(() => setIsInvitee(false));
     hasSeenPrivacyNotice()
       .then(setPrivacyAlreadySeen)

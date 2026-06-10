@@ -217,7 +217,34 @@ export default function MapScreen() {
     };
   }, [mapData, layers, currentLayerIndex]);
 
-  const geom: MapGeometry | null = size ? computeMapGeometry(size.w, size.h) : null;
+  // ===== MIC-ROW CLEARANCE (measured, cross-platform) =====
+  // The MapVoiceBar mics are absolutely positioned over the canvas, so on
+  // taller-aspect devices (Samsung 20:9 etc.) the bottom orbs (Fixer /
+  // Skeptic at 0.78h, Self-like diamond at 0.86h) rendered UNDER the mic
+  // stack. Fix: measure both surfaces in WINDOW coordinates — the canvas
+  // wrap's top (canvasTopW) and the mic bar's top (micBarTopW, reported by
+  // MapVoiceBar via onBarTop) — and hand computeMapGeometry a reduced
+  // height that stops above the mics. Every node position is proportional
+  // to geometry height, so the WHOLE triangle scales up into the clear
+  // region rather than just squeezing the bottom row. No device special-
+  // casing: window measurement inherently accounts for safe-area insets,
+  // tab-bar heights, and any future layout shifts around the canvas.
+  const [canvasTopW, setCanvasTopW] = useState<number | null>(null);
+  const [micBarTopW, setMicBarTopW] = useState<number | null>(null);
+  const canvasWrapRef = useRef<View>(null);
+  const MIC_CLEARANCE = 12; // breathing gap between diamond and mic stack
+  const effectiveH = useMemo(() => {
+    if (!size) return null;
+    if (canvasTopW != null && micBarTopW != null) {
+      const h = micBarTopW - canvasTopW - MIC_CLEARANCE;
+      // Defensive clamp: a bogus measurement (h tiny or >= full height)
+      // falls back to the full canvas rather than collapsing the map.
+      if (h >= size.h * 0.55 && h < size.h) return h;
+    }
+    return size.h;
+  }, [size, canvasTopW, micBarTopW]);
+
+  const geom: MapGeometry | null = size && effectiveH ? computeMapGeometry(size.w, effectiveH) : null;
 
   // Counts for the corner badges on the manager / firefighter rings.
   // Reading from the parts table (rich rows with category + name) and
@@ -508,10 +535,19 @@ export default function MapScreen() {
       ) : null}
 
       <View
+        ref={canvasWrapRef}
         style={styles.canvasWrap}
         onLayout={(e) => {
           const { width, height } = e.nativeEvent.layout;
           if (width > 0 && height > 0) setSize({ w: width, h: height });
+          // Window-coordinate top for the mic-clearance math. rAF so the
+          // measurement runs after the frame settles (Android needs this
+          // for accurate first-layout values).
+          requestAnimationFrame(() => {
+            canvasWrapRef.current?.measureInWindow((_x, y) => {
+              if (Number.isFinite(y)) setCanvasTopW(y);
+            });
+          });
         }}
         {...(layers.length > 1 ? panResponder.panHandlers : {})}
       >
@@ -659,6 +695,7 @@ export default function MapScreen() {
 
       <MapVoiceBar
         sessionId={sessionIdRef.current}
+        onBarTop={setMicBarTopW}
         onDetectedPart={(part) => {
           // Narrowing the string to NodeKey — guarded by the known part list so a
           // future server-side category doesn't crash the canvas.
