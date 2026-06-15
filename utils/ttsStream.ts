@@ -131,6 +131,11 @@ function maybeLogChainComplete(myToken: number) {
   if (chainCompleted < chainScheduled) return;
   console.log(`[tts] chain complete — ${chainPlayed} sentences played`);
   resetChainCounters();
+  // Read-aloud fully drained — hand the session back to a record-capable
+  // category so the next voice note isn't blocked by allowsRecording:false.
+  // (finishStream() fires while audio is still draining, so the reset
+  // belongs HERE at true completion, not there.)
+  void resetAudioSessionForRecording();
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -177,7 +182,7 @@ export async function playMessageNow(messageId: string, text: string): Promise<v
   const t = (text || '').trim();
   console.log('[tts] playMessageNow id=' + messageId.slice(0, 8) + ' chars=' + t.length);
   if (!t) return;
-  cancelStream();
+  cancelStream(false); // restart: configureAudioSessionForPlayback runs just below, don't hand back to record
   active = false;
   currentMessageId = messageId;
   buffer = '';
@@ -279,7 +284,7 @@ export function finishStream(): void {
  *  the pending step would then play its sentence — audio kept playing
  *  after the user muted. Always bumping watchToken kills the chain
  *  cleanly regardless of which phase we caught it in. */
-export function cancelStream(): void {
+export function cancelStream(handBackToRecord: boolean = true): void {
   // Capture the caller's stack so we can see WHO is cancelling. Most
   // silent-audio bugs trace to a cancelStream firing at the wrong
   // moment (mute toggle, tab unmount, end-session, route navigation,
@@ -309,7 +314,13 @@ export function cancelStream(): void {
   // sessions add to the now-empty queue and a fresh worker drains it.
   chainQueue.length = 0;
   resetChainCounters();
-  console.log(`[tts] cancelStream DONE — newWatchToken=${watchToken}`);
+  // Hand the session back to a record-capable category unless a new
+  // playback is about to start (playMessageNow restart passes false).
+  // Without this, read-aloud leaves allowsRecording:false parked and the
+  // next voice note records silence. Fire-and-forget — the recording
+  // path uses the awaited ensureRecordingMode() for a hard guarantee.
+  if (handBackToRecord) { void resetAudioSessionForRecording(); }
+  console.log(`[tts] cancelStream DONE — newWatchToken=${watchToken} handBackToRecord=${handBackToRecord}`);
 }
 
 // ----------------------------------------------------------------------
@@ -529,6 +540,55 @@ async function configureAudioSessionForPlayback(): Promise<void> {
   } catch (e) {
     console.warn(`[tts] configureAudioSession FAILED after ${Date.now() - t0}ms:`, (e as Error)?.message);
   }
+}
+
+/** Hand the iOS audio session back to a record-capable category after
+ *  read-aloud ends or is cancelled. configureAudioSessionForPlayback
+ *  parks the session at allowsRecording:false; left unreset, the very
+ *  next voice-note capture records silence — the "every other message"
+ *  dictation bug. Mirrors the record config the recording surfaces use. */
+async function resetAudioSessionForRecording(): Promise<void> {
+  try {
+    await setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
+      interruptionMode: 'doNotMix',
+      shouldPlayInBackground: false,
+    });
+    console.log('[tts] audio session reset → record-ready (allowsRecording=true)');
+  } catch (e) {
+    console.warn('[tts] resetAudioSessionForRecording failed:', (e as Error)?.message);
+  }
+}
+
+/** Authoritative playback→record handoff for the recording surfaces.
+ *  Stops any read-aloud, releases its player, then AWAITS the switch to
+ *  a record-capable category before returning. Returns false if the
+ *  switch failed — the caller MUST NOT start capturing in that case
+ *  (the session is still playback-biased and would record silence).
+ *
+ *  Why awaited + retried: player.remove() releases the native AVAudio
+ *  player asynchronously, so the first category switch immediately after
+ *  a just-playing buffer can transiently throw. One short beat + a
+ *  single retry absorbs that without masking a genuine failure. */
+export async function ensureRecordingMode(): Promise<boolean> {
+  cancelStream(false); // tear down the player; we set record mode ourselves below
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        interruptionMode: 'doNotMix',
+        shouldPlayInBackground: false,
+      });
+      console.log(`[tts] ensureRecordingMode OK (attempt ${attempt + 1})`);
+      return true;
+    } catch (e) {
+      console.warn(`[tts] ensureRecordingMode attempt ${attempt + 1} failed:`, (e as Error)?.message);
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+  return false;
 }
 
 /** Play a single MP3 buffer to completion. Resolves only after the

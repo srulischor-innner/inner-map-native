@@ -63,9 +63,9 @@ import ReAnimated, {
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
+import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
 import { colors, fonts, spacing } from '../constants/theme';
-import { cancelStream as cancelTTSStream } from '../utils/ttsStream';
+import { ensureRecordingMode } from '../utils/ttsStream';
 
 export function ChatInput({
   disabled,
@@ -187,10 +187,6 @@ export function ChatInput({
 
   async function startRecording() {
     console.log(`[voice-note] startRecording — minRecordingMs=${MIN_RECORDING_MS} timestamp=${Date.now()}`);
-    // Hard-stop any read-aloud / streaming-TTS playback before the mic
-    // session opens. Otherwise the user hears the AI's reply talking
-    // over their own recording prompt — confusing on iPhone speakers.
-    cancelTTSStream();
     // No explicit focus() call — the parent ScrollView's
     // keyboardShouldPersistTaps="handled" preserves focus when the
     // user was already typing, and we explicitly do NOT want to OPEN
@@ -202,12 +198,21 @@ export function ChatInput({
         Alert.alert('Microphone off', 'Grant mic access in Settings to record voice notes.');
         return;
       }
-      try {
-        await setAudioModeAsync({
-          allowsRecording: true, playsInSilentMode: true,
-          interruptionMode: 'doNotMix', shouldPlayInBackground: false,
-        });
-      } catch {}
+      // Authoritative playback→record handoff. ensureRecordingMode hard-
+      // stops any read-aloud, releases its audio player, and AWAITS the
+      // switch to a record-capable audio category. Previously this was a
+      // non-awaited cancelTTSStream() + a swallowed setAudioModeAsync, so
+      // on the turn right after a spoken reply the category switch raced
+      // the player teardown and capture began in playback mode → silent
+      // recording → empty transcript (the "every other message" bug). If
+      // the switch fails we ABORT rather than capture silence.
+      const ready = await ensureRecordingMode();
+      if (!ready) {
+        console.warn('[voice-note] audio session not record-ready — aborting (refusing to record silence)');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        Alert.alert('One sec', 'Audio is still finishing playback. Try the mic again in a moment.');
+        return;
+      }
       await recorder.prepareToRecordAsync();
       recorder.record();
       setRecording(true);
