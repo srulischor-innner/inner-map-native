@@ -26,6 +26,7 @@
 // 200 turns/24h per user.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
   View, Text, Pressable, Modal, StyleSheet, ActivityIndicator, PanResponder,
   PanResponderInstance, GestureResponderEvent, PanResponderGestureState,
@@ -215,20 +216,40 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop }:
       const selfLike = parts.find((p) => String(p.type || '').toLowerCase() === 'self-like');
       const hasBelief = !!(selfLike && selfLike.belief && selfLike.belief.trim());
       setSelfLikeEnabled(hasBelief);
-    } catch {
-      setSelfLikeEnabled(false);
+    } catch (e) {
+      // Do NOT downgrade the gate on a transport failure. A failed read
+      // must never be interpreted as "no belief" — that was the regression
+      // vector: the one-shot mount read could hit a cold-start hiccup and
+      // lock the mic with no path to retry. Leave the prior gate; the
+      // focus re-read (below) or a change-event corrects it. Initial state
+      // is locked (useState(false)), so a first-load failure stays safely
+      // locked until a successful read, never falsely unlocked.
+      console.warn('[map-voice] refreshBeliefStatus failed (keeping prior gate):', (e as Error)?.message);
     }
   }, []);
 
+  // LOAD-TIME read — runs on mount. Kept as a defensive baseline; the
+  // focus re-read below is what makes it robust.
   useEffect(() => { refreshBeliefStatus(); }, [refreshBeliefStatus]);
 
-  // PUSH refresh — the mount-time check above goes stale because the Map
-  // tab (and this bar) stays mounted across tab switches. Both belief
-  // mutation paths emit on utils/beliefEvents after the server write
-  // lands: the develop-belief chat flow (SAVE_BELIEF marker → chat tab's
-  // onSavedBeliefs) and the Self-like folder's belief editor (save AND
-  // clear — clear re-locks). Subscribing here means the mic unlocks the
-  // moment the belief exists, no app restart, no focus dance.
+  // SELF-HEAL on every Map-tab focus. The mount read is one-shot: if it
+  // runs before auth/bootstrap settles or hits a transient cold-start
+  // failure, a PRE-EXISTING belief would never light the mic, because the
+  // event bus only fires on a belief CHANGE — never for a belief that was
+  // already saved at app open. (Symptom: mic locked until an app restart,
+  // which re-mounts and re-reads.) Re-reading on focus makes the gate
+  // self-correcting without a restart and is cheap (one small GET).
+  // Additive to the mount read + the change-event push — not a replacement.
+  useFocusEffect(
+    useCallback(() => { refreshBeliefStatus(); }, [refreshBeliefStatus]),
+  );
+
+  // PUSH refresh — instant live update when the belief CHANGES while the
+  // Map tab stays mounted. Both mutation paths emit on utils/beliefEvents
+  // after the server write lands: the develop-belief chat flow (SAVE_BELIEF
+  // marker → chat tab's onSavedBeliefs) and the Self-like folder's belief
+  // editor (save AND clear — clear re-locks). This is the live-change path;
+  // it does NOT fire for a pre-existing belief (that's the focus read's job).
   useEffect(() => subscribeBeliefChanged(() => { refreshBeliefStatus(); }), [refreshBeliefStatus]);
 
   // Unmount cleanup — make sure no recorder / player is left running.

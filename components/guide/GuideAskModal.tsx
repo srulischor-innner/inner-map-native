@@ -73,12 +73,43 @@ export function GuideAskModal({ visible, onClose }: Props) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  // `streaming` spans the WHOLE in-flight reply (send → onDone/stop),
+  // unlike `loading` which flips false on the first chunk. Drives the
+  // STOP button + the stop-on-close abort.
+  const [streaming, setStreaming] = useState(false);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const scrollRef = useRef<ScrollView | null>(null);
+  // STOP control (build 14). Captured streamGuide abort fn + the active
+  // word-reveal timer, both cleared on stop / sheet-close so an in-flight
+  // request and its reveal loop don't keep running in the background.
+  const streamAbortRef = useRef<null | (() => void)>(null);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idRef = useRef(0);
   function nextId() { idRef.current += 1; return 'g' + idRef.current; }
+
+  // ===== AT-BOTTOM-GATED AUTO-SCROLL =====
+  // Mirrors the main chat / RelationshipChat pattern (same 60px threshold):
+  // auto-follow the stream ONLY while the user is already at/near the
+  // bottom. The moment they scroll up to re-read, disengage; re-engage when
+  // they scroll back down. Previously every streamed word called
+  // scrollToEnd unconditionally, yanking the user back down mid-read.
+  const AUTOSCROLL_BOTTOM_THRESHOLD_PX = 60;
+  const userScrolledAwayRef = useRef(false);
+  const onScroll = useCallback((e: any) => {
+    const ne = e?.nativeEvent;
+    if (!ne) return;
+    const lm = ne.layoutMeasurement, co = ne.contentOffset, cs = ne.contentSize;
+    if (!lm || !co || !cs) return;
+    const distFromBottom = cs.height - (co.y + lm.height);
+    userScrolledAwayRef.current = distFromBottom > AUTOSCROLL_BOTTOM_THRESHOLD_PX;
+  }, []);
+  // Auto-scroll to bottom UNLESS the user has scrolled up to read.
+  const maybeAutoScroll = useCallback((animated: boolean) => {
+    if (userScrolledAwayRef.current) return;
+    scrollRef.current?.scrollToEnd({ animated });
+  }, []);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -132,12 +163,37 @@ export function GuideAskModal({ visible, onClose }: Props) {
       setTranscribing(false);
       setSeconds(0);
       idRef.current = 0;
+      userScrolledAwayRef.current = false; // fresh open starts at bottom
+      setStreaming(false);
+    } else {
+      // STOP-ON-CLOSE hygiene: closing the sheet (X → visible=false) aborts
+      // any in-flight request and stops the reveal loop, so neither runs in
+      // the background. (Collapsing keeps visible=true, so this doesn't fire
+      // on a collapse — only a real close.)
+      try { streamAbortRef.current?.(); } catch {}
+      streamAbortRef.current = null;
+      if (revealTimerRef.current) { clearTimeout(revealTimerRef.current); revealTimerRef.current = null; }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  // Cleanup timers on unmount.
-  useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current); }, []);
+  // Stop the in-flight reply (STOP button). Aborts the request + halts the
+  // reveal loop; the prose revealed so far stays in the bubble untouched.
+  const stopGuide = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    try { streamAbortRef.current?.(); } catch {}
+    streamAbortRef.current = null;
+    if (revealTimerRef.current) { clearTimeout(revealTimerRef.current); revealTimerRef.current = null; }
+    setLoading(false);
+    setStreaming(false);
+  }, []);
+
+  // Cleanup timers + in-flight stream on unmount.
+  useEffect(() => () => {
+    if (tickRef.current) clearInterval(tickRef.current);
+    if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+    try { streamAbortRef.current?.(); } catch {}
+  }, []);
 
   // Keyboard show/hide listeners — track keyboard height + snap sheet
   // to FULL so there's room above the keyboard for the input bar to
@@ -228,6 +284,10 @@ export function GuideAskModal({ visible, onClose }: Props) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
     Haptics.selectionAsync().catch(() => {});
+    // Sending is an explicit "I'm engaging now" action — re-engage
+    // auto-follow so the user sees their own message + the reply, even
+    // if they'd scrolled up while reading the previous answer.
+    userScrolledAwayRef.current = false;
     const userTurn: Turn = { id: nextId(), role: 'user', text: trimmed };
     const assistantId = nextId();
     const nextTurns: Turn[] = [
@@ -238,6 +298,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
     setTurns(nextTurns);
     setInput('');
     setLoading(true);
+    setStreaming(true);
     const apiMessages: ChatMessage[] = [...turns, userTurn].map((t) => ({
       role: t.role,
       content: t.text,
@@ -246,10 +307,9 @@ export function GuideAskModal({ visible, onClose }: Props) {
     let firstChunk = true;
     let target = '';                  // full cumulative text from the server
     let revealed = 0;                 // chars already shown on screen
-    let revealTimer: ReturnType<typeof setTimeout> | null = null;
 
     function tickReveal() {
-      if (revealed >= target.length) { revealTimer = null; return; }
+      if (revealed >= target.length) { revealTimerRef.current = null; return; }
       // Advance through one word: skip whitespace, run to next whitespace.
       let i = revealed;
       while (i < target.length && /\s/.test(target[i])) i++;
@@ -263,22 +323,32 @@ export function GuideAskModal({ visible, onClose }: Props) {
         updated[idx] = { ...updated[idx], text: slice };
         return updated;
       });
-      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 30);
-      revealTimer = setTimeout(tickReveal, PER_WORD_MS);
+      // Gated: only follows the stream if the user is at the bottom.
+      setTimeout(() => maybeAutoScroll(false), 30);
+      revealTimerRef.current = setTimeout(tickReveal, PER_WORD_MS);
     }
 
-    api.streamGuide(apiMessages, {
+    // Capture the abort fn so the STOP button + stop-on-close can halt the
+    // in-flight request. streamGuide resolves with it once the request is
+    // sent (before chunks arrive). Guide-chat carries NO markers, so a
+    // truncated reply is just plain prose — nothing to strip or mis-parse.
+    streamAbortRef.current = await api.streamGuide(apiMessages, {
       onChunk: (chunk) => {
         if (firstChunk) { firstChunk = false; setLoading(false); }
         target += chunk;
-        if (!revealTimer) revealTimer = setTimeout(tickReveal, PER_WORD_MS);
+        if (!revealTimerRef.current) revealTimerRef.current = setTimeout(tickReveal, PER_WORD_MS);
       },
       onDone: () => {
+        // Stream finished arriving. Clear the streaming flag (the reveal
+        // loop catches up on its own cadence — cosmetic tail). Drop the
+        // abort handle; the turn is over.
+        setStreaming(false);
+        streamAbortRef.current = null;
         // Belt-and-braces: if no chunks landed, fall back to a polite
         // error and stop the reveal loop. Otherwise let tickReveal
         // catch up to the final target on its own cadence.
         if (target.trim().length === 0) {
-          if (revealTimer) clearTimeout(revealTimer);
+          if (revealTimerRef.current) { clearTimeout(revealTimerRef.current); revealTimerRef.current = null; }
           setLoading(false);
           setTurns((prev) => {
             const idx = prev.findIndex((t) => t.id === assistantId);
@@ -294,8 +364,10 @@ export function GuideAskModal({ visible, onClose }: Props) {
       },
       onError: (err) => {
         console.warn('[guide-chat] stream error:', err);
-        if (revealTimer) clearTimeout(revealTimer);
+        if (revealTimerRef.current) { clearTimeout(revealTimerRef.current); revealTimerRef.current = null; }
         setLoading(false);
+        setStreaming(false);
+        streamAbortRef.current = null;
         setTurns((prev) => {
           const idx = prev.findIndex((t) => t.id === assistantId);
           if (idx === -1) return prev;
@@ -308,7 +380,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
         });
       },
     });
-  }, [turns, loading]);
+  }, [turns, loading, maybeAutoScroll]);
 
   // ───── voice note (press-and-hold mic) ─────
   async function startRecording() {
@@ -372,13 +444,12 @@ export function GuideAskModal({ visible, onClose }: Props) {
   const canSend = input.trim().length > 0 && !loading && !recording;
 
   // Auto-scroll to the bottom whenever the message list grows or the
-  // loading/transcribing indicators appear/disappear.
+  // loading/transcribing indicators appear/disappear — gated so it never
+  // yanks a user who has scrolled up to re-read.
   useEffect(() => {
-    const t = setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+    const t = setTimeout(() => { maybeAutoScroll(true); }, 100);
     return () => clearTimeout(t);
-  }, [turns.length, loading, transcribing]);
+  }, [turns.length, loading, transcribing, maybeAutoScroll]);
 
   return (
     <Modal
@@ -450,9 +521,9 @@ export function GuideAskModal({ visible, onClose }: Props) {
                 { paddingBottom: spacing.lg + Math.max(insets.bottom, 8) },
               ]}
               keyboardShouldPersistTaps="handled"
-              onContentSizeChange={() => {
-                scrollRef.current?.scrollToEnd({ animated: true });
-              }}
+              onScroll={onScroll}
+              scrollEventThrottle={16}
+              onContentSizeChange={() => { maybeAutoScroll(true); }}
             >
               <AIBubble text={OPENING_MESSAGE} opening />
 
@@ -512,7 +583,16 @@ export function GuideAskModal({ visible, onClose }: Props) {
                   selectionColor={colors.amber}
                 />
               )}
-              {canSend ? (
+              {streaming ? (
+                // STOP — halt the in-flight reply; the prose so far stays.
+                <Pressable
+                  onPress={stopGuide}
+                  style={styles.sendBtn}
+                  accessibilityLabel="Stop response"
+                >
+                  <Ionicons name="stop" size={18} color={colors.background} />
+                </Pressable>
+              ) : canSend ? (
                 <Pressable
                   onPress={() => send(input)}
                   style={styles.sendBtn}

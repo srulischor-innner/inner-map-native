@@ -73,8 +73,15 @@ export function ChatInput({
   onSendVoice,
   prefillText,
   onPrefillConsumed,
+  streaming,
+  onStop,
 }: {
   disabled?: boolean;
+  /** True while an assistant reply is streaming. Swaps the send/mic
+   *  button for a STOP control (standard streaming-chat convention). */
+  streaming?: boolean;
+  /** Tapping STOP — aborts the in-flight stream and keeps the partial. */
+  onStop?: () => void;
   onSend: (text: string) => void;
   /** Called when user releases a voice note hold without cancelling. The
    *  parent shows the voice-note bubble with a "Transcribing…" line, then
@@ -333,7 +340,14 @@ export function ChatInput({
           ) : null}
         </View>
 
-        {canSend ? (
+        {streaming ? (
+          // STOP — while a reply streams, the action button halts it.
+          // Tapping aborts the in-flight stream; the partial reply so far
+          // stays in the conversation (handled by the parent).
+          <Pressable onPress={onStop} style={[styles.btn, styles.stopBtn]} accessibilityLabel="Stop response">
+            <Ionicons name="stop" size={18} color={colors.background} />
+          </Pressable>
+        ) : canSend ? (
           <Pressable onPress={handleSend} style={[styles.btn, styles.sendBtn]} accessibilityLabel="Send">
             <Ionicons name="arrow-up" size={20} color={colors.background} />
           </Pressable>
@@ -462,6 +476,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendBtn: { backgroundColor: colors.amber, width: 44, height: 44 },
+  // Stop control — same amber affordance as send so it reads as the
+  // primary action, with a square "stop" glyph (ChatGPT/Claude convention).
+  stopBtn: { backgroundColor: colors.amber, width: 44, height: 44 },
   micBtn: {
     borderWidth: 1,
     borderColor: colors.amberDim,

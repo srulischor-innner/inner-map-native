@@ -100,13 +100,13 @@ const META: Record<NodeKey, Meta> = {
     title: 'The Self-Like Part',
     color: '#8A7AAA',
     subtitle: 'The architect of your actual life',
-    // Reframed (May 2026) — earlier copy ended with "always has an
-    // agenda," which read as accusatory. The new framing honors the
-    // part: it built the actual life, it holds the system together,
-    // and underneath the management it just wants the person to feel
-    // okay. Same content, no shame-tinge.
+    // Reframed (June 2026) — two-beat framing: (1) honor what it built and
+    // how well, then (2) name the new possibility — leading from its own
+    // ground (the belief, separate from the parts) rather than being run by
+    // the loudest part. Two paragraphs joined by a blank line.
     description:
-      'The part that navigates the space between your fixer and skeptic. It built your career, your relationships, the rhythms of your daily life. It holds the system together — and what it wants, underneath, is simply for you to feel okay.',
+      'The part that navigates between your fixer and skeptic. It built your career, your relationships, the rhythms of your life — finding ways to feel okay within the system. It has done this brilliantly, for your whole life.\n\n' +
+      "And it's the part that can do something new: stop being run by whichever part is loudest, and lead. To stand on its own ground — what you believe, separate from what your parts believe — and hold it.",
   },
   manager: {
     title: 'Managers',

@@ -203,6 +203,16 @@ export default function ChatScreen() {
   // true on the first End Session tap (whether or not items existed) so
   // the second tap always proceeds to the summary; reset on session reset.
   const gatheredNoticedRef = useRef(false);
+  // STOP control (build 14). abortStreamRef holds the streamChat abort fn
+  // for the in-flight turn; stopTurnRef holds a closure that aborts AND
+  // finalizes the partial reply (keeping the prose generated so far). Both
+  // are set inside runAssistantTurn once the stream starts and nulled when
+  // the turn ends. The composer shows a Stop button while `sending`.
+  const abortStreamRef = useRef<null | (() => void)>(null);
+  const stopTurnRef = useRef<null | (() => void)>(null);
+  const stopStreaming = useCallback(() => {
+    stopTurnRef.current?.();
+  }, []);
   // Drives the centerSlot swap: AttentionIndicator triangle during
   // generation, part-confidence ring otherwise — in both chat modes.
   const attentionState = useAttentionState();
@@ -856,8 +866,81 @@ export default function ChatScreen() {
         startTTSStream(streamId).catch(() => {});
       }
 
+      // Finalize the assistant turn — shared by the normal stream end
+      // (onDone) and the user-initiated STOP. `finalRaw` is the text to
+      // keep; `stopped` flags a user interrupt (the reply may be cut off
+      // mid-marker). Idempotent via turnFinished so a stop landing in the
+      // same tick as onDone can't double-finalize.
+      let turnFinished = false;
+      function finishTurn(finalRaw: string, stopped: boolean) {
+        if (turnFinished) return;
+        turnFinished = true;
+        abortStreamRef.current = null;
+        stopTurnRef.current = null;
+
+        // On a STOP the text can end mid-marker (or before the end-of-reply
+        // markers). Cut at the hold-back boundary so neither the kept prose
+        // NOR the saved history carries a partial-marker fragment; complete
+        // markers before the cut are still stripped normally. A normal end
+        // has whole markers, so no cut needed.
+        const safeRaw = stopped ? finalRaw.slice(0, holdBackBoundary(finalRaw)) : finalRaw;
+        rawAccum = finalRaw;
+        target = stripMarkersForDisplay(stopped ? safeRaw : finalRaw);
+        const cleanText = stripMarkers(safeRaw);
+
+        // Stopped before any prose arrived → drop the empty assistant
+        // bubble, keep the user's message, reset. (Mirrors onError rollback.)
+        if (stopped && !cleanText.trim()) {
+          turnThread.setMessages((prev) => prev.filter((m) => m.id !== streamId));
+          if (streamingTTSStarted) finishTTSStream();
+          setSending(false);
+          setTyping(false);
+          setAttentionState('idle');
+          return;
+        }
+
+        // Marker-detection log + map-tab pulse — only on a completed reply.
+        // A stopped reply's structural markers are end-of-reply and were cut
+        // off, and the server skips persistence on the client abort, so we
+        // do NOT pulse "map updated" for a stopped turn (nothing persisted).
+        if (!stopped) {
+          const mapUpdateMatches = (finalRaw.match(/\[MAP_UPDATE:[\s\S]*?\]/g) || []);
+          const mapReadyMatches = (finalRaw.match(/\[MAP_READY:[\s\S]*?\]/g) || []);
+          const partUpdateMatches = (finalRaw.match(/PART_UPDATE:[^\n]+/g) || []);
+          if (mapUpdateMatches.length || mapReadyMatches.length || partUpdateMatches.length) {
+            console.log(
+              '[marker] reply contained markers — MAP_UPDATE×%d MAP_READY×%d PART_UPDATE×%d',
+              mapUpdateMatches.length, mapReadyMatches.length, partUpdateMatches.length,
+            );
+            pulseMapTab();
+          }
+        }
+
+        // STARTER_MAP_COMPLETE is an end-of-reply signal → never present on
+        // a stopped (truncated) reply.
+        const starterMapDone = !stopped && hasStarterMapComplete(finalRaw);
+        updateBubble(target, false, starterMapDone ? { starterMapComplete: true } : undefined);
+        if (starterMapDone) {
+          setFirstSessionPending(false);
+          console.log('[first-session] STARTER_MAP_COMPLETE — banner cleared, CTA on');
+        }
+
+        // History gets the FULLY-stripped text (no markers, no fragments).
+        turnThread.historyRef.current.push({ role: 'assistant', content: cleanText });
+        api.saveSession({
+          id: sessionIdRef.current,
+          messages: turnThread.historyRef.current,
+          chatMode: turnMode,
+        });
+        if (streamingTTSStarted) finishTTSStream();
+        if (!stopped) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        setSending(false);
+        setTyping(false);
+        setAttentionState('idle');
+      }
+
       try {
-        await api.streamChat(
+        const abortStream = await api.streamChat(
           {
             messages: turnThread.historyRef.current,
             mode,
@@ -997,83 +1080,9 @@ export default function ChatScreen() {
               // `full` is the server's canonical final text (the done
               // frame's cleaned reply — or, on a crisis/crisis_replace
               // frame, the deterministic referral, which REPLACES any
-              // partial model text already shown). No hold-back here:
-              // the text is complete, so every marker is whole and the
-              // strip functions produce output identical to the old
-              // buffered path.
-              rawAccum = full || rawAccum;
-              target = stripMarkersForDisplay(rawAccum);
-              const cleanText = stripMarkers(rawAccum);
-              // Diagnostic — confirms whether the AI actually emitted any
-              // map / part markers in this turn. If you see "no markers"
-              // here while the chat text says a part was detected, the
-              // model emitted CHAT_META but skipped MAP_UPDATE — that's a
-              // prompt-side issue, not a transport one.
-              const mapUpdateMatches = (rawAccum.match(/\[MAP_UPDATE:[\s\S]*?\]/g) || []);
-              const mapReadyMatches = (rawAccum.match(/\[MAP_READY:[\s\S]*?\]/g) || []);
-              const partUpdateMatches = (rawAccum.match(/PART_UPDATE:[^\n]+/g) || []);
-              if (mapUpdateMatches.length || mapReadyMatches.length || partUpdateMatches.length) {
-                console.log(
-                  '[marker] reply contained markers — MAP_UPDATE×%d MAP_READY×%d PART_UPDATE×%d',
-                  mapUpdateMatches.length, mapReadyMatches.length, partUpdateMatches.length,
-                );
-                // Pulse the map tab — the server has already persisted the
-                // marker into mapData (see persistMarkersForSession on the
-                // server side); the pulse signals the user to look.
-                pulseMapTab();
-              } else {
-                console.log('[marker] reply contained no map/part markers');
-              }
-              // First-session completion marker. When [STARTER_MAP_COMPLETE]
-              // lands in the final assistant text, attach starterMapComplete
-              // to the streamed bubble so MessageBubble renders the
-              // "View my starter map" CTA, and clear the chat-tab banner.
-              // We don't fire this in onDelta because the marker is a
-              // session-ending signal — only meaningful once the full
-              // message has landed.
-              const starterMapDone = hasStarterMapComplete(rawAccum);
-              // Final flush — full text, streaming off. Replaces any
-              // partial display (including held-back tails) atomically.
-              updateBubble(target, false, starterMapDone ? { starterMapComplete: true } : undefined);
-              if (starterMapDone) {
-                // Banner disappears the moment we know the starter map
-                // is complete. The server has already written
-                // firstSessionCompletedAt; the next chat-tab mount will
-                // see it via /api/first-session-status anyway, but
-                // flipping locally avoids waiting for a refresh.
-                setFirstSessionPending(false);
-                console.log('[first-session] STARTER_MAP_COMPLETE — banner cleared, CTA on');
-              }
-              // History gets the FULLY-stripped text regardless of
-               // __DEV__ — it's sent back to the model as conversation
-               // context on the next turn, and the model shouldn't see
-               // its own markers echoed back.
-              turnThread.historyRef.current.push({ role: 'assistant', content: cleanText });
-              // Persist the growing transcript so the web app's session list stays in sync.
-              // Sends THIS thread's history; the other thread is saved
-              // independently when its own turns complete.
-              api.saveSession({
-                id: sessionIdRef.current,
-                messages: turnThread.historyRef.current,
-                // chatMode tags the saved session row so the Journey
-                // tab can show a Process / Explore label on each
-                // entry. Sticky on the server — only overwrites
-                // when a non-null value is provided.
-                chatMode: turnMode,
-              });
-              // If we started a streaming TTS for this reply, flush the
-              // tail of the buffer so the final partial sentence is also
-              // queued. Queue drains on its own. If audio was muted at
-              // start (or got muted mid-stream), we never started — and
-              // the user's mute tap already called cancelTTSStream().
-              if (streamingTTSStarted) {
-                finishTTSStream();
-              }
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-              setSending(false);
-              setTyping(false);
-              // Stream complete — drop attention indicator back to idle.
-              setAttentionState('idle');
+              // partial model text already shown). Complete text → whole
+              // markers; finishTurn(stopped=false) strips them normally.
+              finishTurn(full || rawAccum, false);
             },
             onMessageIds: (ids) => {
               // Round 9 RAG — stamp serverMessageId onto the most
@@ -1130,6 +1139,8 @@ export default function ChatScreen() {
               // message. No retry pill — retrying within the window
               // would just hit the same 429.
               console.log('[chat] rate-limited:', info.message);
+              abortStreamRef.current = null;
+              stopTurnRef.current = null;
               setAttentionState('idle');
               turnThread.setMessages((prev) =>
                 prev.map((m) =>
@@ -1154,6 +1165,8 @@ export default function ChatScreen() {
             },
             onError: (err) => {
               console.warn('[chat] stream error:', err);
+              abortStreamRef.current = null;
+              stopTurnRef.current = null;
               setAttentionState('idle');
               turnThread.setMessages((prev) =>
                 prev.map((m) =>
@@ -1191,6 +1204,8 @@ export default function ChatScreen() {
             // acknowledge action below the dock).
             onCrisis: () => {
               console.log('[chat] crisis_detected — entering gated state');
+              abortStreamRef.current = null;
+              stopTurnRef.current = null;
               setAttentionState('idle');
               setSending(false);
               setTyping(false);
@@ -1198,8 +1213,22 @@ export default function ChatScreen() {
             },
           },
         );
+        // Capture the abort fn (streamChat resolves with it as soon as the
+        // request is in flight, before any delta) and wire the per-turn
+        // STOP handler the composer's Stop button calls. abortStream()
+        // halts the XHR; finishTurn(rawAccum, true) keeps the partial prose
+        // and finalizes (strip + save) without waiting for onDone (which
+        // won't fire after an abort).
+        abortStreamRef.current = abortStream;
+        stopTurnRef.current = () => {
+          cancelTTSStream();
+          try { abortStream(); } catch {}
+          finishTurn(rawAccum, true);
+        };
       } catch (e) {
         console.warn('[chat] send threw:', (e as Error).message);
+        abortStreamRef.current = null;
+        stopTurnRef.current = null;
         setSending(false);
         setTyping(false);
       }
@@ -1492,6 +1521,8 @@ export default function ChatScreen() {
         ) : (
           <ChatInput
             disabled={sending}
+            streaming={sending}
+            onStop={stopStreaming}
             onSend={handleSend}
             onSendVoice={handleSendVoice}
           />
