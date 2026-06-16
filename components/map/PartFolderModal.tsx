@@ -37,6 +37,7 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useKeyboardInset } from '../../utils/useKeyboardInset';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -237,6 +238,12 @@ export function PartFolderModal({
   const allParts = parts || [];
   const part = allParts.find((p) => p?.category === partKey) || null;
   const insets = useSafeAreaInsets();
+  // Keyboard avoidance for the belief-establish editor (and any other
+  // input in this sheet). insideModal:true → manual lift on both
+  // platforms; applied as extra paddingBottom on the ScrollView content
+  // so the focused input can scroll above the keyboard. (RN Modal windows
+  // don't inherit the activity's softwareKeyboardLayoutMode:'resize'.)
+  const kbHeight = useKeyboardInset({ insideModal: true });
 
   return (
     <Modal
@@ -256,7 +263,11 @@ export function PartFolderModal({
           </Pressable>
         </View>
 
-        <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={[styles.body, kbHeight > 0 ? { paddingBottom: kbHeight } : null]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           {meta.subtitle ? (
             <Text style={[styles.subtitle, { color: meta.color }]}>{meta.subtitle.toUpperCase()}</Text>
           ) : null}

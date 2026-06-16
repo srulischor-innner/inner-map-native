@@ -21,6 +21,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, Platform,
   Modal, TextInput, Alert, Keyboard,
 } from 'react-native';
+import { useKeyboardInset } from '../../utils/useKeyboardInset';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
@@ -146,14 +147,10 @@ export function AuthButtonRow({
   // input. Apply paddingBottom: kbHeight on the backdrop so the
   // centered card bumps upward above the keyboard. Same pattern used
   // elsewhere in the app (Partner chat, Shared compose, SharePromptCard).
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
-    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  // Centralized in utils/useKeyboardInset. insideModal:true → manual lift
+  // on both platforms (an RN Modal window doesn't inherit the activity's
+  // softwareKeyboardLayoutMode:'resize').
+  const kbHeight = useKeyboardInset({ insideModal: true });
 
   // Apple Sign-In is iOS-only. expo-apple-authentication's
   // isAvailableAsync returns true on iOS 13+ and false elsewhere.

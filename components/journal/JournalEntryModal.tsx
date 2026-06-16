@@ -25,6 +25,7 @@ import {
   GestureResponderEvent, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useKeyboardInset } from '../../utils/useKeyboardInset';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import {
@@ -75,14 +76,10 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   // ported to this pattern). Inside this Modal, paddingBottom on
   // the root SafeAreaView lifts the entire ScrollView+input+mic
   // stack above the keyboard on both iOS and Android.
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
-    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  // Centralized in utils/useKeyboardInset. insideModal:true → manual lift
+  // on both platforms (an RN Modal window doesn't inherit the activity's
+  // softwareKeyboardLayoutMode:'resize').
+  const kbHeight = useKeyboardInset({ insideModal: true });
   // Guidance opacity — collapses to 0.2 once the user has started typing
   // or recorded a voice note. Tapping the guidance restores to 1.0.
   const guidanceOpacity = useRef(new Animated.Value(1)).current;

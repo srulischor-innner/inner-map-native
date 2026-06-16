@@ -127,9 +127,9 @@ const EXPLAINER_FOOTNOTE =
   "(Self-like part voice becomes available once you've established your own belief separate from your parts. Tap the SELF-LIKE part on your map — the diamond on the triangle — to begin.)";
 
 const SELF_INFO_BODY =
-  "Self — pure presence. Speak; the part you're blended with lights up; Self responds to that part. Use when you need to be witnessed and settle.";
+  "Self — pure presence. Speak, and the part you're blended with lights up; Self responds to it. This is what your own grounded presence sounds like — so you can begin to recognize it, and find it, in yourself.";
 const SELF_LIKE_INFO_BODY =
-  "Self-like part — active leadership. Speak; the part lights up; Self-like part responds from your established belief. Use when you need help holding a line with a part.";
+  "Self-like — leadership. It speaks to the part that's active, from the ground you stand on. Hear what it's like to lead your system from your own belief — so you can come to embody it yourself.";
 const SELF_LIKE_DISABLED_BODY =
   "To use this voice, first develop your Self-like belief — tap the SELF-LIKE part on your map (the diamond on the triangle, not this mic) to get started.";
 

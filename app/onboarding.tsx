@@ -14,6 +14,7 @@ import {
   View, Text, Pressable, TextInput, ScrollView, StyleSheet,
   Keyboard, Platform, FlatList, useWindowDimensions,
 } from 'react-native';
+import { useKeyboardInset } from '../utils/useKeyboardInset';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -444,20 +445,12 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
   });
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Build 14 — manual kbHeight lift, replacing KeyboardAvoidingView
-  // (which had behavior:undefined on Android = no protection, and
-  // behavior:'padding' on iOS = OK). The intake has multiple TextInputs
-  // across 4 steps, with CTA buttons immediately below each — the
-  // keyboard previously covered both on Android, blocking the user
-  // from proceeding without dismissing the keyboard first.
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
-    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  // Keyboard avoidance — centralized in utils/useKeyboardInset. This
+  // intake is a non-modal screen whose steps are each in a ScrollView,
+  // so on Android the OS resize (softwareKeyboardLayoutMode:'resize')
+  // lifts + scrolls the focused input/CTA into view (inset stays 0); on
+  // iOS the inset is the live keyboard height, applied below.
+  const kbHeight = useKeyboardInset();
 
   async function submit() {
     const ageNum = parseInt(state.age, 10);

@@ -35,6 +35,7 @@ import {
 import { TypingIndicator } from '../TypingIndicator';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api, ChatMessage } from '../../services/api';
+import { renderInlineMarkdown } from '../../utils/inlineMarkdown';
 
 // Per-word reveal cadence — same value as the regular Chat tab so the
 // two surfaces feel identical to the eye. See app/(tabs)/index.tsx.
@@ -623,7 +624,13 @@ export function GuideAskModal({ visible, onClose }: Props) {
 function AIBubble({ text, opening }: { text: string; opening?: boolean }) {
   return (
     <View style={styles.aiBubble}>
-      <Text style={[styles.aiText, opening && styles.aiTextOpening]}>{text}</Text>
+      {/* Guide answers are written with markdown emphasis (**bold** /
+          *italic*); render it via the zero-dep inline renderer so markers
+          don't show as literal asterisks. The opening greeting is a fixed,
+          markdown-free string in its own lighter font — left untouched. */}
+      <Text style={[styles.aiText, opening && styles.aiTextOpening]}>
+        {opening ? text : renderInlineMarkdown(text)}
+      </Text>
     </View>
   );
 }

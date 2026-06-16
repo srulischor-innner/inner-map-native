@@ -45,6 +45,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import { useKeyboardInset } from '../../utils/useKeyboardInset';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -578,14 +579,11 @@ function NoRelationshipView({
   // The paste-code field sits near the bottom of the scroll list;
   // without the lift, the soft keyboard covers the input + CONNECT
   // button on Android in particular.
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height ?? 0));
-    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  // Centralized in utils/useKeyboardInset. Non-modal screen → on Android
+  // the OS resize lifts the scrollable content (inset stays 0); iOS lifts
+  // by the live keyboard height. (Partner is gated off for v1 — device-
+  // test this surface when PARTNER_ENABLED is flipped on.)
+  const kbHeight = useKeyboardInset();
   return (
     <View style={[styles.kav, { paddingBottom: kbHeight }]}>
     <ScrollView

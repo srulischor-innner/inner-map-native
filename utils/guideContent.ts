@@ -435,14 +435,14 @@ export const USING_FEATURES: GuideFeature[] = [
     icon: 'self',
     title: 'Self mic',
     body: [
-      "Use the Self mic when you want to be met with presence. Press and hold, share what's true, release. Self responds — grounded, warm, unhurried. The point isn't to figure anything out. It's to not be alone in what you're carrying.",
+      "Use the Self mic when you want to be met with presence. Press and hold, share what's true, release. Self responds — grounded, warm, unhurried. The point isn't to figure anything out; it's to not be alone in what you're carrying. And it's something more: this is what your own grounded presence sounds like — so you can learn to recognize it, and find it, in yourself.",
     ],
   },
   {
     icon: 'self-like',
     title: 'Self-like mic',
     body: [
-      "Use the Self-like mic when you're ready to work on a part's belief. Tap a part on the map first to focus on it, then press the Self-like mic. This is more active — helping you find a different premise for the part to operate from. Once articulated, you can save it to that part's folder.",
+      "Use the Self-like mic when you're ready to lead a part rather than be run by it. Tap a part on the map to focus on it, then press the Self-like mic. Self-like speaks to that part from the ground you stand on — your own belief, separate from what the part believes. The point is to hear what it's like to lead your system from that ground, so you can come to embody it yourself. Once your belief is articulated, you can save it to that part's folder.",
     ],
   },
   // Partner card hidden behind PARTNER_ENABLED for v1 launch — the Guide

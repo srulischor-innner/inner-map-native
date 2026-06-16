@@ -16,9 +16,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View,
   ScrollView,
-  // KeyboardAvoidingView removed in the build-13 Android-keyboard fix
-  // (commit on this PR). The manual kbHeight pattern replaces it on
-  // both platforms — see the keyboardWill/DidShow useEffect.
+  // KeyboardAvoidingView removed — keyboard avoidance is centralized in
+  // utils/useKeyboardInset (Android resizes via the OS, iOS lifts
+  // manually). See the useKeyboardInset() call below.
   Platform,
   Pressable,
   StyleSheet,
@@ -60,7 +60,9 @@ import {
   finishStream as finishTTSStream, cancelStream as cancelTTSStream,
   playMessageNow as playTTSNow,
 } from '../../utils/ttsStream';
+import { useKeyboardInset } from '../../utils/useKeyboardInset';
 import { AudioToggle } from '../../components/AudioToggle';
+import { CHAT_READ_ALOUD_ENABLED } from '../../constants/features';
 import { useExperienceLevel } from '../../services/experienceLevel';
 import { optimisticMarkUnseen } from '../../services/mapSeen';
 import { setChatSessionActive } from '../../services/chatActivity';
@@ -635,17 +637,14 @@ export default function ChatScreen() {
   // scrollToEnd on show is kept inside the same effect — without it,
   // the ScrollView keeps its contentOffset and the last 1-2 messages
   // slide under the now-smaller view area.
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvt, (e) => {
-      setKbHeight(e.endCoordinates?.height ?? 0);
-      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-    });
-    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  // Keyboard avoidance — centralized in utils/useKeyboardInset. On
+  // Android the window resizes (softwareKeyboardLayoutMode:'resize'), so
+  // the inset stays 0 and the OS lifts the dock; onShow still fires so the
+  // thread scrolls to the latest message. On iOS the inset is the live
+  // keyboard height, applied as paddingBottom on the bottom dock below.
+  const kbHeight = useKeyboardInset({
+    onShow: () => requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true })),
+  });
 
   // ===== MESSAGE HELPERS =====
   // Both helpers target the ACTIVE thread via chatModeRef. Callers
@@ -1373,13 +1372,21 @@ export default function ChatScreen() {
           chat tab — sits BELOW the global tab bar (which is rendered by the
           parent _layout). Low-visibility on purpose; reflects the AI's
           processing state without competing with the conversation. */}
-      <View style={styles.headerStrip}>
-        {/* Session audio mute/unmute. Default OFF. Tap to flip. When ON,
-            every new AI reply auto-plays via the streaming TTS pipeline.
-            When OFF, audio is silent and any in-flight playback stops
-            immediately. No per-message control. */}
-        <AudioToggle enabled={audioEnabled} onToggle={toggleAudio} />
-      </View>
+      {/* Chat read-aloud hidden for v1 (CHAT_READ_ALOUD_ENABLED in
+          constants/features.ts). The session audio toggle is the ONLY
+          entry point; with the whole strip gone, audioEnabled stays false
+          and the streaming-TTS chain never starts — so chat never parks
+          the audio session in playback mode. Flip the flag to restore the
+          toggle + auto-play. (Map Voice is a separate system, unaffected.) */}
+      {CHAT_READ_ALOUD_ENABLED ? (
+        <View style={styles.headerStrip}>
+          {/* Session audio mute/unmute. Default OFF. Tap to flip. When ON,
+              every new AI reply auto-plays via the streaming TTS pipeline.
+              When OFF, audio is silent and any in-flight playback stops
+              immediately. No per-message control. */}
+          <AudioToggle enabled={audioEnabled} onToggle={toggleAudio} />
+        </View>
+      ) : null}
       {/* Mode toggle — Process (gentle holding) vs Explore (active
           map-building). The mode-active indicator (Process triangle
           or Explore confidence ring) lives in the center of the bar

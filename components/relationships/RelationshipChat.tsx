@@ -32,6 +32,7 @@ import {
   View, Text, ScrollView,
   Platform, StyleSheet, ActivityIndicator, Keyboard,
 } from 'react-native';
+import { useKeyboardInset } from '../../utils/useKeyboardInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { v4 as uuidv4 } from 'uuid';
@@ -42,6 +43,7 @@ import { MessageBubble, ChatMsg } from '../MessageBubble';
 import { stripMarkers, stripMarkersForDisplay } from '../../utils/markers';
 import { ChatInput } from '../ChatInput';
 import { AudioToggle } from '../AudioToggle';
+import { CHAT_READ_ALOUD_ENABLED } from '../../constants/features';
 import { ConversationStarters } from '../ConversationStarters';
 import { EndSessionButton } from '../EndSessionButton';
 import { RelationshipSessionSummaryModal } from './RelationshipSessionSummaryModal';
@@ -601,34 +603,27 @@ export function RelationshipChat({
   // with the keyboard's own animation and clears the suggestion bar
   // automatically (the height OS reports includes the suggestion
   // strip when it's visible).
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvt, (e) => {
-      setKbHeight(e.endCoordinates?.height ?? 0);
-      // Build 11 bug fix — the kbHeight padding lifts the INPUT BAR
-      // above the keyboard, but the ScrollView keeps its contentOffset.
-      // Without an explicit scrollToEnd, the last 1–2 messages slide
-      // under the (now-smaller) ScrollView's bottom edge and get
-      // clipped behind the input bar / hidden above the keyboard.
-      // Same pattern the main chat tab uses (app/(tabs)/index.tsx ~570).
-      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-    });
-    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  // Centralized in utils/useKeyboardInset. Non-modal partner-chat screen
+  // → on Android the OS resize lifts the dock (inset stays 0); iOS lifts
+  // by the live keyboard height. onShow scrolls to the latest message on
+  // both platforms (without it the last messages hide under the dock).
+  // (Partner is gated off for v1 — device-test when PARTNER_ENABLED is on.)
+  const kbHeight = useKeyboardInset({
+    onShow: () => requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true })),
+  });
 
   return (
     <View style={styles.flex}>
       {/* Header strip — hosts the session audio mute/unmute toggle.
-          Default OFF; tapping enables auto-play for every new AI
-          reply via utils/ttsStream. Tapping again kills any in-flight
-          playback immediately. No per-message controls (matches main
-          chat tab behavior). */}
-      <View style={styles.headerStrip}>
-        <AudioToggle enabled={audioEnabled} onToggle={toggleAudio} />
-      </View>
+          Hidden for v1 alongside the main chat (CHAT_READ_ALOUD_ENABLED
+          in constants/features.ts); with it gone, audioEnabled stays
+          false and the streaming-TTS chain never starts. Flip the flag to
+          restore. (Partner is also gated off for v1 via PARTNER_ENABLED.) */}
+      {CHAT_READ_ALOUD_ENABLED ? (
+        <View style={styles.headerStrip}>
+          <AudioToggle enabled={audioEnabled} onToggle={toggleAudio} />
+        </View>
+      ) : null}
 
       {loading ? (
         <View style={styles.loadingWrap}>

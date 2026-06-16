@@ -25,6 +25,7 @@ import {
   View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert,
   Platform, Keyboard, Animated,
 } from 'react-native';
+import { useKeyboardInset } from '../../utils/useKeyboardInset';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
@@ -88,16 +89,11 @@ export function PartnerContributionInput({
   // stayed under the keyboard on real devices). The endCoordinates
   // listener catches both iOS keyboardWillShow (pre-animation, no
   // perceptible lag) and Android keyboardDidShow.
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvt, (e) => {
-      setKbHeight(e.endCoordinates?.height ?? 0);
-    });
-    const hideSub = Keyboard.addListener(hideEvt, () => setKbHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  // Centralized in utils/useKeyboardInset. Non-modal inline input → on
+  // Android the OS resize lifts the screen (inset stays 0); iOS lifts by
+  // the live keyboard height. (Partner is gated off for v1 — device-test
+  // when PARTNER_ENABLED is flipped on.)
+  const kbHeight = useKeyboardInset();
 
   // Unmount cleanup — if the user collapses or navigates away mid-
   // recording, stop the recorder so the mic isn't held open in the

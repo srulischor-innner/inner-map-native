@@ -75,25 +75,25 @@ const base = {
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
-      // ANDROID KEYBOARD LAYOUT MODE — "pan" instead of the Expo
-      // default "resize" (build-13 Android keyboard fix).
+      // ANDROID KEYBOARD LAYOUT MODE — "resize" (Expo's default, made
+      // explicit). With edgeToEdgeEnabled the OS shrinks the window to
+      // the area above the IME when the keyboard opens, so a bottom-
+      // docked input naturally sits above the keyboard. This app has NO
+      // bottom tab bar (the tab bar is a custom TOP bar — see
+      // app/(tabs)/_layout.tsx), so "resize"'s usual downside (pushing
+      // bottom tabs up above the keyboard) does not apply here.
       //
-      // "resize" shrinks the WINDOW when the keyboard opens, so the
-      // bottom flex child (our input dock) naturally sits above the
-      // keyboard — fine in theory, but combined with the manual
-      // kbHeight paddingBottom that lifts ChatInput, the input
-      // ends up double-shifted: once by the resize, once by the
-      // padding. The visible result is the input floating well
-      // above the keyboard with a blank gap, OR (depending on
-      // measure timing) hidden behind it entirely.
-      //
-      // "pan" leaves the window full-height and SLIDES it up under
-      // the keyboard. The manual paddingBottom is then the only
-      // lift, and it lands the input flush against the keyboard
-      // top — same behavior as iOS. Partner chat also uses the
-      // manual pattern, so this change makes both surfaces feel
-      // identical on Android.
-      softwareKeyboardLayoutMode: 'pan',
+      // The prior value was "pan" + a manual kbHeight paddingBottom lift
+      // on every screen. "pan" + edge-to-edge does NOT deliver a reliable
+      // IME inset across OEM keyboards — it worked on the AOSP emulator
+      // but left the chat input COVERED by the keyboard on Samsung One UI.
+      // We now let the OS resize do the lift on Android normal screens
+      // and apply the manual lift only where resize can't reach: iOS
+      // (never resizes the RN view) and inside RN <Modal>s (a Modal is a
+      // separate window that doesn't inherit the activity's resize). That
+      // split lives in utils/useKeyboardInset.ts. Keep this value and the
+      // hook in sync.
+      softwareKeyboardLayoutMode: 'resize',
       // ANDROID PERMISSIONS — must include INTERNET explicitly.
       //
       // May 2026 incident: Android Internal Testing builds shipped
