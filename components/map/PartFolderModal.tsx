@@ -282,7 +282,10 @@ export function PartFolderModal({
               marker (it tolerates the row not existing yet by
               creating one when the user has at least begun mapping). */}
           {BELIEF_PART_TYPES.has(String(partKey)) ? (
-            <BeliefSection part={part} color={meta.color} onClose={onClose} />
+            <>
+              <BeliefSection part={part} color={meta.color} onClose={onClose} />
+              <MiddleGroundSection part={part} color={meta.color} />
+            </>
           ) : null}
 
           {/* Per-part section rendering. Every section is ALWAYS visible —
@@ -560,6 +563,103 @@ function BeliefSection({ part, color, onClose }: { part: any; color: string; onC
             Establish your belief
           </Text>
         </Pressable>
+      )}
+    </View>
+  );
+}
+
+// ============================================================================
+// "Where You Live" section — the Self-like middle-ground collection.
+// Renders inside the Self-like part folder only, directly below the
+// belief section. The AI files items here (with in-conversation consent)
+// when it notices something the user keeps returning to — the middle
+// ground that steadies them.
+//
+// READ-ONLY for the user: no add, no edit. Each item can be deleted with
+// a confirm (mirrors the belief Clear guardrail) if it was filed in error
+// or no longer fits. Items are {id, label, note?, createdAt}.
+//
+// Empty state shows a quiet line so the section reads as "building toward"
+// rather than "missing" — consistent with the rest of the folder. Like
+// BeliefSection, this owns its local list and doesn't bubble changes up;
+// the map tab re-pulls /api/parts on next focus. ("Where You Live" is a
+// placeholder label — final copy lands later.)
+// ============================================================================
+type MiddleGroundItem = { id: string; label: string; note?: string | null; createdAt?: string };
+
+function MiddleGroundSection({ part }: { part: any; color: string }) {
+  const [items, setItems] = useState<MiddleGroundItem[]>(
+    Array.isArray(part?.middleGround) ? part.middleGround : [],
+  );
+
+  // Resync from the row when the modal switches part rows while open
+  // (same staleness guard as BeliefSection).
+  useEffect(() => {
+    setItems(Array.isArray(part?.middleGround) ? part.middleGround : []);
+  }, [part?.id, part?.middleGround]);
+
+  const handleDelete = useCallback((item: MiddleGroundItem) => {
+    if (!part?.id || !item?.id) return;
+    Alert.alert(
+      'Remove this?',
+      `“${item.label}” will be removed from where you live.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            Haptics.selectionAsync().catch(() => {});
+            const updated = await api.deleteMiddleGroundItem(String(part.id), String(item.id));
+            if (updated) {
+              setItems(updated);
+            } else {
+              Alert.alert(
+                'Couldn’t remove',
+                'We couldn’t remove that just now. Try again in a moment.',
+              );
+            }
+          },
+        },
+      ],
+    );
+  }, [part?.id]);
+
+  return (
+    <View style={styles.middleWrap}>
+      <Text style={styles.middleLabel}>WHERE YOU LIVE</Text>
+      <Text style={styles.middleSubtitle}>
+        What you keep coming back to — the ground that steadies you.
+      </Text>
+
+      {items.length === 0 ? (
+        <Text style={styles.middleEmpty}>
+          As we talk, the things you return to will gather here.
+        </Text>
+      ) : (
+        <View style={styles.middleList}>
+          {items.map((item, idx) => (
+            <View
+              key={item.id}
+              style={[styles.middleItem, idx > 0 && styles.middleItemDivider]}
+            >
+              <View style={styles.middleItemBody}>
+                <Text style={styles.middleItemLabel}>{item.label}</Text>
+                {item.note ? (
+                  <Text style={styles.middleItemNote}>{item.note}</Text>
+                ) : null}
+              </View>
+              <Pressable
+                onPress={() => handleDelete(item)}
+                style={({ pressed }) => [styles.middleDeleteBtn, pressed && { opacity: 0.6 }]}
+                hitSlop={10}
+                accessibilityLabel={`Remove ${item.label}`}
+              >
+                <Ionicons name="close" size={16} color={colors.creamFaint} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
       )}
     </View>
   );
@@ -1148,6 +1248,71 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansMedium,
     fontSize: 12,
     letterSpacing: 0.3,
+  },
+
+  // "Where You Live" section — sits directly below the belief section
+  // inside the Self-like folder. No top border: the belief section's
+  // bottom border serves as the divider between the two. Its own bottom
+  // border closes the zone, matching the belief section's framing.
+  middleWrap: {
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(240,237,232,0.08)',
+  },
+  middleLabel: {
+    color: '#E6B47A',
+    fontFamily: fonts.sansBold,
+    fontSize: 10,
+    letterSpacing: 2,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  middleSubtitle: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  middleEmpty: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    lineHeight: 19,
+    opacity: 0.8,
+  },
+  middleList: {},
+  middleItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 9,
+  },
+  middleItemDivider: {
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(240,237,232,0.06)',
+  },
+  middleItemBody: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  middleItemLabel: {
+    color: '#F0EDE8',
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  middleItemNote: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  middleDeleteBtn: {
+    padding: 4,
+    marginTop: 1,
   },
 
   // Detected Nx pill — small amber bordered pill at the top of the

@@ -164,6 +164,39 @@ export function parseShareSuggestMarkers(text: string): ShareSuggestMatch[] {
   return out;
 }
 
+/** Strict ADDED_TO_MIDDLE marker pattern — the user-facing pill for the
+ *  Self-like "where you live" collection. Same strict-match semantics as
+ *  ADDED_TO_MAP: only the COMPLETE `[ADDED_TO_MIDDLE: <label>]` form
+ *  matches, so a partial marker mid-stream stays as plain text until its
+ *  closing bracket arrives. Capture group 1 is the item label. */
+const ADDED_TO_MIDDLE_RE = /\[ADDED_TO_MIDDLE:\s*([^\]]+)\]/g;
+
+export type AddedToMiddleMatch = {
+  /** Whole match including brackets, e.g. "[ADDED_TO_MIDDLE: rock climbing]". */
+  raw: string;
+  /** Trimmed item label from the capture group. */
+  name: string;
+  start: number;
+  end: number;
+};
+
+/** Find every complete [ADDED_TO_MIDDLE: ...] marker in document order.
+ *  The bubble renderer splices a <MiddlePill> at each match position —
+ *  same mechanism as parseAddedToMapMarkers. Empty array on no matches
+ *  or malformed input; never throws. */
+export function parseAddedToMiddleMarkers(text: string): AddedToMiddleMatch[] {
+  if (!text) return [];
+  const out: AddedToMiddleMatch[] = [];
+  const re = new RegExp(ADDED_TO_MIDDLE_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = String(m[1] || '').trim();
+    if (!name) continue;
+    out.push({ raw: m[0], name, start: m.index, end: m.index + m[0].length });
+  }
+  return out;
+}
+
 /**
  * Remove every known marker from a string so it's safe to display or speak.
  * Mirrors the web app's strip list. Always strips — used for TTS, saved
@@ -224,6 +257,14 @@ export function stripMarkers(text: string): string {
     // and we never want the literal "[SAVE_BELIEF:{...}]" string to
     // be spoken by TTS or echoed back into the model's next turn.
     .replace(/\[SAVE_BELIEF:\s*\{[\s\S]*?\}\s*\]/g, '')
+    // MIDDLE_GROUND — Self-like "where you live" data marker. The server
+    // parses + strips it before the reply reaches us; this is the
+    // defensive catch for streaming partials. ADDED_TO_MIDDLE is the
+    // user-facing pill: stripped HERE (TTS + history + saves must never
+    // include it or echo it back), but PRESERVED by stripMarkersForDisplay
+    // so the bubble can render a <MiddlePill> — same split as ADDED_TO_MAP.
+    .replace(/\[MIDDLE_GROUND:\s*\{[\s\S]*?\}\s*\]/g, '')
+    .replace(/\[ADDED_TO_MIDDLE:\s*[^\]]+\]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
 }
@@ -261,6 +302,10 @@ const BRACKET_MARKER_TOKENS = [
   'STARTER_MAP_COMPLETE', 'CHAT_META:', 'MAP_UPDATE:', 'MAP_READY:',
   'MAP_FILL:', 'MAP_SECONDARY:', 'SPECTRUM_UPDATE:', 'SUMMARY_META:',
   'NOTICED:', 'CRISIS_DETECTED:',
+  // Middle-ground collection (Self-like "where you live"). Data marker +
+  // user-facing pill — registered so a streaming partial holds back
+  // instead of flashing a raw marker.
+  'MIDDLE_GROUND:', 'ADDED_TO_MIDDLE:',
 ];
 
 function couldBeTokenPrefix(s: string, tokens: string[]): boolean {
@@ -344,6 +389,13 @@ export function stripMarkersForDisplay(text: string): string {
     // strips this before the response reaches us; the rule here is
     // a defensive catch for streaming partials that slipped through.
     .replace(/\[SAVE_BELIEF:\s*\{[\s\S]*?\}\s*\]/g, '')
+    // MIDDLE_GROUND — the "where you live" DATA marker: always stripped
+    // from display (never user-facing; carries the JSON the server
+    // persists). The ADDED_TO_MIDDLE PILL marker is intentionally NOT
+    // stripped here — like ADDED_TO_MAP / SHARE_SUGGEST above it survives
+    // so MessageBubble can splice a <MiddlePill> at its position.
+    // stripMarkers (TTS/history) still removes both.
+    .replace(/\[MIDDLE_GROUND:\s*\{[\s\S]*?\}\s*\]/g, '')
     // INTAKE_COMPLETE — strip from display path too. The marker is
     // pure structured payload (the 5 intake fields are persisted
     // server-side); the user-visible transition line that follows

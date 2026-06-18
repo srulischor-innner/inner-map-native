@@ -1328,6 +1328,43 @@ export const api = {
     }
   },
 
+  /** DELETE /api/parts/:id/middle-ground/:itemId — remove one item from
+   *  the Self-like "where you live" collection. This is a read-only
+   *  feature for the user: the AI files items (with consent) and the
+   *  user can delete them, but not add or edit. Returns the UPDATED item
+   *  array on success so the folder can resync its local list without a
+   *  refetch; null on transport / 4xx failure (caller leaves state as-is
+   *  and shows a small error). */
+  async deleteMiddleGroundItem(partId: string, itemId: string): Promise<Array<{
+    id: string;
+    label: string;
+    note: string | null;
+    createdAt: string;
+  }> | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(
+        `/api/parts/${encodeURIComponent(partId)}/middle-ground/${encodeURIComponent(itemId)}`,
+        { label: 'middle-ground-delete', method: 'DELETE', headers },
+      );
+      if (!res.ok) {
+        console.warn('[middle-ground-delete] non-OK', res.status);
+        return null;
+      }
+      const j: any = await res.json().catch(() => null);
+      if (!j || !Array.isArray(j.middleGround)) return null;
+      return j.middleGround.map((it: any) => ({
+        id: String(it?.id || ''),
+        label: String(it?.label || ''),
+        note: typeof it?.note === 'string' ? it.note : null,
+        createdAt: String(it?.createdAt || ''),
+      }));
+    } catch (e) {
+      console.warn('[middle-ground-delete] threw:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   /** POST /api/memory/flag — promote a chat message into a key moment
    *  (round 9 RAG). The server scopes the lookup by req.userId, so a
    *  user can only flag their own messages. messageId is the

@@ -18,8 +18,9 @@ import {
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { PartBadge } from './PartBadge';
-import { parseAddedToMapMarkers, parseShareSuggestMarkers } from '../utils/markers';
+import { parseAddedToMapMarkers, parseShareSuggestMarkers, parseAddedToMiddleMarkers } from '../utils/markers';
 import { MapPill } from './chat/MapPill';
+import { MiddlePill } from './chat/MiddlePill';
 import { SharePromptCard } from './chat/SharePromptCard';
 
 export type ChatMsg = {
@@ -306,6 +307,8 @@ function AssistantBubbleBody({
 }) {
   // Find every inline marker that has a renderable component:
   //   - ADDED_TO_MAP    → <MapPill name=... />
+  //   - ADDED_TO_MIDDLE → <MiddlePill name=... />  (Self-like
+  //     "where you live" collection; any chat mode)
   //   - SHARE_SUGGEST   → <SharePromptCard suggestion=.../>  (only
   //     rendered when relationshipId is set — main-chat usage
   //     leaves the marker as plain text, but stripMarkers will
@@ -321,6 +324,15 @@ function AssistantBubbleBody({
       out.push({
         start: m.start, end: m.end,
         node: <MapPill key={`map-${m.start}`} name={m.name} />,
+      });
+    }
+    // ADDED_TO_MIDDLE — Self-like "where you live" pill. Not gated on
+    // relationshipId: this collection belongs to the main (individual)
+    // chat, unlike SHARE_SUGGEST which is relationship-mode only.
+    for (const m of parseAddedToMiddleMarkers(text)) {
+      out.push({
+        start: m.start, end: m.end,
+        node: <MiddlePill key={`middle-${m.start}`} name={m.name} />,
       });
     }
     if (relationshipId) {
