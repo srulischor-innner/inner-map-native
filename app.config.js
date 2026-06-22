@@ -16,6 +16,42 @@
 // fall back to the production identifiers, matching what the App
 // Store build ships.
 
+// ===========================================================================
+// Google Sign-In — iOS reversed-client-ID URL scheme (fatal-crash guard).
+//
+// On iOS, GIDSignIn requires the app's Info.plist to register the iOS OAuth
+// client ID with its host components reversed as a CFBundleURLTypes scheme:
+//   254307488325-fd5a8p59nsop2aev70uht1spd956k1ul.apps.googleusercontent.com
+//     -> com.googleusercontent.apps.254307488325-fd5a8p59nsop2aev70uht1spd956k1ul
+// (it is the OAuth redirect target the SDK hands to the auth session). If the
+// scheme is absent, -[GIDSignIn signInWithOptions:] throws
+// NSInvalidArgumentException and HARD-CRASHES the app on the FIRST tap of
+// "Sign in with Google" — there is no JS layer to catch it. This was the
+// 1.1.0 production crash (Sentry, iOS 26.5.1). The value is NOT a secret: it
+// is embedded in the shipped IPA's Info.plist by design — that is exactly
+// where the SDK reads it from.
+//
+// We derive the scheme from the SAME env var the SDK's iosClientId comes from
+// (EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID — see extra.googleClientIds below +
+// AuthButtonRow.tsx's GoogleSignin.configure) so the registered scheme and the
+// runtime SDK config can never drift out of sync. The hardcoded fallback is
+// the known production iOS client ID, so a missing/garbled env var at build
+// time can never silently re-introduce the crash. NOTE: a native config
+// change — requires a NEW build to take effect.
+const KNOWN_GOOGLE_IOS_CLIENT_ID =
+  '254307488325-fd5a8p59nsop2aev70uht1spd956k1ul.apps.googleusercontent.com';
+
+function reversedIosClientScheme(clientId) {
+  const m = /^(.+)\.apps\.googleusercontent\.com$/.exec(String(clientId || '').trim());
+  return m ? `com.googleusercontent.apps.${m[1]}` : null;
+}
+
+// Always resolves to a valid scheme: build-time env value first, the known
+// production client ID as the floor.
+const GOOGLE_IOS_URL_SCHEME =
+  reversedIosClientScheme(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID) ||
+  reversedIosClientScheme(KNOWN_GOOGLE_IOS_CLIENT_ID);
+
 const base = {
   expo: {
     name: 'Inner Map',
@@ -145,6 +181,16 @@ const base = {
       'expo-local-authentication',
       // Build 11 — Apple Sign-In runtime + entitlement plumbing.
       'expo-apple-authentication',
+      // Build 13 fatal-crash fix (June 2026): the Google Sign-In config
+      // plugin registers the REVERSED iOS OAuth client ID as a
+      // CFBundleURLTypes scheme in Info.plist. Without it,
+      // -[GIDSignIn signInWithOptions:] throws NSInvalidArgumentException
+      // ("missing support for the following URL schemes …") and HARD-CRASHES
+      // the moment a user taps "Sign in with Google" on iOS. The scheme MUST
+      // live in the static native config; GoogleSignin.configure({iosClientId})
+      // at runtime does NOT register it. See GOOGLE_IOS_URL_SCHEME above for
+      // how the value is derived (and why it cannot drift from the SDK config).
+      ['@react-native-google-signin/google-signin', { iosUrlScheme: GOOGLE_IOS_URL_SCHEME }],
       // Sentry crash reporting (June 2026). The Expo config plugin wires the
       // native SDK + auto-uploads JS source maps + iOS dSYMs during EAS build
       // so crashes are symbolicated with no user opt-in. Build-time upload
