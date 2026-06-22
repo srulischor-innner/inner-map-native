@@ -32,7 +32,7 @@ export function SpectrumBar({ leftLabel, rightLabel, caption, value, leftColor, 
           track itself conveys the same information visually; the hint just
           explains it in words. */}
       {!hasData ? (
-        <Text style={styles.noDataHint}>not enough signal yet</Text>
+        <Text style={styles.noDataHint}>Still learning where you are — this sharpens as we talk.</Text>
       ) : null}
       <View style={styles.track}>
         {/* Soft gradient feel via three stacked blocks */}

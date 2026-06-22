@@ -1,41 +1,44 @@
-// "Your Map" — per-part depth indicator. For each of the seven parts
-// we look at the latest mapData blob from /api/journey and compute a
-// fraction of expected sections that have content. Renders a small
-// colored bar showing depth + an italic excerpt of what was captured.
-// Always evolving — never says "complete".
+// "Your Map" — per-part depth indicator. Reads the PARTS TABLE (via
+// /api/parts — the same source the Map tab and "Most active energies"
+// use), NOT the legacy session `mapData` blob.
+//
+// Why (June 2026 fix): the session blob is now written as
+// {partFindings:[{part,field,value,...}]}, but this component used to read
+// legacy FLAT keys (mapData.wound, mapData.fixer, …). Those keys no longer
+// exist in the blob, so every part counted zero filled sections and showed
+// "Not yet visible" even when the user's map was full. We now count the
+// confirmed/filled markerFields on each part row instead — the single
+// source of truth the rest of the app already trusts.
+//
+// For each of the four core parts we compute a fraction of expected
+// sections that have content + an italic excerpt of what was captured.
+// Managers / Firefighters are counted by category. Always evolving —
+// never says "complete".
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, spacing } from '../../constants/theme';
 
-type MapData = {
-  // Free-form fields the AI fills in via MAP_UPDATE / MAP_READY.
-  wound?: string;
-  woundFeeling?: string;
-  woundBodyLocation?: string;
-  fixer?: string;
-  fixerProtects?: string;
-  fixerShowsUp?: string;
-  skeptic?: string;
-  skepticProtects?: string;
-  skepticEvidence?: string;
-  selfLike?: string;
-  selfLikeBuilt?: string;
-  selfLikeManages?: string;
-  detectedManagers?: any[];
-  detectedFirefighters?: any[];
-  // Allow other unknown keys — the AI sometimes emits extra ones.
+// A part row as returned by /api/parts:
+//   { category, name, corePhrase, detectionCount,
+//     markerFields: { <field>: { value, confidence, ts } }, ... }
+type Part = {
+  category?: string;
+  name?: string;
+  corePhrase?: string | null;
+  markerFields?: Record<string, { value?: string; confidence?: string }> | null;
   [k: string]: any;
-} | null | undefined;
+};
 
 type PartConfig = {
-  key: string;
+  key: string;          // matches parts.category
   name: string;
   color: string;
-  // Sections we count for the depth bar. Each is a tuple of dataKey + label.
-  sections: { key: string; label: string }[];
-  // Excerpt source — first non-empty section's value.
-  excerptKeys: string[];
+  // Sections counted for the depth bar — each is a markerFields field key.
+  sections: { field: string; label: string }[];
+  // Excerpt source — first non-empty value among these fields (falls back
+  // to the part's corePhrase).
+  excerptFields: string[];
 };
 
 const PARTS: PartConfig[] = [
@@ -44,56 +47,73 @@ const PARTS: PartConfig[] = [
     name: 'Wound',
     color: '#FF5555',
     sections: [
-      { key: 'wound', label: 'Core belief' },
-      { key: 'woundFeeling', label: 'Feeling layer' },
-      { key: 'woundBodyLocation', label: 'Where it lives' },
+      { field: 'belief', label: 'Core belief' },
+      { field: 'feeling', label: 'Feeling layer' },
+      { field: 'body', label: 'Where it lives' },
     ],
-    excerptKeys: ['wound', 'woundFeeling'],
+    excerptFields: ['belief', 'feeling'],
   },
   {
     key: 'fixer',
     name: 'Fixer',
     color: '#F0C070',
     sections: [
-      { key: 'fixer', label: 'Pattern' },
-      { key: 'fixerProtects', label: 'What it protects' },
-      { key: 'fixerShowsUp', label: 'How it shows up' },
+      { field: 'pattern', label: 'Pattern' },
+      { field: 'what-it-protects', label: 'What it protects' },
+      { field: 'how-it-shows-up', label: 'How it shows up' },
     ],
-    excerptKeys: ['fixer', 'fixerProtects'],
+    excerptFields: ['pattern', 'what-it-protects'],
   },
   {
     key: 'skeptic',
     name: 'Skeptic',
     color: '#90C8E8',
     sections: [
-      { key: 'skeptic', label: 'Pattern' },
-      { key: 'skepticProtects', label: 'What it protects' },
-      { key: 'skepticEvidence', label: 'Its evidence' },
+      { field: 'pattern', label: 'Pattern' },
+      { field: 'what-it-protects', label: 'What it protects' },
+      { field: 'how-it-shows-up', label: 'How it shows up' },
     ],
-    excerptKeys: ['skeptic', 'skepticProtects'],
+    excerptFields: ['pattern', 'what-it-protects'],
   },
   {
     key: 'self-like',
     name: 'Self-Like',
     color: '#A090C0',
     sections: [
-      { key: 'selfLike', label: 'What it built' },
-      { key: 'selfLikeManages', label: 'How it manages' },
+      { field: 'what-it-built', label: 'What it built' },
+      { field: 'agenda', label: 'How it manages' },
     ],
-    excerptKeys: ['selfLike', 'selfLikeBuilt'],
+    excerptFields: ['what-it-built', 'agenda'],
   },
 ];
 
-export function MapDepth({ mapData }: { mapData: MapData }) {
-  const md = mapData || {};
+// Read a markerFields value for a field — non-empty trimmed string or ''.
+function fieldValue(part: Part | undefined, field: string): string {
+  const mf = part?.markerFields;
+  const entry = mf && typeof mf === 'object' ? mf[field] : null;
+  const v = entry && typeof entry === 'object' ? entry.value : undefined;
+  return typeof v === 'string' && v.trim() ? v.trim() : '';
+}
+
+export function MapDepth({ parts }: { parts: Part[] | null | undefined }) {
+  const rows = Array.isArray(parts) ? parts : [];
+  const catOf = (p: Part) => String(p?.category || '').toLowerCase();
+  const findPart = (cat: string) =>
+    rows.find((p) => {
+      const c = catOf(p);
+      // 'compromised' is the legacy alias for the self-like category.
+      return c === cat || (cat === 'self-like' && c === 'compromised');
+    });
+
   return (
     <View>
       {PARTS.map((p) => {
-        const filled = p.sections.filter((s) => isFilled(md[s.key])).length;
+        const part = findPart(p.key);
+        const filled = p.sections.filter((s) => fieldValue(part, s.field)).length;
         const total = p.sections.length;
         const excerpt =
-          p.excerptKeys.map((k) => (typeof md[k] === 'string' ? md[k] : ''))
-                       .find((v) => v && v.trim()) || '';
+          p.excerptFields.map((f) => fieldValue(part, f)).find((v) => v) ||
+          (typeof part?.corePhrase === 'string' ? part.corePhrase.trim() : '');
         const status =
           filled === 0 ? 'Not yet visible' :
           filled === total ? 'Mapped' :
@@ -108,30 +128,26 @@ export function MapDepth({ mapData }: { mapData: MapData }) {
             <DepthBar filled={filled} total={total} color={p.color} />
             {excerpt ? (
               <Text style={styles.excerpt} numberOfLines={2}>
-                {excerpt.trim().slice(0, 140)}
+                {excerpt.slice(0, 140)}
               </Text>
             ) : null}
           </View>
         );
       })}
 
-      {/* Managers + Firefighters — counted, not section-based. */}
+      {/* Managers + Firefighters — counted from the parts table by category. */}
       <CountRow
         name="Managers"
         color="#A8DCC0"
-        count={Array.isArray(md.detectedManagers) ? md.detectedManagers.length : 0}
+        count={rows.filter((p) => catOf(p) === 'manager').length}
       />
       <CountRow
         name="Firefighters"
         color="#F0A050"
-        count={Array.isArray(md.detectedFirefighters) ? md.detectedFirefighters.length : 0}
+        count={rows.filter((p) => catOf(p) === 'firefighter').length}
       />
     </View>
   );
-}
-
-function isFilled(v: any): boolean {
-  return typeof v === 'string' && v.trim().length > 0;
 }
 
 function DepthBar({

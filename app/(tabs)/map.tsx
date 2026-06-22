@@ -144,6 +144,10 @@ export default function MapScreen() {
   const [outsideInScore, setOutsideInScore] = useState<number | null>(null);
   const [fragmentedScore, setFragmentedScore] = useState<number | null>(null);
   const [blendedSelfLedScore, setBlendedSelfLedScore] = useState<number | null>(null);
+  // Per-spectrum provenance from /api/latest-map. The ProgressStrip shows a
+  // reading's dot only when its flag is true (a real SPECTRUM_UPDATE earned
+  // it) — otherwise an honest "still getting to know you" state.
+  const [spectrumEarned, setSpectrumEarned] = useState<{ outsideIn?: boolean; fragmented?: boolean; blendedSelfLed?: boolean } | null>(null);
   const [parts, setParts] = useState<any[]>([]);
   // clinicalPatterns (outsideInKeywords / insideOutKeywords / blendedKeywords /
   // selfLedKeywords / ...) powers the "what the spectrum is picking up" lists
@@ -167,6 +171,7 @@ export default function MapScreen() {
       if (typeof res?.outsideInScore === 'number') setOutsideInScore(res.outsideInScore);
       if (typeof res?.fragmentedScore === 'number') setFragmentedScore(res.fragmentedScore);
       if (typeof res?.blendedSelfLedScore === 'number') setBlendedSelfLedScore(res.blendedSelfLedScore);
+      if (res?.spectrumEarned && typeof res.spectrumEarned === 'object') setSpectrumEarned(res.spectrumEarned);
       setParts(ps);
       if (journey?.clinicalPatterns) setClinicalPatterns(journey.clinicalPatterns);
       // TEMP DEBUG — print the raw layers payload so Metro logs make it
@@ -713,6 +718,7 @@ export default function MapScreen() {
         outsideInScore={outsideInScore}
         fragmentedScore={fragmentedScore}
         blendedSelfLedScore={blendedSelfLedScore}
+        spectrumEarned={spectrumEarned}
         clinicalPatterns={clinicalPatterns}
       />
 

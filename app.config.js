@@ -145,9 +145,20 @@ const base = {
       'expo-local-authentication',
       // Build 11 — Apple Sign-In runtime + entitlement plumbing.
       'expo-apple-authentication',
+      // Sentry crash reporting (June 2026). The Expo config plugin wires the
+      // native SDK + auto-uploads JS source maps + iOS dSYMs during EAS build
+      // so crashes are symbolicated with no user opt-in. Build-time upload
+      // auth is the SENTRY_AUTH_TOKEN EAS secret — NOT in this file. This
+      // path needs NO useFrameworks:static / Podfile patch (unlike
+      // Crashlytics), so it doesn't perturb the Skia/Reanimated/New-Arch pods.
+      ['@sentry/react-native/expo', { organization: 'innermap', project: 'react-native' }],
     ],
     extra: {
       apiBaseUrl: 'https://inner-map-production.up.railway.app',
+      // Sentry DSN — the public client ingest key (safe to ship in config;
+      // it is NOT a secret). Read at runtime by app/_layout.tsx's Sentry.init.
+      // The source-map upload AUTH TOKEN is the secret and lives in EAS only.
+      sentryDsn: 'https://416df2827990254e90410d555fd22faf@o4511603923353600.ingest.us.sentry.io/4511603945570304',
       eas: {
         projectId: '14bce05f-41e2-42f3-aa6c-3c153023894f',
       },

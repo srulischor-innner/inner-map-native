@@ -85,7 +85,7 @@ export function SpectrumDetailModal({
                 ]}
               />
             ) : (
-              <Text style={styles.barNoData}>not enough signal yet</Text>
+              <Text style={styles.barNoData}>Still learning where you are — this sharpens as we talk.</Text>
             )}
           </View>
 
@@ -366,7 +366,8 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   barNoData: {
-    position: 'absolute', right: 0, top: 1,
+    position: 'absolute', left: 0, right: 0, top: 1,
+    textAlign: 'center',
     color: colors.creamFaint, fontSize: 11, fontStyle: 'italic',
   },
 

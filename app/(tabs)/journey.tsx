@@ -28,17 +28,25 @@ type JourneyData = {
   mostActiveParts: Energy[];
   clinicalPatterns: any;
   languagePatterns?: LanguagePatterns;
-  mapData?: any;                  // latest mapData blob — drives YOUR MAP section
+  mapData?: any;                  // legacy session blob — no longer drives YOUR MAP (see parts[] / MapDepth)
   sessions: PathItem[];
   // Reading positions on each spectrum (0..1). DB columns keep their legacy
   // "...Score" suffix; the UI never says "score" anywhere.
   outsideInScore?: number | null;
   fragmentedScore?: number | null;
   blendedSelfLedScore?: number | null;
+  // Per-spectrum provenance — true only when a real SPECTRUM_UPDATE earned
+  // the reading. Gates the dot so a thin-data session shows no confident read.
+  spectrumEarned?: { outsideIn?: boolean; fragmented?: boolean; blendedSelfLed?: boolean } | null;
 };
 
 export default function JourneyScreen() {
   const [data, setData] = useState<JourneyData | null>(null);
+  // "Your map" reads the parts table (same source as the Map tab + /api/parts),
+  // NOT the legacy session mapData blob — that blob is now {partFindings:[...]}
+  // and MapDepth's old flat-key reads counted zero → "Not yet visible" on a
+  // full map. Repointed to parts[] (June 2026 fix).
+  const [parts, setParts] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   // 'idle' before first response, 'loaded' after response (even null), 'error'
@@ -49,13 +57,15 @@ export default function JourneyScreen() {
     try {
       const userId = await getUserId();
       console.log('[journey] fetching /api/journey for userId=', userId.slice(0, 8));
-      const res = await api.getJourney();
+      const [res, ps] = await Promise.all([api.getJourney(), api.getParts()]);
       console.log(
         '[journey] response: sessions=', res?.sessions?.length ?? 0,
         'totalMessages=', res?.totalMessages,
         'firstMapDate=', res?.firstMapDate,
+        'parts=', Array.isArray(ps) ? ps.length : 0,
       );
       if (res) setData(res as JourneyData);
+      if (Array.isArray(ps)) setParts(ps);
       setLoadStatus('loaded');
     } catch (e) {
       console.warn('[journey] load failed:', (e as Error)?.message);
@@ -113,7 +123,7 @@ export default function JourneyScreen() {
         />
 
         <Section title="Your map">
-          <MapDepth mapData={data?.mapData} />
+          <MapDepth parts={parts} />
         </Section>
 
         <Section title="Most active energies">
@@ -132,7 +142,7 @@ export default function JourneyScreen() {
             rightLabel="Inside-Out"
             leftColor={colors.wound}
             rightColor={colors.self}
-            value={data?.outsideInScore ?? null}
+            value={data?.spectrumEarned?.outsideIn ? (data?.outsideInScore ?? null) : null}
             caption="How your protective parts orient to the world — a conceptual shift."
           />
           <View style={{ height: spacing.md }} />
@@ -141,7 +151,7 @@ export default function JourneyScreen() {
             rightLabel="Self-Led"
             leftColor={colors.firefighters}
             rightColor={colors.self}
-            value={data?.blendedSelfLedScore ?? null}
+            value={data?.spectrumEarned?.blendedSelfLed ? (data?.blendedSelfLedScore ?? null) : null}
             caption="When parts activate, are you it — or with it? A relational shift."
           />
           <View style={{ height: spacing.md }} />
@@ -150,7 +160,7 @@ export default function JourneyScreen() {
             rightLabel="Flowing"
             leftColor={colors.firefighters}
             rightColor={colors.self}
-            value={data?.fragmentedScore ?? null}
+            value={data?.spectrumEarned?.fragmented ? (data?.fragmentedScore ?? null) : null}
             caption="How your whole system is actually running — an experiential shift."
           />
         </Section>

@@ -48,6 +48,7 @@ import {
   biometricsAvailable, isLockEnabled, setLockEnabled,
 } from '../services/biometrics';
 import { api } from '../services/api';
+import * as Sentry from '@sentry/react-native';
 
 const SUPPORT_EMAIL = 'support@my-inner-map.com';
 
@@ -243,6 +244,52 @@ export default function SettingsScreen() {
               </Text>
             </View>
             <Ionicons name="construct-outline" size={18} color={colors.creamFaint} />
+          </Pressable>
+        ) : null}
+
+        {/* Dev-only Sentry verification — confirm crash reporting reaches the
+            Sentry dashboard before relying on it. Hidden in production. The
+            captured-error path is the safe, deterministic test (it always
+            sends); the native-crash path hard-crashes the process to verify
+            native crash capture (only meaningful in a real/release build). */}
+        {__DEV__ ? (
+          <Pressable
+            style={styles.linkRow}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              Alert.alert(
+                'Send test event to Sentry?',
+                'Sends a captured test error now. The hard-crash option verifies native crash capture (release build only).',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Send captured error',
+                    onPress: () => {
+                      Sentry.captureException(
+                        new Error('Sentry verification — manual test from Settings'),
+                      );
+                      Alert.alert(
+                        'Sent',
+                        'A test error was sent to Sentry. Check Issues in the innermap / react-native project (~1 min).',
+                      );
+                    },
+                  },
+                  {
+                    text: 'Hard native crash',
+                    style: 'destructive',
+                    onPress: () => { Sentry.nativeCrash(); },
+                  },
+                ],
+              );
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Sentry test event (dev only)</Text>
+              <Text style={styles.rowSub}>
+                Verify crash reporting reaches the dashboard before relying on it.
+              </Text>
+            </View>
+            <Ionicons name="bug-outline" size={18} color={colors.creamFaint} />
           </Pressable>
         ) : null}
 

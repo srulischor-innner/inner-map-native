@@ -20,11 +20,16 @@ export function ProgressStrip({
   outsideInScore,
   fragmentedScore,
   blendedSelfLedScore,
+  spectrumEarned,
   clinicalPatterns,
 }: {
   outsideInScore?: number | null;
   fragmentedScore?: number | null;
   blendedSelfLedScore?: number | null;
+  // Per-spectrum provenance from the server. true = a real SPECTRUM_UPDATE
+  // earned the reading; false/absent = parts-derived baseline (or nothing).
+  // We render the dot ONLY when earned — honesty of confidence.
+  spectrumEarned?: { outsideIn?: boolean; fragmented?: boolean; blendedSelfLed?: boolean } | null;
   clinicalPatterns?: any;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -35,9 +40,15 @@ export function ProgressStrip({
     setDetailFor(k);
   };
 
-  // Position lookup for whichever spectrum's panel is open. Kept as a
-  // small map so the order in this file matches the order on screen.
+  // A reading is "earned" only when a genuine SPECTRUM_UPDATE produced it —
+  // not a parts-derived baseline. Until then we show no dot (the app hasn't
+  // earned a confident read yet). The server sends per-spectrum flags.
+  const isEarned = (k: SpectrumKey): boolean => !!(spectrumEarned && spectrumEarned[k]);
+
+  // Position lookup for whichever spectrum's panel is open. Returns null
+  // (→ the "still getting to know you" state) unless the reading is earned.
   const valueFor = (k: SpectrumKey | null): number | null => {
+    if (!k || !isEarned(k)) return null;
     if (k === 'outsideIn')    return outsideInScore ?? null;
     if (k === 'blendedSelfLed') return blendedSelfLedScore ?? null;
     if (k === 'fragmented')   return fragmentedScore ?? null;
@@ -65,7 +76,7 @@ export function ProgressStrip({
               rightLabel="Inside-Out"
               leftColor={colors.wound}
               rightColor={colors.self}
-              value={outsideInScore ?? null}
+              value={isEarned('outsideIn') ? (outsideInScore ?? null) : null}
               caption="How your protective parts orient to the world."
             />
           </SpectrumRow>
@@ -75,7 +86,7 @@ export function ProgressStrip({
               rightLabel="Self-Led"
               leftColor={colors.firefighters}
               rightColor={colors.self}
-              value={blendedSelfLedScore ?? null}
+              value={isEarned('blendedSelfLed') ? (blendedSelfLedScore ?? null) : null}
               caption="When parts activate, are you it — or with it?"
             />
           </SpectrumRow>
@@ -85,7 +96,7 @@ export function ProgressStrip({
               rightLabel="Flowing"
               leftColor={colors.firefighters}
               rightColor={colors.self}
-              value={fragmentedScore ?? null}
+              value={isEarned('fragmented') ? (fragmentedScore ?? null) : null}
               caption="How your whole system is actually running."
             />
           </SpectrumRow>

@@ -15,6 +15,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, View, Image, StyleSheet, Alert, Platform } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
+import Constants from 'expo-constants';
+import * as Sentry from '@sentry/react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -33,6 +35,26 @@ import {
 } from '../services/biometrics';
 import { LockScreen } from '../components/LockScreen';
 import { LandingScreen } from '../components/LandingScreen';
+
+// =============================================================================
+// SENTRY — crash + error reporting (June 2026). Initialized as early as
+// possible (module-eval time) so even boot-path errors are captured. The DSN
+// comes from app.config.js extra.sentryDsn (a public client key — safe in
+// config); the source-map upload auth token is an EAS secret, never in code.
+// Privacy: sendDefaultPii:false — this is a mental-health app, so we do NOT
+// send PII to Sentry. Crash reporting only — no performance tracing / replay.
+// A NEW EAS build is required for any of this to take effect on device.
+// =============================================================================
+const SENTRY_DSN = ((Constants.expoConfig?.extra as any)?.sentryDsn as string) || '';
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    sendDefaultPii: false,
+  });
+  console.log('[sentry] initialized');
+} else {
+  console.warn('[sentry] no DSN in config.extra.sentryDsn — Sentry disabled');
+}
 
 // =============================================================================
 // COLD-START DIAGNOSTICS — runs at module-evaluation time (after the imports
@@ -161,7 +183,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T, tag: string): Pr
   });
 }
 
-export default function RootLayout() {
+function RootLayout() {
   const router = useRouter();
   const responseSubRef = useRef<Notifications.Subscription | null>(null);
   // Biometric lock state. Both flags START AS TRUE so the very first
@@ -610,3 +632,8 @@ const splashStyles = StyleSheet.create({
   },
   icon: { width: 120, height: 120, opacity: 0.9 },
 });
+
+// Wrap the root with Sentry so render/navigation errors are captured with
+// component context. Sentry.wrap is a transparent passthrough when init was
+// skipped (no DSN), so this is safe in every build.
+export default Sentry.wrap(RootLayout);
