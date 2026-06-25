@@ -59,11 +59,12 @@ export function HamburgerMenu({
   const [selectedRelMeta, setSelectedRelMeta] =
     useState<{ relationshipId: string; partnerName: string | null } | null>(null);
   const [relSummaryFailed, setRelSummaryFailed] = useState(false);
-  // Messages-inbox unread count — quiet badge on the Messages row.
-  // Subscribed for the menu's lifetime; refreshed each time the menu
-  // opens (the GET also runs the server's abandoned-session sweep).
-  const [inboxUnread, setInboxUnread] = useState(0);
-  useEffect(() => subscribeInbox((s) => setInboxUnread(s.unreadCount)), []);
+  // Messages-inbox "items waiting" count — quiet badge on the Messages row.
+  // Tracks UN-ACTED noticed items (persist until accepted/declined), not just
+  // unread, so the badge clears only when the user actually handles them.
+  // Refreshed each time the menu opens (the GET also runs the sweep).
+  const [inboxWaiting, setInboxWaiting] = useState(0);
+  useEffect(() => subscribeInbox((s) => setInboxWaiting(s.unactedCount)), []);
   const router = useRouter();
 
   useEffect(() => {
@@ -244,7 +245,7 @@ export function HamburgerMenu({
           label="Messages"
           onPress={() => go('/messages')}
           icon="file-tray-outline"
-          badge={inboxUnread}
+          badge={inboxWaiting}
         />
         <LinkRow
           label="Send feedback"

@@ -21,7 +21,7 @@ import { PARTNER_ENABLED } from '../../constants/features';
 import { HamburgerMenu } from '../../components/HamburgerMenu';
 import { subscribeMapPulse } from '../../utils/mapPulse';
 import { subscribeMapSeen, refreshMapSeenStatus } from '../../services/mapSeen';
-import { refreshInboxStatus } from '../../services/messagesInbox';
+import { refreshInboxStatus, subscribeInbox } from '../../services/messagesInbox';
 import { subscribeChatActivity } from '../../services/chatActivity';
 import {
   subscribePartnerSharedSeen,
@@ -197,6 +197,12 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
   const mapListeningOpacity = useRef(new Animated.Value(1)).current;
   const [chatActive, setChatActive] = useState(false);
   useEffect(() => subscribeChatActivity(setChatActive), []);
+  // "Noticed items waiting" dot on the hamburger button — un-acted inbox
+  // items (persist until the user accepts/declines them in Messages). Same
+  // subscribeInbox stream the Messages-row badge uses; the layout already
+  // calls refreshInboxStatus on mount + foreground above.
+  const [inboxWaiting, setInboxWaiting] = useState(0);
+  useEffect(() => subscribeInbox((s) => setInboxWaiting(s.unactedCount)), []);
   const isOnChatTab = pathname === '/' || pathname === '/index';
   const shouldPulseMapListening = chatActive && isOnChatTab;
   useEffect(() => {
@@ -229,8 +235,16 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
   return (
     <SafeAreaView edges={['top']} style={styles.safe}>
       <View style={styles.headerRow}>
-        <Pressable onPress={onMenu} hitSlop={10} style={styles.menuBtn} accessibilityLabel="Open menu">
-          <Ionicons name="menu" size={22} color={colors.amber} />
+        <Pressable
+          onPress={onMenu}
+          hitSlop={10}
+          style={styles.menuBtn}
+          accessibilityLabel={inboxWaiting > 0 ? 'Open menu — items waiting in Messages' : 'Open menu'}
+        >
+          <View>
+            <Ionicons name="menu" size={22} color={colors.amber} />
+            {inboxWaiting > 0 ? <View style={styles.menuDot} pointerEvents="none" /> : null}
+          </View>
         </Pressable>
       </View>
       <View style={styles.bar}>
@@ -357,6 +371,18 @@ const styles = StyleSheet.create({
     height: 34,
   },
   menuBtn: { padding: 4 },
+  // "Items waiting in Messages" dot — small amber circle at the top-right of
+  // the hamburger icon. Mirrors tabDot's visual language; shows whenever there
+  // are un-acted noticed items, clears when the user handles them.
+  menuDot: {
+    position: 'absolute',
+    top: -2,
+    right: -4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: colors.amber,
+  },
   bar: {
     flexDirection: 'row',
     alignItems: 'stretch',

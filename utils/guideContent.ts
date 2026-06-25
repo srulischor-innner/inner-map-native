@@ -463,7 +463,7 @@ export const USING_FEATURES: GuideFeature[] = [
     icon: 'journal',
     title: 'Journal',
     body: [
-      "Free space for whatever needs to come out — no AI, no analysis. Sometimes the work is just expelling energy through words without trying to make sense of it.",
+      "Free space for whatever needs to come out. Share an entry and the AI can draw on it to understand you; keep it private and it stays on your device, unread.",
     ],
   },
   {

@@ -771,7 +771,7 @@ const styles = StyleSheet.create({
   // changes.
   text: {
     color: colors.cream,
-    fontFamily: fonts.serifBold,
+    fontFamily: fonts.sans,
     fontSize: 17,
     lineHeight: 26,
     letterSpacing: 0.15,

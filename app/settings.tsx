@@ -843,8 +843,8 @@ function AccountSection() {
               <Text style={styles.rowTitle}>You're using Inner Map anonymously.</Text>
               <Text style={styles.rowSub}>
                 No email, no account. Your conversations and your map are
-                stored on our servers, linked to this device. Your journal
-                stays on this phone only, encrypted. If you lose this phone,
+                stored on our servers, linked to this device. Your private journal entries stay on this phone only,
+                encrypted. If you lose this phone,
                 you'll lose access to your saved conversations and map. Add an
                 email or sign-in any time to recover your account on a new
                 device.
@@ -974,12 +974,15 @@ function PrivacyDataSection() {
         <Text style={styles.privacyH3}>WHAT WE STORE</Text>
         <Text style={styles.privacyBodyBold}>On your device only</Text>
         <Text style={styles.privacyBody}>
-          Your journal entries. They're encrypted with a key only your phone
-          has. We genuinely can't read them.
+          Private journal entries. Entries you mark private are encrypted
+          with a key only your phone has — we genuinely can't read them.
+          (Entries you share with the AI are stored securely on our
+          servers, like your conversations.)
         </Text>
         <Text style={[styles.privacyBodyBold, styles.privacyBodyBoldTop]}>On our server</Text>
         <Text style={styles.privacyBody}>
-          Your account, your conversations, and your map (parts and patterns).
+          Your account, your conversations, your map (parts and patterns),
+          and any journal entries you choose to share.
           This is how Inner Map remembers context across sessions and how the
           AI can respond with continuity.
         </Text>

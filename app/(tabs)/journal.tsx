@@ -1,73 +1,48 @@
-// Journal tab — private, local-only entries. Two entry kinds:
-//   FREE FLOW              — bypass the editor, stream-of-consciousness.
+// Journal tab — per-entry privacy. Each entry is either SHARED (synced to the
+// server for RAG so the AI can read it as context) or PRIVATE (encrypted, kept
+// on this device only, never synced). The choice is made per entry in the
+// compose modal and locked at save. Two entry kinds:
+//   FREE FLOW              — stream-of-consciousness, no prompt.
 //   DEEP DIVE · FREE       — guided invitation into free association.
 //   ASSOCIATION
 //
-// Layout matches the web app:
-//   • Lock + "Private — only you can see this" header
+// Layout:
+//   • Header caption: "Share entries with the AI, or keep them private"
 //   • "Journal" Cormorant title + italic subtitle
 //   • Two stacked cards (full width)
-//   • RECENT ENTRIES section with search + parts filter
-//   • Entry cards show small color dots for each detected part
+//   • RECENT ENTRIES section with text search
 //
-// Part detection: a cheap keyword-based heuristic runs at save time —
-// see journal.detectParts(). Stored on the entry as detectedParts and
-// used by the parts-filter dropdown.
+// (The crude local keyword part-tagger and its color-dot / part-filter UI were
+// removed with the journal→RAG change. Understanding now comes from the entry
+// text via server-side RAG — the AI reads SHARED journals as context and never
+// auto-maps from them.)
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, Modal, Alert,
-  TextInput, FlatList,
+  View, Text, Pressable, ScrollView, StyleSheet, Modal, Alert, TextInput,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
-import { journal, JournalEntry, JournalKind, DetectedPart } from '../../services/journal';
+import { journal, JournalEntry, JournalKind } from '../../services/journal';
 import { JournalEntryModal } from '../../components/journal/JournalEntryModal';
-
-// Part color palette — same source of truth as the map's MAP_STROKE so
-// the dots in this list match the nodes on the integrated circle.
-const PART_COLOR: Record<DetectedPart, string> = {
-  wound:       '#FF5555',
-  fixer:       '#F0C070',
-  skeptic:     '#90C8E8',
-  self:        '#D4B8E8',
-  'self-like': '#A090C0',
-  manager:     '#A8DCC0',
-  firefighter: '#F0A050',
-};
-
-const PART_LABEL: Record<DetectedPart, string> = {
-  wound:       'Wound',
-  fixer:       'Fixer',
-  skeptic:     'Skeptic',
-  self:        'Self',
-  'self-like': 'Self-Like',
-  manager:     'Managers',
-  firefighter: 'Firefighters',
-};
-
-type PartFilter = 'all' | DetectedPart;
 
 export default function JournalScreen() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [composeKind, setComposeKind] = useState<JournalKind | null>(null);
   const [viewing, setViewing] = useState<JournalEntry | null>(null);
   const [search, setSearch] = useState('');
-  const [partFilter, setPartFilter] = useState<PartFilter>('all');
-  const [filterPickerOpen, setFilterPickerOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setEntries(await journal.list());
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
-  async function handleSave(content: string) {
+  async function handleSave(content: string, shared: boolean) {
     if (!composeKind) return;
-    const detected = journal.detectParts(content);
-    await journal.add(composeKind, content, undefined, detected);
+    await journal.add(composeKind, content, undefined, shared);
     setComposeKind(null);
     refresh();
   }
@@ -86,19 +61,13 @@ export default function JournalScreen() {
     );
   }
 
-  // Search + parts filter applied client-side. Entry text is always
-  // available locally so this is instant.
+  // Text search applied client-side. Entry text is always available locally
+  // so this is instant.
   const visibleEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return entries.filter((e) => {
-      if (q && !e.content.toLowerCase().includes(q)) return false;
-      if (partFilter !== 'all') {
-        const tags = e.detectedParts || [];
-        if (!tags.includes(partFilter)) return false;
-      }
-      return true;
-    });
-  }, [entries, search, partFilter]);
+    if (!q) return entries;
+    return entries.filter((e) => e.content.toLowerCase().includes(q));
+  }, [entries, search]);
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
@@ -109,17 +78,16 @@ export default function JournalScreen() {
       >
         {/* ===== HEADER ===== */}
         <View style={styles.privateRow}>
-          <Ionicons name="lock-closed" size={11} color={colors.creamFaint} />
-          <Text style={styles.privateText}>Private — only you can see this</Text>
+          <Text style={styles.privateText}>Share entries with the AI, or keep them private</Text>
         </View>
         <Text style={styles.heading}>Journal</Text>
-        <Text style={styles.subtitle}>A quiet space just for you.</Text>
+        <Text style={styles.subtitle}>A space for whatever's present.</Text>
 
         {/* ===== ENTRY CARDS ===== */}
         <EntryCard
           label="FREE FLOW"
           title="Just write. No rules. This is yours."
-          body="A blank space. Type or speak. No AI, no questions. Whatever is present."
+          body="A blank space. Type or speak — whatever is present. Share it with the AI to deepen your map, or keep it private."
           onPress={() => {
             Haptics.selectionAsync().catch(() => {});
             setComposeKind('freeflow');
@@ -128,7 +96,7 @@ export default function JournalScreen() {
         <EntryCard
           label="DEEP DIVE · FREE ASSOCIATION"
           title="Let the slide open."
-          body="A guided invitation into free association — unfiltered, uncensored, whatever comes up."
+          body="A guided invitation into free association — unfiltered, whatever comes up."
           onPress={() => {
             Haptics.selectionAsync().catch(() => {});
             setComposeKind('deepdive');
@@ -141,8 +109,8 @@ export default function JournalScreen() {
           <View style={styles.recentRule} />
         </View>
 
-        {/* Search + parts filter row. */}
-        <View style={styles.filterRow}>
+        {/* Search row. */}
+        <View style={styles.searchRow}>
           <TextInput
             value={search}
             onChangeText={setSearch}
@@ -151,17 +119,6 @@ export default function JournalScreen() {
             style={styles.searchInput}
             selectionColor={colors.amber}
           />
-          <Pressable
-            onPress={() => setFilterPickerOpen(true)}
-            style={styles.filterPill}
-            accessibilityLabel="Filter by part"
-            hitSlop={6}
-          >
-            <Text style={styles.filterPillText} numberOfLines={1}>
-              {partFilter === 'all' ? 'All parts' : PART_LABEL[partFilter]}
-            </Text>
-            <Ionicons name="chevron-down" size={14} color={colors.amber} />
-          </Pressable>
         </View>
 
         {/* Entry list / empty state. */}
@@ -169,7 +126,7 @@ export default function JournalScreen() {
           <Text style={styles.empty}>
             {entries.length === 0
               ? 'No entries yet. Your words will live here.'
-              : 'No entries match these filters.'}
+              : 'No entries match your search.'}
           </Text>
         ) : (
           <View style={{ gap: 10 }}>
@@ -189,16 +146,6 @@ export default function JournalScreen() {
                 <Text style={styles.entryPreview} numberOfLines={3}>
                   {e.content}
                 </Text>
-                {e.detectedParts && e.detectedParts.length > 0 ? (
-                  <View style={styles.dotsRow}>
-                    {e.detectedParts.map((p) => (
-                      <View
-                        key={p}
-                        style={[styles.dot, { backgroundColor: PART_COLOR[p] }]}
-                      />
-                    ))}
-                  </View>
-                ) : null}
               </Pressable>
             ))}
           </View>
@@ -219,37 +166,6 @@ export default function JournalScreen() {
         onClose={() => setViewing(null)}
         onDelete={(id) => { setViewing(null); confirmDelete(id); }}
       />
-
-      {/* Parts filter picker — bottom-sheet style action list. */}
-      <Modal
-        visible={filterPickerOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setFilterPickerOpen(false)}
-      >
-        <Pressable style={styles.pickerBackdrop} onPress={() => setFilterPickerOpen(false)}>
-          <View style={styles.pickerSheet}>
-            <Text style={styles.pickerHeading}>Filter by part</Text>
-            {(['all', 'wound', 'fixer', 'skeptic', 'self-like', 'manager', 'firefighter'] as PartFilter[]).map((opt) => (
-              <Pressable
-                key={opt}
-                onPress={() => { setPartFilter(opt); setFilterPickerOpen(false); }}
-                style={[styles.pickerRow, partFilter === opt && styles.pickerRowActive]}
-              >
-                {opt !== 'all' ? (
-                  <View style={[styles.dot, { backgroundColor: PART_COLOR[opt] }]} />
-                ) : <View style={styles.dot} />}
-                <Text style={styles.pickerRowText}>
-                  {opt === 'all' ? 'All parts' : PART_LABEL[opt]}
-                </Text>
-                {partFilter === opt ? (
-                  <Ionicons name="checkmark" size={18} color={colors.amber} style={{ marginLeft: 'auto' }} />
-                ) : null}
-              </Pressable>
-            ))}
-          </View>
-        </Pressable>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -307,16 +223,6 @@ function ViewEntryModal({
               {formatDate(entry.createdAt, true)}
             </Text>
             <Text style={styles.viewContent}>{entry.content}</Text>
-            {entry.detectedParts && entry.detectedParts.length > 0 ? (
-              <View style={[styles.dotsRow, { marginTop: spacing.lg }]}>
-                {entry.detectedParts.map((p) => (
-                  <View key={p} style={styles.detectedTag}>
-                    <View style={[styles.dot, { backgroundColor: PART_COLOR[p] }]} />
-                    <Text style={styles.detectedTagText}>{PART_LABEL[p]}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
           </ScrollView>
         ) : null}
       </SafeAreaView>
@@ -418,11 +324,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(230,180,122,0.25)',
   },
 
-  // ----- search + filter row -----
-  filterRow: {
+  // ----- search row -----
+  searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
     marginHorizontal: 16,
     marginBottom: spacing.md,
   },
@@ -435,24 +340,6 @@ const styles = StyleSheet.create({
     color: colors.cream,
     fontFamily: fonts.sans,
     fontSize: 14,
-  },
-  filterPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 0.5,
-    borderColor: 'rgba(230,180,122,0.45)',
-    backgroundColor: 'rgba(230,180,122,0.06)',
-    maxWidth: 130,
-  },
-  filterPillText: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 11,
-    letterSpacing: 0.4,
   },
 
   // ----- empty state -----
@@ -500,16 +387,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-  dotsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 10,
-  },
-  dot: {
-    width: 8, height: 8, borderRadius: 4,
-    backgroundColor: 'transparent',
-  },
 
   // ----- view modal -----
   viewTopBar: {
@@ -528,60 +405,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 16,
     lineHeight: 26,
-  },
-  detectedTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 100,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  detectedTagText: {
-    color: colors.creamDim,
-    fontFamily: fonts.sans,
-    fontSize: 12,
-  },
-
-  // ----- parts filter picker (bottom sheet) -----
-  pickerBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'flex-end',
-  },
-  pickerSheet: {
-    backgroundColor: '#14131A',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xl,
-    paddingHorizontal: spacing.md,
-    borderTopWidth: 0.5,
-    borderTopColor: 'rgba(230,180,122,0.35)',
-  },
-  pickerHeading: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 11,
-    letterSpacing: 2,
-    paddingHorizontal: 10,
-    marginBottom: spacing.sm,
-  },
-  pickerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  pickerRowActive: { backgroundColor: 'rgba(230,180,122,0.08)' },
-  pickerRowText: {
-    color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 15,
   },
 });

@@ -52,7 +52,7 @@ export default function SignInScreen() {
   const handleAnonymous = useCallback(() => {
     Alert.alert(
       'Continue without saving?',
-      'If you continue anonymously, your map, journal, and history will only exist on this device. ' +
+      'If you continue anonymously, your account stays tied to this device with no way to recover it. ' +
       'If you lose your phone, switch devices, or delete the app, everything will be permanently lost.',
       [
         { text: 'Cancel', style: 'cancel' },

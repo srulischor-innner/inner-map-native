@@ -4,22 +4,40 @@
 //   idle        → text field + mic button (press-and-hold to record)
 //   typing      → text field + send (arrow-up) button
 //   recording   → text field is covered by a "Recording… 0:03" pill with
-//                 a red pulsing dot. User must keep holding; release to
-//                 send. Anything held under MIN_RECORDING_MS is treated
-//                 as a misfire — the user gets a brief "hold longer"
-//                 toast and the audio is discarded.
+//                 a red pulsing dot.
 //
-// On release (held ≥ MIN_RECORDING_MS):
+// Voice-note gesture (mic button) — press-and-hold, PLUS swipe-to-lock:
+//   • Press-and-hold the mic → recording starts after a 150ms long-press.
+//   • Release below the lock/cancel thresholds → sends (held ≥ MIN_RECORDING_MS;
+//     anything shorter is a misfire → brief "hold longer" toast, audio dropped).
+//   • Swipe UP past LOCK_DY while holding → recording LOCKS (hands-free): the
+//     finger can lift, the mic keeps capturing, the trailing button becomes a
+//     send control, and a trash/cancel affordance appears in the pill.
+//   • Swipe LEFT past CANCEL_DX while holding → arms cancel; release to discard.
+//
+// On send (release below threshold, OR the locked send button):
 //   - recorder.stop() → file URI
-//   - Parent onSendVoice(uri, durationSec, transcript) is called. The
-//     parent (ChatScreen) handles pushing the voice-note bubble into the
-//     messages list AND sending the transcribed text through /api/chat.
-//   - We transcribe HERE so the parent gets both the file URI and the
-//     text in a single callback.
+//   - Parent onSendVoice({ uri, durationSec }) is called. The parent
+//     (ChatScreen) pushes the voice-note bubble into the messages list AND
+//     sends the transcribed text through /api/chat.
 //
-// No swipe-to-cancel — Pressable's gesture system can't track a swipe
-// reliably once the finger leaves the press-retention zone. If a real
-// cancel is needed, build it on top of PanResponder.
+// GESTURE / AUDIO-SESSION SEPARATION (important — keep it this way):
+//   The gesture layer below is a thin UI shell over the EXISTING recorder. It
+//   only ever calls startRecording / finalizeAndSend / cancelRecording — it
+//   NEVER touches the audio session directly. All audio-session orchestration
+//   stays inside startRecording (the ensureRecordingMode gate) and the stop
+//   helpers. The playback→record handoff in utils/ttsStream.ts is delicate;
+//   don't route gesture logic through it.
+//
+// Built with react-native-gesture-handler (Gesture.Pan + Gesture.Tap composed
+// via Gesture.Exclusive) — mirrors the Gesture.Pan precedent in GuideAskModal.
+// runOnJS hops the discrete transitions back to JS (React state + expo-audio)
+// while the high-frequency drag tracking stays on the UI thread.
+//
+// ⚠️ The gesture + audio behavior CANNOT be validated by tsc/smoke — it
+// REQUIRES a real-device test pass: press → swipe-up-lock → release-still-
+// recording → stop-to-send, and swipe-left-cancel, each without disturbing
+// recording/playback audio.
 
 // Minimum hold duration in milliseconds. Anything shorter is dropped
 // because Whisper consistently returns empty transcripts for sub-half-
@@ -44,6 +62,16 @@ const MIN_RECORDING_MS = 500;
 const STOP_GRACE_MS = 250;
 const POST_STOP_FLUSH_MS = 150;
 
+// Swipe-to-lock thresholds (WhatsApp-style hands-free recording), in px of
+// finger travel from the press origin. Negative = up / left. Tuned
+// conservatively — final values want a real-device pass (see header).
+//   LOCK_DY   — drag UP past this to LOCK the recording hands-free, so the
+//               finger can lift and the mic keeps capturing.
+//   CANCEL_DX — drag LEFT past this to ARM cancel; releasing while armed
+//               discards the take (sliding back inside the threshold disarms).
+const LOCK_DY = -64;
+const CANCEL_DX = -88;
+
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
@@ -59,8 +87,13 @@ import ReAnimated, {
   useSharedValue,
   withTiming,
   useAnimatedStyle,
+  runOnJS,
+  interpolate,
+  interpolateColor,
+  Extrapolation,
   Easing as ReEasing,
 } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
@@ -131,10 +164,64 @@ export function ChatInput({
   const startTimeRef = useRef<number>(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Swipe-to-lock state. `recording` stays the single source of truth for
+  // "the recorder is capturing" — it covers BOTH the finger-held phase and the
+  // hands-free locked phase. `locked` adds one bit: the finger has been
+  // released and recording continues until the user taps send/cancel.
+  const [locked, setLocked] = useState(false);
+  // Mirror of `recording` for the unmount cleanup, which captures mount-time
+  // closures and can't read live state. See the teardown effect below.
+  const recordingRef = useRef(false);
+  useEffect(() => { recordingRef.current = recording; }, [recording]);
+
+  // Finger travel during a hold — written by the pan worklet on the UI thread,
+  // read by the lock-affordance + cancel-hint animated styles. Negative dragY =
+  // upward (toward lock); negative dragX = leftward (toward cancel).
+  const dragY = useSharedValue(0);
+  const dragX = useSharedValue(0);
+  // Worklet-side once-guards so the lock/cancel transitions + haptics fire
+  // exactly once per hold instead of every animation frame. 0 = not armed.
+  const lockArmedSV = useSharedValue(0);
+  const cancelArmedSV = useSharedValue(0);
+
+  // Lock affordance (floats above the mic while holding): brightens, lifts, and
+  // scales up as the finger rises toward LOCK_DY. p: 0 at rest → 1 at threshold.
+  const lockAffordanceStyle = useAnimatedStyle(() => {
+    const p = interpolate(dragY.value, [LOCK_DY, 0], [1, 0], Extrapolation.CLAMP);
+    return {
+      opacity: 0.45 + p * 0.55,
+      transform: [{ translateY: -p * 10 }, { scale: 1 + p * 0.18 }],
+    };
+  });
+  // "Slide to cancel" hint: follows the finger left and fades up as it nears
+  // CANCEL_DX. p: 0 at rest → 1 at threshold.
+  const cancelHintStyle = useAnimatedStyle(() => {
+    const p = interpolate(dragX.value, [CANCEL_DX, 0], [1, 0], Extrapolation.CLAMP);
+    return {
+      opacity: 0.55 + p * 0.45,
+      transform: [{ translateX: dragX.value * 0.35 }],
+    };
+  });
+  // Hint text reddens as cancel arms (cream → recording-red).
+  const cancelHintTextStyle = useAnimatedStyle(() => {
+    const p = interpolate(dragX.value, [CANCEL_DX, 0], [1, 0], Extrapolation.CLAMP);
+    return { color: interpolateColor(p, [0, 1], [colors.creamFaint, '#d4726a']) };
+  });
+
   useEffect(() => () => {
     if (tapHintHoldTimer.current) clearTimeout(tapHintHoldTimer.current);
     if (tapHintFadeTimer.current) clearTimeout(tapHintFadeTimer.current);
     if (tickRef.current) clearInterval(tickRef.current);
+    // FLAG #1 fix — a LOCKED recording outlives the finger, so if this
+    // component unmounts mid-record (e.g. the user navigates away while a
+    // locked note is running) nothing else would stop the recorder: the mic
+    // would stay hot and the audio session wouldn't reset. Stop it on the way
+    // out. Mirrors PartnerContributionInput's teardown. We read recordingRef
+    // (not the `recording` state) because this cleanup captures mount-time
+    // scope; `recorder` from useAudioRecorder is a stable instance.
+    if (recordingRef.current) {
+      recorder.stop().catch(() => {});
+    }
   }, []);
 
   // Red pulse while recording.
@@ -241,16 +328,22 @@ export function ChatInput({
     }, 1500);
   }
 
-  async function endHold() {
-    // If the recorder never started (short tap), bail cleanly.
-    if (!recording) return;
+  // Stop the recorder and send the take. Shared by BOTH the press-release
+  // path (finger lifts below the lock threshold) and the locked send button —
+  // identical stop/flush/guard logic, so the trailing-audio + M4A-finalize
+  // safeguards apply uniformly. This is the only place that reads recorder.uri.
+  async function finalizeAndSend() {
+    // If the recorder never started (a misfire, or startRecording aborted
+    // because the audio session wasn't record-ready), there's nothing to
+    // send — just make sure no locked UI is left stranded.
+    if (!recording) { setLocked(false); return; }
     const stopTs = Date.now();
     const heldMs = stopTs - startTimeRef.current;
     const heldSec = Math.max(0.1, heldMs / 1000);
-    console.log(`[voice-note] endHold — stopTimestamp=${stopTs} heldMs=${heldMs} heldSec=${heldSec.toFixed(3)} threshold=${MIN_RECORDING_MS}ms`);
+    console.log(`[voice-note] finalizeAndSend — stopTimestamp=${stopTs} heldMs=${heldMs} heldSec=${heldSec.toFixed(3)} threshold=${MIN_RECORDING_MS}ms`);
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     // Skip the grace + flush for micro-taps that would be discarded anyway.
-    // Otherwise we'd burn 400ms waiting on an audio we're not going to send.
+    // Otherwise we'd burn 400ms waiting on audio we're not going to send.
     const willDiscard = heldMs < MIN_RECORDING_MS;
     // Trailing-audio fix: keep the mic open STOP_GRACE_MS more so any
     // syllable the user was finishing at the moment of release lands
@@ -261,6 +354,7 @@ export function ChatInput({
       await new Promise<void>((r) => setTimeout(r, STOP_GRACE_MS));
     }
     setRecording(false);
+    setLocked(false);
     setSeconds(0);
     try {
       await recorder.stop();
@@ -296,9 +390,127 @@ export function ChatInput({
       // Parent shows the voice bubble + runs transcription asynchronously.
       onSendVoice?.({ uri, durationSec: heldSec });
     } catch (err) {
-      console.warn('[voice-note] endHold stop failed:', (err as Error).message);
+      console.warn('[voice-note] finalizeAndSend stop failed:', (err as Error).message);
     }
   }
+
+  // Discard the in-progress take WITHOUT sending. Still stops the recorder so
+  // the mic is released and the audio session resets cleanly (the same teardown
+  // the send path relies on) — we just never call onSendVoice. No grace/flush
+  // since we're throwing the audio away. Reachable via swipe-left-to-cancel
+  // (finger held) or the trash affordance (locked).
+  async function cancelRecording() {
+    if (!recording) { setLocked(false); return; }
+    console.log('[voice-note] cancelRecording — user discarded the take');
+    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    setRecording(false);
+    setLocked(false);
+    setSeconds(0);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    try {
+      await recorder.stop();
+    } catch (err) {
+      console.warn('[voice-note] cancelRecording stop failed:', (err as Error).message);
+    }
+  }
+
+  // Called once per hold (from the pan worklet via runOnJS) when the finger
+  // crosses the lock threshold → hands-free recording. Set unconditionally so
+  // the locked UI never desyncs from the worklet's lockArmedSV guard; if the
+  // recorder somehow isn't running, the send/cancel handlers reset it cleanly.
+  function onLockCrossed() {
+    setLocked(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+  }
+
+  // Called (from the pan worklet via runOnJS) when the cancel-arm state toggles
+  // — a one-shot haptic on arm. The visual is driven by the shared values.
+  function onCancelArm(armed: boolean) {
+    if (armed) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  }
+
+  // ------------------------------------------------------------------------
+  // Voice-note gesture — press-and-hold + swipe-to-lock / swipe-to-cancel.
+  // A thin UI shell over the existing recorder (see header). The pan ACTIVATES
+  // only after a 150ms long-press, so a quick tap can't start a recording; the
+  // tap handles the teaching tooltip. Exclusive(pan, tap) gives the long-press
+  // pan priority, with the tap firing only when the pan fails (a release before
+  // 150ms). High-frequency drag tracking stays on the UI thread (shared values);
+  // runOnJS hops the discrete transitions back to JS (state + expo-audio).
+  // ------------------------------------------------------------------------
+  const recordPan = Gesture.Pan()
+    .activateAfterLongPress(150)
+    .hitSlop(14)
+    .onStart(() => {
+      'worklet';
+      dragY.value = 0;
+      dragX.value = 0;
+      lockArmedSV.value = 0;
+      cancelArmedSV.value = 0;
+      runOnJS(startRecording)();
+    })
+    .onUpdate((e) => {
+      'worklet';
+      dragY.value = e.translationY;
+      dragX.value = e.translationX;
+      // LOCK — dragged up past the threshold, dominantly vertical, nothing armed
+      // yet. One-shot: arms + locks exactly once, then we stop evaluating.
+      if (
+        lockArmedSV.value === 0 &&
+        cancelArmedSV.value === 0 &&
+        e.translationY <= LOCK_DY &&
+        -e.translationY > Math.abs(e.translationX)
+      ) {
+        lockArmedSV.value = 1;
+        runOnJS(onLockCrossed)();
+        return;
+      }
+      // CANCEL-ARM — dragged left past the threshold, dominantly horizontal.
+      // Releasable: dragging back inside the threshold disarms (so the user can
+      // abort a cancel by sliding back). Never arms once locked.
+      if (lockArmedSV.value === 0) {
+        const armed = e.translationX <= CANCEL_DX && -e.translationX > Math.abs(e.translationY);
+        if (armed && cancelArmedSV.value === 0) {
+          cancelArmedSV.value = 1;
+          runOnJS(onCancelArm)(true);
+        } else if (!armed && cancelArmedSV.value === 1) {
+          cancelArmedSV.value = 0;
+          runOnJS(onCancelArm)(false);
+        }
+      }
+    })
+    .onEnd(() => {
+      'worklet';
+      if (lockArmedSV.value === 1) {
+        // Locked — recording continues hands-free; the locked controls take
+        // over. Nothing to do on finger release.
+        return;
+      }
+      if (cancelArmedSV.value === 1) {
+        runOnJS(cancelRecording)();
+        return;
+      }
+      // Plain release below both thresholds → send (the original behavior).
+      runOnJS(finalizeAndSend)();
+    })
+    .onFinalize(() => {
+      'worklet';
+      // Settle the drag visuals. Lock state (if engaged) lives in React state,
+      // not these shared values, so it persists past this reset.
+      dragY.value = withTiming(0, { duration: 140 });
+      dragX.value = withTiming(0, { duration: 140 });
+    });
+
+  // Quick tap → teaching tooltip. Only reached when the pan fails to activate
+  // (release before the 150ms long-press), via Gesture.Exclusive below.
+  const recordTap = Gesture.Tap()
+    .hitSlop(14)
+    .onStart(() => {
+      'worklet';
+      runOnJS(handleShortTap)();
+    });
+
+  const micGesture = Gesture.Exclusive(recordPan, recordTap);
 
   return (
     <View style={styles.wrap}>
@@ -338,8 +550,32 @@ export function ChatInput({
             // through to the input below (the user can't accidentally
             // type while recording).
             <View style={styles.recordingOverlay} pointerEvents="auto">
+              {locked ? (
+                // Locked: trash discards the take (mirrors swipe-left-cancel).
+                <Pressable
+                  onPress={cancelRecording}
+                  hitSlop={10}
+                  style={styles.cancelTrash}
+                  accessibilityLabel="Cancel and discard voice note"
+                >
+                  <Ionicons name="trash-outline" size={18} color="#d4726a" />
+                </Pressable>
+              ) : null}
               <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
               <Text style={styles.recordingLabel}>Recording…</Text>
+              {locked ? (
+                // Spacer so the timer right-aligns when no cancel hint is shown.
+                <View style={{ flex: 1 }} />
+              ) : (
+                // Holding: "‹ Slide to cancel" — follows the finger left and
+                // reddens as it nears the cancel threshold (driven by dragX).
+                <ReAnimated.View style={[styles.cancelHint, cancelHintStyle]} pointerEvents="none">
+                  <Ionicons name="chevron-back" size={14} color={colors.creamFaint} />
+                  <ReAnimated.Text style={[styles.cancelHintText, cancelHintTextStyle]}>
+                    Slide to cancel
+                  </ReAnimated.Text>
+                </ReAnimated.View>
+              )}
               <Text style={styles.recordingTime}>{formatSecs(seconds)}</Text>
             </View>
           ) : null}
@@ -352,32 +588,39 @@ export function ChatInput({
           <Pressable onPress={onStop} style={[styles.btn, styles.stopBtn]} accessibilityLabel="Stop response">
             <Ionicons name="stop" size={18} color={colors.background} />
           </Pressable>
+        ) : locked ? (
+          // LOCKED — hands-free recording; the mic hold is over. This button
+          // stops + sends. Cancel lives in the pill's trash affordance.
+          <Pressable onPress={finalizeAndSend} style={[styles.btn, styles.sendBtn]} accessibilityLabel="Stop and send voice note">
+            <Ionicons name="arrow-up" size={20} color={colors.background} />
+          </Pressable>
         ) : canSend ? (
           <Pressable onPress={handleSend} style={[styles.btn, styles.sendBtn]} accessibilityLabel="Send">
             <Ionicons name="arrow-up" size={20} color={colors.background} />
           </Pressable>
         ) : (
-          <Pressable
-            onLongPress={startRecording}
-            delayLongPress={150}
-            onPress={handleShortTap}
-            onPressOut={endHold}
-            // Hit area expanded well beyond the visible 44px so the button
-            // reliably catches press-and-hold with imprecise finger
-            // placement — previously reports of "mic not tappable" were
-            // tracing to the tap area being exactly the visible 40px circle.
-            hitSlop={14}
-            style={styles.micPressable}
-            accessibilityLabel={recording ? 'Release to send voice note' : 'Hold to record voice note'}
-          >
-            <View style={[styles.btn, styles.micBtn, recording && styles.micRecording]}>
-              <Ionicons
-                name="mic"
-                size={20}
-                color={recording ? '#fff' : colors.amber}
-              />
+          // idle / holding — press-and-hold to record, swipe up to lock, left to
+          // cancel. GestureDetector replaces the old Pressable so the pan can
+          // track finger movement during the hold (Pressable cannot). hitSlop
+          // lives on the gestures; the 52px wrapper keeps the visible target big.
+          <GestureDetector gesture={micGesture}>
+            <View
+              style={styles.micPressable}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={recording
+                ? 'Recording. Release to send, swipe up to lock, or swipe left to cancel.'
+                : 'Hold to record voice note'}
+            >
+              <View style={[styles.btn, styles.micBtn, recording && styles.micRecording]}>
+                <Ionicons
+                  name="mic"
+                  size={20}
+                  color={recording ? '#fff' : colors.amber}
+                />
+              </View>
             </View>
-          </Pressable>
+          </GestureDetector>
         )}
 
         {/* "Hold to record" tooltip — lives at the bar level so it can
@@ -399,6 +642,18 @@ export function ChatInput({
           </Text>
           <View style={styles.tapHintArrow} />
         </ReAnimated.View>
+
+        {/* Lock affordance — floats above the mic while holding (not yet
+            locked). Slide the finger up to it to lock hands-free recording;
+            it brightens, lifts, and scales as the finger rises (driven by
+            dragY). pointerEvents="none" so it never intercepts the ongoing
+            pan. Disappears the moment recording locks or ends. */}
+        {recording && !locked ? (
+          <ReAnimated.View pointerEvents="none" style={[styles.lockAffordance, lockAffordanceStyle]}>
+            <Ionicons name="lock-closed" size={15} color={colors.cream} />
+            <Ionicons name="chevron-up" size={13} color={colors.creamFaint} style={{ marginTop: 1 }} />
+          </ReAnimated.View>
+        ) : null}
       </View>
     </View>
   );
@@ -514,6 +769,47 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansMedium,
     fontSize: 13,
     minWidth: 36,
+  },
+
+  // Trash affordance inside the LOCKED recording pill — discards the take.
+  cancelTrash: {
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+    marginRight: 2,
+  },
+  // "‹ Slide to cancel" hint shown WHILE HOLDING (pre-lock). flex:1 so it
+  // centers between the "Recording…" label and the right-aligned timer.
+  cancelHint: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  cancelHintText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+    letterSpacing: 0.2,
+    // color is supplied by cancelHintTextStyle (animated cream → recording-red)
+  },
+  // Lock affordance floating above the mic during a hold. Anchored like the
+  // tapHint (right edge over the mic) but higher, so the finger slides up to
+  // it; the ~64px lift toward LOCK_DY lands the fingertip right around here.
+  lockAffordance: {
+    position: 'absolute',
+    bottom: 82,
+    right: 24,
+    zIndex: 11,
+    alignItems: 'center',
+    gap: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 9,
+    backgroundColor: 'rgba(70,28,28,0.92)',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(212,114,106,0.6)',
+    shadowColor: '#d4726a', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
   },
 
   // Short-tap tooltip — rendered at the bar level so its natural content

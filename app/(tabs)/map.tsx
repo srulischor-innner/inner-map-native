@@ -15,7 +15,6 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { colors, fonts } from '../../constants/theme';
 import { api } from '../../services/api';
-import { armSelfMode } from '../../utils/selfMode';
 import { computeMapGeometry, MapGeometry } from '../../utils/mapLayout';
 import { InnerMapCanvas, NodeKey } from '../../components/map/InnerMapCanvas';
 import { PartFolderModal } from '../../components/map/PartFolderModal';
@@ -744,16 +743,6 @@ export default function MapScreen() {
         mapData={activeMapData}
         parts={parts}
         onClose={() => setFolderPart(null)}
-        onEnterSelfMode={() => {
-          // Arm the one-shot Self-mode flag, then navigate to Chat. Chat
-          // consumes the flag on mount and sends selfMode:true with its
-          // next /api/chat request so the server swaps in the Self-mode
-          // system prompt prefix.
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-          armSelfMode();
-          setFolderPart(null);
-          router.push('/');
-        }}
       />
     </SafeAreaView>
   );

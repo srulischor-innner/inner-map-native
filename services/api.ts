@@ -298,7 +298,15 @@ export type InboxMessage = {
   payload: {
     sessionId?: string;
     sessionDate?: string | null;
-    items?: { part: string; name: string; context: string }[];
+    items?: {
+      part: string;
+      name: string;
+      context: string;
+      /** Per-item review state (server-owned). Missing = pending. */
+      status?: 'pending' | 'accepted' | 'declined';
+      /** The name the user refined before accepting, if any. */
+      editedName?: string;
+    }[];
     title?: string;
     body?: string;
   };
@@ -365,6 +373,46 @@ export const api = {
       return res.ok;
     } catch (e) {
       console.warn('[crisis-acknowledge] threw:', (e as Error)?.message);
+      return false;
+    }
+  },
+
+  /** POST /api/journal — sync one journal entry to the server so it can be
+   *  embedded for RAG (the AI reads the journal as context, never as a map
+   *  update). Offline-first: the entry is saved to local encrypted storage
+   *  first; this sync is fire-and-forget and a failure must never block or
+   *  surface to the user. Returns true on success, false on any failure. */
+  async syncJournalEntry(entry: {
+    id: string;
+    kind: string;
+    content: string;
+    prompt?: string;
+    createdAt: string;
+  }): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/journal', {
+        label: 'journal-sync', method: 'POST', headers, body: JSON.stringify(entry),
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[journal-sync] threw:', (e as Error)?.message);
+      return false;
+    }
+  },
+
+  /** DELETE /api/journal/:id — remove an entry's server copy + its RAG
+   *  embedding when the user deletes it locally. Fire-and-forget; never
+   *  blocks the local delete. Returns true on success. */
+  async deleteJournalEntry(id: string): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/journal/${encodeURIComponent(id)}`, {
+        label: 'journal-delete', method: 'DELETE', headers,
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[journal-delete] threw:', (e as Error)?.message);
       return false;
     }
   },
@@ -997,19 +1045,25 @@ export const api = {
    *  listing, so the first call after a 6h-stale session materializes
    *  its pending_parts message. Expired messages are filtered
    *  server-side (auto-archive). */
-  async listMessages(): Promise<{ messages: InboxMessage[]; unreadCount: number }> {
+  async listMessages(): Promise<{ messages: InboxMessage[]; unreadCount: number; unactedCount: number }> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/messages', {
         label: 'messages-list', method: 'GET', headers, timeoutMs: 15000,
       });
-      if (!res.ok) return { messages: [], unreadCount: 0 };
+      if (!res.ok) return { messages: [], unreadCount: 0, unactedCount: 0 };
       const j: any = await res.json();
       const messages = Array.isArray(j?.messages) ? j.messages : [];
-      return { messages, unreadCount: Number(j?.unreadCount || 0) };
+      return {
+        messages,
+        unreadCount: Number(j?.unreadCount || 0),
+        // Items still awaiting a decision — drives the "noticed items waiting"
+        // dots (persist until handled, not just until opened).
+        unactedCount: Number(j?.unactedCount || 0),
+      };
     } catch (e) {
       console.warn('[inbox] list failed:', (e as Error)?.message);
-      return { messages: [], unreadCount: 0 };
+      return { messages: [], unreadCount: 0, unactedCount: 0 };
     }
   },
 
@@ -1028,19 +1082,47 @@ export const api = {
    *  the subset of item indices the user checked. Each consented item
    *  writes to the map through the normal parts path (confidence
    *  'confirmed' — the tap IS the consent). */
-  async actOnMessage(messageId: string, itemIndices: number[]): Promise<{ ok: boolean; written: number }> {
+  async actOnMessage(
+    messageId: string,
+    itemIndices: number[],
+    edits?: Record<number, string>,
+  ): Promise<{ ok: boolean; written: number; allResolved: boolean }> {
     try {
       const headers = await authHeaders();
+      const body = edits && Object.keys(edits).length
+        ? { itemIndices, edits }
+        : { itemIndices };
       const res = await apiFetch(`/api/messages/${encodeURIComponent(messageId)}/act`, {
         label: 'messages-act', method: 'POST', headers,
-        body: JSON.stringify({ itemIndices }), timeoutMs: 20000,
+        body: JSON.stringify(body), timeoutMs: 20000,
       });
-      if (!res.ok) return { ok: false, written: 0 };
+      if (!res.ok) return { ok: false, written: 0, allResolved: false };
       const j: any = await res.json();
-      return { ok: !!j?.ok, written: Number(j?.written || 0) };
+      return { ok: !!j?.ok, written: Number(j?.written || 0), allResolved: !!j?.allResolved };
     } catch (e) {
       console.warn('[inbox] act failed:', (e as Error)?.message);
-      return { ok: false, written: 0 };
+      return { ok: false, written: 0, allResolved: false };
+    }
+  },
+
+  /** POST /api/messages/:id/decline { itemIndices } — "No, doesn't resonate."
+   *  Marks the given items declined (terminal); never writes to the map. */
+  async declineMessageItems(
+    messageId: string,
+    itemIndices: number[],
+  ): Promise<{ ok: boolean; declined: number; allResolved: boolean }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/messages/${encodeURIComponent(messageId)}/decline`, {
+        label: 'messages-decline', method: 'POST', headers,
+        body: JSON.stringify({ itemIndices }), timeoutMs: 20000,
+      });
+      if (!res.ok) return { ok: false, declined: 0, allResolved: false };
+      const j: any = await res.json();
+      return { ok: !!j?.ok, declined: Number(j?.declined || 0), allResolved: !!j?.allResolved };
+    } catch (e) {
+      console.warn('[inbox] decline failed:', (e as Error)?.message);
+      return { ok: false, declined: 0, allResolved: false };
     }
   },
 

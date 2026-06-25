@@ -14,7 +14,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator,
+  View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -83,84 +83,123 @@ export default function MessagesScreen() {
   );
 }
 
-// One actionable pending_parts message: items + checkboxes + Add to map.
+// One pending_parts message: each noticed item is its own row with
+// Accept / Edit / "Doesn't resonate". Per-item — the card stays in the inbox
+// until EVERY item is resolved (accepted or declined). Nothing the AI noticed
+// is lost. (MICROCOPY here — "ADD TO MAP" / "EDIT" / "Doesn't resonate" /
+// resolved lines — is flagged for the copy pass.)
+type ItemState = 'pending' | 'sending' | 'accepted' | 'declined';
+
 function PendingPartsCard({ message }: { message: InboxMessage }) {
   const items = message.payload.items || [];
-  const [checked, setChecked] = useState<boolean[]>(items.map(() => true));
-  const [state, setState] = useState<'idle' | 'sending' | 'done'>(
-    message.actedAt ? 'done' : 'idle',
+  const [states, setStates] = useState<ItemState[]>(
+    items.map((it) =>
+      it.status === 'accepted' || it.status === 'declined' ? it.status : 'pending',
+    ),
   );
-  const [writtenCount, setWrittenCount] = useState(0);
+  const [names, setNames] = useState<string[]>(items.map((it) => it.editedName || it.name));
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
 
-  const anyChecked = checked.some(Boolean);
+  function setItemState(i: number, s: ItemState) {
+    setStates((prev) => prev.map((v, j) => (j === i ? s : v)));
+  }
 
-  async function submit() {
-    if (state !== 'idle' || !anyChecked) return;
-    setState('sending');
+  async function accept(i: number) {
+    if (states[i] !== 'pending') return;
+    setItemState(i, 'sending');
     Haptics.selectionAsync().catch(() => {});
-    const indices = checked.map((c, i) => (c ? i : -1)).filter((i) => i >= 0);
-    const res = await api.actOnMessage(message.id, indices);
+    const trimmed = names[i].trim();
+    const edits = trimmed && trimmed !== items[i].name ? { [i]: trimmed } : undefined;
+    const res = await api.actOnMessage(message.id, [i], edits);
+    setItemState(i, res.ok ? 'accepted' : 'pending');
     if (res.ok) {
-      setWrittenCount(res.written);
-      setState('done');
+      if (editingIdx === i) setEditingIdx(null);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       refreshInboxStatus(true).catch(() => {});
-    } else {
-      setState('idle');
+    }
+  }
+
+  async function decline(i: number) {
+    if (states[i] !== 'pending') return;
+    setItemState(i, 'sending');
+    Haptics.selectionAsync().catch(() => {});
+    const res = await api.declineMessageItems(message.id, [i]);
+    setItemState(i, res.ok ? 'declined' : 'pending');
+    if (res.ok) {
+      if (editingIdx === i) setEditingIdx(null);
+      refreshInboxStatus(true).catch(() => {});
     }
   }
 
   return (
     <View style={styles.card}>
       <Text style={styles.cardKicker}>FROM A PAST SESSION{message.payload.sessionDate ? ` · ${message.payload.sessionDate}` : ''}</Text>
-      <Text style={styles.cardLede}>
-        A few things surfaced that might belong on your map:
-      </Text>
-      {items.map((it, i) => (
-        <Pressable
-          key={`${message.id}-${i}`}
-          style={styles.itemRow}
-          disabled={state !== 'idle'}
-          onPress={() => {
-            Haptics.selectionAsync().catch(() => {});
-            setChecked((prev) => prev.map((c, j) => (j === i ? !c : c)));
-          }}
-        >
-          <View style={[styles.checkbox, checked[i] && state !== 'done' && styles.checkboxOn, state === 'done' && styles.checkboxDone]}>
-            {checked[i] ? (
-              <Ionicons name="checkmark" size={13} color={state === 'done' ? colors.creamFaint : colors.background} />
-            ) : null}
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.itemName}>
-              {it.name}
-              <Text style={styles.itemCategory}>  ·  {it.part}</Text>
-            </Text>
+      <Text style={styles.cardLede}>A few things surfaced that might belong on your map:</Text>
+      {items.map((it, i) => {
+        const st = states[i];
+        const editing = editingIdx === i;
+        return (
+          <View key={`${message.id}-${i}`} style={styles.noticedItem}>
+            {editing ? (
+              <TextInput
+                value={names[i]}
+                onChangeText={(t) => setNames((prev) => prev.map((v, j) => (j === i ? t : v)))}
+                style={styles.itemNameInput}
+                selectionColor={colors.amber}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={() => setEditingIdx(null)}
+                accessibilityLabel="Edit the part name"
+              />
+            ) : (
+              <Text style={[styles.itemName, st === 'declined' && styles.itemNameDim]}>
+                {names[i]}
+                <Text style={styles.itemCategory}>  ·  {it.part}</Text>
+              </Text>
+            )}
             {it.context ? <Text style={styles.itemContext}>{it.context}</Text> : null}
+
+            {st === 'accepted' ? (
+              <View style={styles.itemResolvedRow}>
+                <Ionicons name="checkmark-circle" size={15} color={colors.amber} />
+                <Text style={styles.itemResolvedText}>Added to your map.</Text>
+              </View>
+            ) : st === 'declined' ? (
+              <View style={styles.itemResolvedRow}>
+                <Ionicons name="close-circle-outline" size={15} color={colors.creamFaint} />
+                <Text style={styles.itemResolvedTextDim}>Doesn’t resonate — dismissed.</Text>
+              </View>
+            ) : (
+              <View style={styles.itemActionRow}>
+                <Pressable
+                  onPress={() => accept(i)}
+                  disabled={st === 'sending'}
+                  style={[styles.itemBtnAccept, st === 'sending' && styles.itemBtnDim]}
+                  accessibilityLabel={`Add ${names[i]} to your map`}
+                >
+                  <Text style={styles.itemBtnAcceptText}>{st === 'sending' ? 'ADDING…' : 'ADD TO MAP'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setEditingIdx(editing ? null : i)}
+                  disabled={st === 'sending'}
+                  style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
+                  accessibilityLabel="Edit the part name"
+                >
+                  <Text style={styles.itemBtnText}>{editing ? 'DONE' : 'EDIT'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => decline(i)}
+                  disabled={st === 'sending'}
+                  style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
+                  accessibilityLabel={`Dismiss ${names[i]}`}
+                >
+                  <Text style={styles.itemBtnTextDim}>Doesn’t resonate</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
-        </Pressable>
-      ))}
-      {state === 'done' ? (
-        <View style={styles.doneRow}>
-          <Ionicons name="checkmark-circle" size={16} color={colors.amber} />
-          <Text style={styles.doneText}>
-            {message.actedAt && !writtenCount
-              ? 'Already added to your map.'
-              : `Added to your map${writtenCount ? ` (${writtenCount})` : ''}.`}
-          </Text>
-        </View>
-      ) : (
-        <Pressable
-          onPress={submit}
-          disabled={!anyChecked || state === 'sending'}
-          style={[styles.addBtn, (!anyChecked || state === 'sending') && styles.addBtnDim]}
-          accessibilityLabel="Add selected to map"
-        >
-          <Text style={styles.addBtnText}>
-            {state === 'sending' ? 'ADDING…' : 'ADD TO MAP'}
-          </Text>
-        </Pressable>
-      )}
+        );
+      })}
     </View>
   );
 }
@@ -236,23 +275,28 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     marginBottom: spacing.sm,
   },
-  itemRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    paddingVertical: 8,
+  // ----- per-item noticed rows (Accept / Edit / Doesn't resonate) -----
+  noticedItem: {
+    paddingVertical: 12,
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(255,255,255,0.06)',
   },
-  checkbox: {
-    width: 20, height: 20, borderRadius: 5, marginTop: 2,
-    borderColor: colors.amberDim, borderWidth: 1.5,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  checkboxOn: { backgroundColor: colors.amber, borderColor: colors.amber },
-  checkboxDone: { borderColor: colors.creamFaint, backgroundColor: 'transparent' },
   itemName: {
     color: colors.cream,
     fontFamily: fonts.serifItalic,
     fontSize: 16,
+  },
+  itemNameDim: {
+    color: colors.creamFaint,
+    textDecorationLine: 'line-through',
+  },
+  itemNameInput: {
+    color: colors.cream,
+    fontFamily: fonts.serifItalic,
+    fontSize: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(230,180,122,0.5)',
+    paddingVertical: 2,
   },
   itemCategory: {
     color: colors.creamFaint,
@@ -266,34 +310,49 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 2,
   },
-  addBtn: {
-    marginTop: spacing.sm,
-    alignSelf: 'flex-start',
+  itemActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginTop: 10,
+  },
+  itemBtn: { paddingVertical: 6 },
+  itemBtnDim: { opacity: 0.4 },
+  itemBtnAccept: {
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 9,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: 'rgba(230, 180, 122, 0.45)',
     backgroundColor: 'rgba(230, 180, 122, 0.05)',
   },
-  addBtnDim: { opacity: 0.4 },
-  addBtnText: {
+  itemBtnAcceptText: {
     color: colors.amber,
     fontFamily: fonts.sansBold,
     fontSize: 12,
     letterSpacing: 0.8,
   },
-  doneRow: {
+  itemBtnText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+    letterSpacing: 0.8,
+  },
+  itemBtnTextDim: {
+    color: colors.creamFaint,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+    letterSpacing: 0.8,
+  },
+  itemResolvedRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: spacing.sm,
+    marginTop: 10,
   },
-  doneText: {
-    color: colors.creamDim,
-    fontFamily: fonts.sans,
-    fontSize: 13,
-  },
+  itemResolvedText: { color: colors.creamDim, fontFamily: fonts.sans, fontSize: 13 },
+  itemResolvedTextDim: { color: colors.creamFaint, fontFamily: fonts.sans, fontSize: 13 },
   noteTitle: {
     color: colors.cream,
     fontFamily: fonts.serifBold,

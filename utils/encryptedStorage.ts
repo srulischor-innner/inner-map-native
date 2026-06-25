@@ -57,6 +57,13 @@ export type JournalEntry = {
   content: string;
   prompt?: string;
   detectedParts?: DetectedPart[];
+  /** Per-entry privacy. true = shared with the AI (syncs to the server +
+   *  embeds for RAG); false = private (local-only, never synced/embedded,
+   *  never leaves the device). Chosen on the compose screen and locked at
+   *  save. Optional for back-compat: entries written before the toggle have
+   *  no flag and are treated as shared (they were already synced under the
+   *  earlier all-entries-sync behavior). */
+  shared?: boolean;
 };
 
 // ----- Singleton MMKV instance, lazy-initialised -----

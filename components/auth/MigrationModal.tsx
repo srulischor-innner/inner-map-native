@@ -88,7 +88,7 @@ export function MigrationModal({
   const handleAggressiveContinue = useCallback(() => {
     Alert.alert(
       'Continue anonymously?',
-      'Your map, journal, and history will only exist on this device. ' +
+      'Your account stays tied to this device with no way to recover it. ' +
       'If you lose your phone, switch devices, or delete the app, everything will be permanently lost.',
       [
         { text: 'Cancel', style: 'cancel' },

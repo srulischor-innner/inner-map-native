@@ -63,8 +63,6 @@ type Props = {
   /** List from /api/parts — per-part rich fields incl. markerFields JSON. */
   parts?: any[];
   onClose: () => void;
-  /** Called when user taps "Enter Self mode" on the Self folder. */
-  onEnterSelfMode?: () => void;
 };
 
 // ============================================================================
@@ -228,7 +226,7 @@ const MANAGER_FIREFIGHTER_DEEPER: DeeperField[] = [
 // Main component
 // ============================================================================
 export function PartFolderModal({
-  visible, partKey, mapData, parts, onClose, onEnterSelfMode,
+  visible, partKey, mapData, parts, onClose,
 }: Props) {
   if (!partKey) return null;
   const meta = META[partKey];
@@ -295,7 +293,7 @@ export function PartFolderModal({
           {partKey === 'wound'       ? <WoundSections      mapData={mapData} part={part} /> : null}
           {partKey === 'fixer'       ? <FixerSections      part={part} />                    : null}
           {partKey === 'skeptic'     ? <SkepticSections    part={part} />                    : null}
-          {partKey === 'self'        ? <SelfSections       part={part} onEnterSelfMode={onEnterSelfMode} onClose={onClose} color={meta.color} /> : null}
+          {partKey === 'self'        ? <SelfSections       part={part} color={meta.color} /> : null}
           {partKey === 'self-like'   ? <SelfLikeSections   part={part} mapData={mapData} />  : null}
           {partKey === 'manager'     ? <ProtectorList
               category="manager"
@@ -877,8 +875,8 @@ function SkepticSections({ part }: { part: any }) {
   );
 }
 function SelfSections({
-  part, color, onEnterSelfMode, onClose,
-}: { part: any; color: string; onEnterSelfMode?: () => void; onClose?: () => void }) {
+  part, color,
+}: { part: any; color: string }) {
   // Self deliberately gets no DetectedPill, no SelfVoiceButton, and no
   // GoDeeperSection. Self isn't a part to be mapped or spoken to — it's
   // the seat from which Self-voice messages are GENERATED, not received.
@@ -902,28 +900,6 @@ function SelfSections({
         placeholder="The quality of Self energy as it emerges..."
       />
 
-      <Text style={styles.selfModeExplain}>
-        Self mode shifts the conversation entirely. No mapping, no analysis, no agenda.
-        Just pure presence — a space to feel genuinely received without anything being
-        required of you. Use it when you need to be held rather than understood.
-      </Text>
-
-      {onEnterSelfMode ? (
-        <View style={{ alignItems: 'center' }}>
-          <Pressable
-            style={[styles.selfModeBtn, { borderColor: color, backgroundColor: color + '18' }]}
-            onPress={onEnterSelfMode}
-            accessibilityLabel="Enter Self mode"
-          >
-            <Text style={[styles.selfModeText, { color }]}>Enter Self mode →</Text>
-          </Pressable>
-          {onClose ? (
-            <Pressable onPress={onClose} hitSlop={10} style={styles.notNowBtn}>
-              <Text style={styles.notNowText}>Not now</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -1394,7 +1370,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 
-  // Self folder framer + Self-mode CTA (unchanged).
+  // Self folder framer.
   selfFramer: {
     color: colors.creamDim,
     fontFamily: fonts.serifItalic,
@@ -1402,28 +1378,6 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginBottom: spacing.sm,
     textAlign: 'center',
-  },
-  selfModeExplain: {
-    color: colors.creamDim,
-    fontFamily: fonts.serifItalic,
-    fontSize: 15,
-    lineHeight: 24,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-    textAlign: 'center',
-  },
-  selfModeBtn: {
-    alignSelf: 'center',
-    marginTop: spacing.sm,
-    paddingHorizontal: 24, paddingVertical: 12,
-    borderRadius: radii.pill,
-    borderWidth: 1.5,
-  },
-  selfModeText: { fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
-  notNowBtn: { marginTop: spacing.sm, padding: 8 },
-  notNowText: {
-    color: colors.creamFaint, fontSize: 12, opacity: 0.7,
-    letterSpacing: 0.3,
   },
 
   // Protector cards (managers / firefighters from the parts table) —

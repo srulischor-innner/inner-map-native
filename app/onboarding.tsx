@@ -251,8 +251,9 @@ function PrivacyNoticeScreen({ onAcknowledge }: { onAcknowledge: () => void }) {
         Before you start, here's the short version.
       </Text>
       <Text style={styles.privacyNoticeBody}>
-        Your journal entries stay on your phone — encrypted, never sent
-        to our servers.
+        You choose what the AI sees. Share a journal entry to help it
+        understand you, or mark it private — private entries stay
+        encrypted on your phone, and we genuinely can't read them.
       </Text>
       <Text style={styles.privacyNoticeBody}>
         Your chats and your map live on our server so you can pick up
@@ -265,7 +266,7 @@ function PrivacyNoticeScreen({ onAcknowledge }: { onAcknowledge: () => void }) {
         delete your account permanently. Anytime.
       </Text>
       <Text style={[styles.privacyNoticeBody, styles.privacyNoticeClose]}>
-        Inner work is private work. We treat it that way.
+        Inner work is yours. You decide what to share and what to keep private.
       </Text>
       <Text style={styles.privacyNoticeLinks}>
         Read the full{' '}

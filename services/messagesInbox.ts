@@ -20,6 +20,10 @@ const CACHE_TTL_MS = 30 * 1000;
 
 type InboxStatus = {
   unreadCount: number;
+  /** Items still awaiting a decision (accept/decline). Persists until
+   *  HANDLED — drives the "noticed items waiting" dots (hamburger button +
+   *  Messages row). Distinct from unreadCount, which clears on open. */
+  unactedCount: number;
   messages: InboxMessage[];
 };
 
@@ -55,7 +59,7 @@ export async function refreshInboxStatus(force = false): Promise<InboxStatus | n
   inFlight = (async () => {
     try {
       const next = await api.listMessages();
-      cached = { unreadCount: next.unreadCount, messages: next.messages };
+      cached = { unreadCount: next.unreadCount, unactedCount: next.unactedCount, messages: next.messages };
       cachedAt = Date.now();
       broadcast(cached);
       return cached;
@@ -70,5 +74,5 @@ export async function refreshInboxStatus(force = false): Promise<InboxStatus | n
 export function resetInbox(): void {
   cached = null;
   cachedAt = 0;
-  broadcast({ unreadCount: 0, messages: [] });
+  broadcast({ unreadCount: 0, unactedCount: 0, messages: [] });
 }
