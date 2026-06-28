@@ -169,10 +169,6 @@ export function ChatInput({
   // hands-free locked phase. `locked` adds one bit: the finger has been
   // released and recording continues until the user taps send/cancel.
   const [locked, setLocked] = useState(false);
-  // Mirror of `recording` for the unmount cleanup, which captures mount-time
-  // closures and can't read live state. See the teardown effect below.
-  const recordingRef = useRef(false);
-  useEffect(() => { recordingRef.current = recording; }, [recording]);
 
   // Finger travel during a hold — written by the pan worklet on the UI thread,
   // read by the lock-affordance + cancel-hint animated styles. Negative dragY =
@@ -212,16 +208,15 @@ export function ChatInput({
     if (tapHintHoldTimer.current) clearTimeout(tapHintHoldTimer.current);
     if (tapHintFadeTimer.current) clearTimeout(tapHintFadeTimer.current);
     if (tickRef.current) clearInterval(tickRef.current);
-    // FLAG #1 fix — a LOCKED recording outlives the finger, so if this
-    // component unmounts mid-record (e.g. the user navigates away while a
-    // locked note is running) nothing else would stop the recorder: the mic
-    // would stay hot and the audio session wouldn't reset. Stop it on the way
-    // out. Mirrors PartnerContributionInput's teardown. We read recordingRef
-    // (not the `recording` state) because this cleanup captures mount-time
-    // scope; `recorder` from useAudioRecorder is a stable instance.
-    if (recordingRef.current) {
-      recorder.stop().catch(() => {});
-    }
+    // Do NOT call recorder.stop() here. useAudioRecorder wraps the recorder in
+    // expo's useReleasingSharedObject, which already calls recorder.release()
+    // in its OWN unmount cleanup — and that effect is registered before this
+    // one, so it runs FIRST and frees the native recorder (stopping capture +
+    // the mic) on unmount. Calling recorder.stop() afterwards operates on an
+    // already-released SharedObject and throws "Unable to find the native
+    // shared object" (Sentry: SharedObject<AudioRecorder> cast failure on
+    // 1.1.0+27). release() is sufficient teardown — a locked recording is torn
+    // down and the mic freed without any explicit stop here.
   }, []);
 
   // Red pulse while recording.

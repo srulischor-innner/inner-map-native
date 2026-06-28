@@ -31,6 +31,10 @@ import * as Haptics from 'expo-haptics';
 import {
   useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync,
 } from 'expo-audio';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import ReAnimated, {
+  useSharedValue, useAnimatedStyle, runOnJS, withTiming, interpolate, Extrapolation,
+} from 'react-native-reanimated';
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
@@ -54,6 +58,10 @@ const REFLECTION_GUIDANCE = [
 // bypass-the-editor mode.
 const FREE_FLOW_RECORD_PROMPT =
   "Close your eyes. Just let the words come — don't worry if it makes sense.";
+
+// Swipe-up-to-lock threshold (px of upward finger travel) for the journal
+// voice note — hands-free once the finger rises past this. Tune on device.
+const LOCK_DY = -64;
 
 type Props = {
   visible: boolean;
@@ -94,23 +102,76 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   // Red-dot pulse during recording.
   const pulse = useRef(new Animated.Value(1)).current;
 
+  // --- Swipe-up-to-lock (hands-free) ---
+  // `recording` covers both the held and the locked phases; `locked` adds:
+  // the finger has lifted and recording continues until the finish button.
+  const [locked, setLocked] = useState(false);
+  // Mirror of `recording` for the teardown effects (which capture mount-time
+  // scope and can't read live state).
+  const recordingRef = useRef(false);
+  useEffect(() => { recordingRef.current = recording; }, [recording]);
+  // Finger travel during a hold — written by the pan worklet, read by the
+  // lock-affordance animated style. Negative = upward (toward lock).
+  const dragY = useSharedValue(0);
+  const lockArmedSV = useSharedValue(0);
+  const lockAffordanceStyle = useAnimatedStyle(() => {
+    const p = interpolate(dragY.value, [LOCK_DY, 0], [1, 0], Extrapolation.CLAMP);
+    return {
+      opacity: 0.5 + p * 0.5,
+      transform: [{ translateY: -p * 8 }, { scale: 1 + p * 0.16 }],
+    };
+  });
+
   // Reset state every time the modal becomes visible. We don't carry text
   // across opens — each entry is its own thing.
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      // FLAG #3 — modal closing. A LOCKED recording outlives the finger, so if
+      // the user closes (X / back / save) while locked, stop the recorder
+      // WITHOUT transcribing so the mic is released and the audio session
+      // resets. (A held, non-locked recording can't reach here — the finger is
+      // still on the mic.)
+      if (recordingRef.current) {
+        if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+        recorder.stop().catch(() => {});
+        setAudioModeAsync({
+          allowsRecording: false, playsInSilentMode: true,
+          interruptionMode: 'doNotMix', shouldPlayInBackground: false,
+        }).catch(() => {});
+        setRecording(false);
+        setLocked(false);
+        setTranscribing(false);
+      }
+      return;
+    }
     setText('');
     setRecording(false);
+    setLocked(false);
     setTranscribing(false);
     setSeconds(0);
     setSaving(false);
     setShared(true);
     setGuidanceCollapsed(false);
     guidanceOpacity.setValue(1);
-  }, [visible, guidanceOpacity]);
+  }, [visible, guidanceOpacity, recorder]);
 
   // Cleanup timers if the modal closes mid-recording.
   useEffect(() => () => {
     if (tickRef.current) clearInterval(tickRef.current);
+    // Do NOT call recorder.stop() here. useAudioRecorder wraps the recorder in
+    // expo's useReleasingSharedObject, which already calls recorder.release()
+    // on unmount (its effect runs before this one), freeing the native recorder
+    // + the mic. Calling recorder.stop() afterwards hits the released
+    // SharedObject and throws "Unable to find the native shared object"
+    // (Sentry, 1.1.0+27). We still reset the audio-session mode below —
+    // setAudioModeAsync is a module function (not a recorder method), so it's
+    // unaffected by the release — to hand the session back to playback.
+    if (recordingRef.current) {
+      setAudioModeAsync({
+        allowsRecording: false, playsInSilentMode: true,
+        interruptionMode: 'doNotMix', shouldPlayInBackground: false,
+      }).catch(() => {});
+    }
   }, []);
 
   // Pulse the red recording dot.
@@ -179,6 +240,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
     setRecording(false);
+    setLocked(false);
     setSeconds(0);
     setTranscribing(true);
     try {
@@ -234,6 +296,55 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     ? 'Just start writing…'
     : 'Take your time…';
 
+  function micHaptic() {
+    Haptics.selectionAsync().catch(() => {});
+  }
+  // Called once per hold (from the pan worklet) when the finger crosses the
+  // lock threshold → hands-free recording.
+  function onLockCrossed() {
+    setLocked(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+  }
+
+  // Hold-to-record + swipe-up-to-lock (NO cancel). The pan activates only after
+  // a 180ms long-press (matching the prior press-and-hold), so a quick tap
+  // stays a no-op. This is a thin shell over startRecording/endRecording — it
+  // adds NO audio-session calls (those stay inside those two functions). Mirrors
+  // the chat gesture (ChatInput) minus the swipe-left-cancel axis.
+  const micPan = Gesture.Pan()
+    .activateAfterLongPress(180)
+    .hitSlop(12)
+    .onBegin(() => {
+      'worklet';
+      dragY.value = 0;
+      lockArmedSV.value = 0;
+      runOnJS(micHaptic)();
+    })
+    .onStart(() => {
+      'worklet';
+      runOnJS(startRecording)();
+    })
+    .onUpdate((e) => {
+      'worklet';
+      dragY.value = e.translationY;
+      // Lock once the finger rises past the threshold (one-shot guard).
+      if (lockArmedSV.value === 0 && e.translationY <= LOCK_DY) {
+        lockArmedSV.value = 1;
+        runOnJS(onLockCrossed)();
+      }
+    })
+    .onEnd(() => {
+      'worklet';
+      // Locked → recording continues; the dock's finish button stops it.
+      if (lockArmedSV.value === 1) return;
+      // Plain release → stop + transcribe (the original behavior).
+      runOnJS(endRecording)();
+    })
+    .onFinalize(() => {
+      'worklet';
+      dragY.value = withTiming(0, { duration: 140 });
+    });
+
   return (
     <Modal
       visible={visible}
@@ -241,6 +352,10 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
       onRequestClose={onClose}
       statusBarTranslucent
     >
+      {/* GestureHandlerRootView is REQUIRED here: an RN Modal renders in a
+          separate native window outside the app's root GestureHandlerRootView,
+          so a bare GestureDetector wouldn't receive events. Mirrors GuideAskModal. */}
+      <GestureHandlerRootView style={styles.flex}>
       <SafeAreaView style={styles.root} edges={['bottom']}>
         {/* Manual kbHeight lift — see useEffect at the top of this
             component. Replaces KeyboardAvoidingView, which on Android
@@ -344,28 +459,52 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
             </View>
           ) : null}
 
-          {/* Mic dock — sits at the bottom-right with its "Or speak" label.
-              Press-and-hold to record. Release to transcribe. */}
+          {/* Mic dock — bottom-right. Hold to record; swipe up to lock hands-
+              free; release (below the lock) to transcribe. Locked → the mic
+              becomes a finish button. (No swipe-to-cancel in the journal.) */}
           <View style={styles.micDock}>
-            <Text style={styles.micLabel}>Or speak</Text>
-            <Pressable
-              onPressIn={() => { Haptics.selectionAsync().catch(() => {}); }}
-              onLongPress={startRecording}
-              delayLongPress={180}
-              onPressOut={endRecording}
-              hitSlop={12}
-              style={[styles.micBtn, recording && styles.micBtnActive]}
-              accessibilityLabel="Hold to record voice note"
-            >
-              <Ionicons
-                name="mic"
-                size={22}
-                color={recording ? '#fff' : colors.amber}
-              />
-            </Pressable>
+            <Text style={styles.micLabel}>{locked ? 'Tap to finish' : 'Or speak'}</Text>
+            {/* Lock affordance — floats above the mic while holding (pre-lock),
+                brightening + lifting as the finger rises toward the lock. */}
+            {recording && !locked ? (
+              <ReAnimated.View pointerEvents="none" style={[styles.lockAffordance, lockAffordanceStyle]}>
+                <Ionicons name="lock-closed" size={14} color={colors.cream} />
+                <Ionicons name="chevron-up" size={12} color={colors.creamFaint} style={{ marginTop: 1 }} />
+              </ReAnimated.View>
+            ) : null}
+            {locked ? (
+              // LOCKED — hands-free. This finish button stops + transcribes.
+              <Pressable
+                onPress={endRecording}
+                hitSlop={12}
+                style={[styles.micBtn, styles.micBtnSend]}
+                accessibilityLabel="Stop and add voice note"
+              >
+                <Ionicons name="checkmark" size={26} color={colors.background} />
+              </Pressable>
+            ) : (
+              // idle / holding — press-and-hold to record, swipe up to lock.
+              <GestureDetector gesture={micPan}>
+                <View
+                  style={[styles.micBtn, recording && styles.micBtnActive]}
+                  accessible
+                  accessibilityRole="button"
+                  accessibilityLabel={recording
+                    ? 'Recording. Release to add, or swipe up to lock hands-free.'
+                    : 'Hold to record voice note'}
+                >
+                  <Ionicons
+                    name="mic"
+                    size={22}
+                    color={recording ? '#fff' : colors.amber}
+                  />
+                </View>
+              </GestureDetector>
+            )}
           </View>
         </View>
       </SafeAreaView>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -534,5 +673,26 @@ const styles = StyleSheet.create({
   micBtnActive: {
     backgroundColor: '#d4726a',
     borderColor: '#d4726a',
+  },
+  // Locked-state finish button — amber fill (mirrors the chat send affordance).
+  micBtnSend: {
+    backgroundColor: colors.amber,
+    borderColor: colors.amber,
+  },
+  // Lock affordance floating above the mic while holding (pre-lock). Anchored
+  // above the 48px mic button at the right of the dock; positions want a device
+  // pass alongside the LOCK_DY threshold.
+  lockAffordance: {
+    position: 'absolute',
+    bottom: 56,
+    right: 32,
+    alignItems: 'center',
+    gap: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 7,
+    backgroundColor: 'rgba(40,28,28,0.92)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(212,114,106,0.55)',
   },
 });

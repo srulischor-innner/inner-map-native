@@ -51,7 +51,6 @@ import { AttentionIndicator } from '../../components/AttentionIndicator';
 import { pulseMapTab } from '../../utils/mapPulse';
 import { activatePartOnMap, ActivatablePart } from '../../utils/mapActivation';
 import { subscribeRateLimitNotice } from '../../utils/rateLimitNotice';
-import { consumeSelfMode } from '../../utils/selfMode';
 import { consumePendingChatMessage } from '../../utils/pendingChatMessage';
 import { MigrationModal, shouldShowMigrationModal, shouldShowGraceNudge } from '../../components/auth/MigrationModal';
 import { markGraceNudgeShown } from '../../services/onboarding';
@@ -130,11 +129,6 @@ export default function ChatScreen() {
   // Contextual conversation starters returned by /api/returning-greeting —
   // grounded in the last session so the chips land on what's actually alive.
   const [starters, setStarters] = useState<string[]>([]);
-  // Self mode — one-shot flag set when the user taps "Enter Self mode" on
-  // the map's Self folder. Consumed on mount; every /api/chat request while
-  // this is true carries selfMode:true so the server prepends the Self-mode
-  // system prompt addendum. Cleared when the session ends.
-  const [selfMode, setSelfMode] = useState(false);
   // Session-level audio mute/unmute. Default OFF — user opts in each session
   // by tapping the speaker icon in the chat header. When ON, every new AI
   // reply auto-plays via the streaming TTS pipeline. When the user mutes,
@@ -444,14 +438,6 @@ export default function ChatScreen() {
   }, [sessionIdSeed]);
 
   useEffect(() => {
-    // Consume the one-shot Self-mode flag if the user just tapped "Enter
-    // Self mode" on the map. Runs once on mount — subsequent tab visits
-    // don't re-enter Self mode unless the user explicitly opts back in.
-    const sm = consumeSelfMode();
-    if (sm) {
-      console.log('[chat] Self mode engaged for this session');
-      setSelfMode(true);
-    }
     setTyping(true);
     (async () => {
       let greetingRes: { greeting: string | null; suggestions: string[] } = { greeting: null, suggestions: [] };
@@ -944,7 +930,6 @@ export default function ChatScreen() {
             messages: turnThread.historyRef.current,
             mode,
             sessionId: sessionIdRef.current,
-            selfMode,
             experienceLevel,
             chatMode: turnMode,
           },
@@ -1232,7 +1217,7 @@ export default function ChatScreen() {
         setTyping(false);
       }
     },
-    [sending, mode, typing, selfMode, experienceLevel],
+    [sending, mode, typing, experienceLevel],
   );
 
   // Thin wrapper used by the text-send path: push bubble + history, then run
@@ -1638,7 +1623,6 @@ export default function ChatScreen() {
               // Session ended — clear the chat-active pulse on the Map
               // tab icon. Next user send re-arms it.
               setChatSessionActive(false);
-              setSelfMode(false);
               setChatMode('explore');          // new session starts in active map-building mode
               setLivePart(null); setLiveConfidence(null);
               if (livePartTimerRef.current) { clearTimeout(livePartTimerRef.current); livePartTimerRef.current = null; }

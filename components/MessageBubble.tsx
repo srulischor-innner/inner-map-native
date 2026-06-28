@@ -772,8 +772,8 @@ const styles = StyleSheet.create({
   text: {
     color: colors.cream,
     fontFamily: fonts.sans,
-    fontSize: 17,
-    lineHeight: 26,
+    fontSize: 15,
+    lineHeight: 22,
     letterSpacing: 0.15,
   },
   // Home-screen redesign — opening greeting as the screen's anchor: a touch

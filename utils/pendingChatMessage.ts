@@ -1,5 +1,5 @@
 // Small handoff module for cross-tab "send this message in chat as me"
-// flows (polish round 8 Phase 2). Mirrors the selfMode flag pattern:
+// flows (polish round 8 Phase 2). A one-shot flag pattern:
 // arm from one tab → consume on the next chat-tab mount → one-shot.
 //
 // Today's caller: the part folder's "Establish belief for this part"

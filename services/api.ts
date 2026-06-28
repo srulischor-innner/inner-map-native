@@ -438,7 +438,6 @@ export const api = {
       mode?: 'onboarding' | 'ongoing';
       sessionId: string;
       wasInterrupted?: boolean;
-      selfMode?: boolean;
       experienceLevel?: 'curious' | 'familiar' | 'experienced';
       /** When true, server swaps in MAP_VOICE_PROMPT and caps max_tokens
        *  at 150 for snappy spoken replies. */
@@ -467,7 +466,6 @@ export const api = {
       stream: false,
       wasInterrupted: !!params.wasInterrupted,
     };
-    if (params.selfMode) bodyObj.selfMode = true;
     if (params.experienceLevel) bodyObj.experienceLevel = params.experienceLevel;
     if (params.mapVoice) bodyObj.mapVoice = true;
     if (params.chatMode) bodyObj.chatMode = params.chatMode;
