@@ -6,6 +6,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, radii, spacing } from '../../constants/theme';
+import { continuedLabel } from '../../utils/sessionDisplay';
 
 export type PathItem = {
   id: string;
@@ -15,6 +16,9 @@ export type PathItem = {
   title?: string;
   hasMap?: boolean;
   messageCount?: number;
+  /** Last-activity timestamp (ISO). Drives the "continued <when>"
+   *  provenance label when it lands on a later day than `date`. */
+  updatedAt?: string | null;
   /** Which mode the session was ended in. NULL on legacy rows
    *  saved before the column existed; the chip is hidden for those. */
   chatMode?: 'process' | 'explore' | null;
@@ -44,6 +48,7 @@ export function PathTimeline({
           Haptics.selectionAsync().catch(() => {});
           onItemPress(it.id);
         };
+        const cont = continuedLabel(it.date, it.updatedAt);
         return (
           <View key={it.id} style={styles.row}>
             <View style={styles.rail}>
@@ -82,6 +87,7 @@ export function PathTimeline({
                   </View>
                 ) : null}
               </View>
+              {cont ? <Text style={styles.continued}>{cont}</Text> : null}
               {it.title ? <Text style={styles.title}>{it.title}</Text> : null}
               {it.preview ? (
                 <Text style={styles.preview} numberOfLines={2}>"{it.preview}"</Text>
@@ -131,6 +137,7 @@ const styles = StyleSheet.create({
   },
   date: { color: colors.amber, fontSize: 12, fontWeight: '600', letterSpacing: 0.3, flexShrink: 1 },
   time: { color: colors.creamFaint, fontWeight: '400' },
+  continued: { color: 'rgba(230,180,122,0.8)', fontSize: 10, fontStyle: 'italic', marginTop: 2 },
   // Small uppercase chip — leans on the same dim-amber treatment as
   // the inactive mode pill in ChatModeToggle so the two surfaces feel
   // related. Process is the gentler default → cooler amber-on-dim;

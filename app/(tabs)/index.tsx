@@ -52,6 +52,7 @@ import { pulseMapTab } from '../../utils/mapPulse';
 import { activatePartOnMap, ActivatablePart } from '../../utils/mapActivation';
 import { subscribeRateLimitNotice } from '../../utils/rateLimitNotice';
 import { consumePendingChatMessage } from '../../utils/pendingChatMessage';
+import { consumePendingSessionResume } from '../../utils/pendingSessionResume';
 import { MigrationModal, shouldShowMigrationModal, shouldShowGraceNudge } from '../../components/auth/MigrationModal';
 import { markGraceNudgeShown } from '../../services/onboarding';
 import {
@@ -161,6 +162,13 @@ export default function ChatScreen() {
   // Once true, the Explore thread has been seeded with its
   // opening greeting for this session. Reset on end-session.
   const exploreGreetedRef = useRef<boolean>(false);
+  // Resume mode-lock (conversation continuation). Set when a past session
+  // is reopened via pendingSessionResume; holds the locked mode. Non-null
+  // also tells the boot effect to skip its opening greeting (we hydrate the
+  // transcript instead) and tells handleModeChange that switching modes
+  // must mint a FRESH conversation rather than let the other thread save
+  // into — and clobber — the reopened row (both threads share sessionIdRef).
+  const resumeLockedModeRef = useRef<ChatMode | null>(null);
 
   // ===== THREAD HELPERS =====
   // Resolve the (messages, setMessages, historyRef) triple for a
@@ -534,8 +542,13 @@ export default function ChatScreen() {
       const finalGreeting = isFirstSession
         ? ORIENTATION_MESSAGE
         : ((greetingRes.greeting && greetingRes.greeting.trim()) || FALLBACK_GREETING);
-      addAssistantMessageToProcess(finalGreeting);
-      processHistoryRef.current.push({ role: 'assistant', content: finalGreeting });
+      // Skip the opener if a session resume already hydrated the threads
+      // (cold-start race: the resume focus-effect can land mid-boot). The
+      // lock ref is set synchronously by the resume consumer.
+      if (!resumeLockedModeRef.current) {
+        addAssistantMessageToProcess(finalGreeting);
+        processHistoryRef.current.push({ role: 'assistant', content: finalGreeting });
+      }
       setTyping(false);
 
     })();
@@ -566,6 +579,50 @@ export default function ChatScreen() {
         setChatMode(pending.mode);
         setTimeout(() => { handleSend(pending.text); }, 0);
       }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
+  );
+
+  // ===== PENDING SESSION RESUME CONSUMER =====
+  // Cross-tab handoff for "Continue this conversation" (SessionDetailModal,
+  // gated by SESSION_RESUME_ENABLED). Hydrates the matching thread with the
+  // past transcript, points sessionIdRef at the reopened row so subsequent
+  // turns APPEND to it, and LOCKS the session to its saved mode (see
+  // handleModeChange). Mirrors the partner-chat resume hydration, but for a
+  // specific user-chosen past session. Like the pending-message consumer it
+  // runs on EVERY focus so warm navigation (Journey → Chat) fires it too.
+  useFocusEffect(
+    React.useCallback(() => {
+      const resume = consumePendingSessionResume();
+      if (!resume || !resume.sessionId || !Array.isArray(resume.messages)) return;
+      const mode: ChatMode = resume.mode === 'process' ? 'process' : 'explore';
+      // Reset BOTH threads so a boot greeting or prior content can't bleed
+      // into the reopened conversation; hydrate only the resumed mode.
+      setProcessMessages([]);
+      setExploreMessages([]);
+      processHistoryRef.current = [];
+      exploreHistoryRef.current = [];
+      exploreGreetedRef.current = true; // we hydrate instead of auto-seeding Explore
+
+      const bubbles: ChatMsg[] = [];
+      const wire: ChatMessage[] = [];
+      for (const m of resume.messages) {
+        const role: 'user' | 'assistant' = m.role === 'user' ? 'user' : 'assistant';
+        const text = (m.content || '').trim();
+        if (!text) continue;
+        bubbles.push({ id: uuidv4(), role, text });
+        wire.push({ role, content: text });
+      }
+      const t = threadFor(mode);
+      t.setMessages(bubbles);
+      t.historyRef.current = wire;
+
+      sessionIdRef.current = resume.sessionId;
+      resumeLockedModeRef.current = mode;   // lock + suppress boot greeting
+      chatModeRef.current = mode;
+      setChatMode(mode);
+      setMode('ongoing');                   // a resumed session is never onboarding
+      setTimeout(() => scrollToBottom(), 0);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []),
   );
@@ -672,6 +729,41 @@ export default function ChatScreen() {
     const t = threadFor(chatModeRef.current);
     t.setMessages((prev) => [...prev, { id: uuidv4(), role: 'user', text }]);
     scrollToBottom();
+  }
+
+  // User-driven mode switch (the ChatModeToggle). Normally just flips the
+  // active thread. But if a RESUMED session is active it's locked to its
+  // original mode — both threads share sessionIdRef, so letting the other
+  // thread save would clobber the reopened row. Switching away therefore
+  // CONCLUDES the resumed conversation and starts a fresh one under a new
+  // id, so nothing bleeds between them. (Programmatic mode sets — resume,
+  // pending-message, end-session — call setChatMode directly and bypass
+  // this on purpose.)
+  function handleModeChange(nextMode: ChatMode) {
+    if (resumeLockedModeRef.current && nextMode !== resumeLockedModeRef.current) {
+      resumeLockedModeRef.current = null;
+      sessionIdRef.current = uuidv4();
+      // Reset both threads (mirror the end-session reset) so neither the
+      // reopened transcript nor a stale opener can save under the new id.
+      processHistoryRef.current = [];
+      exploreHistoryRef.current = [];
+      setProcessMessages([]);
+      setExploreMessages([]);
+      exploreGreetedRef.current = false; // re-arm the Explore opener
+      // Seed the Process opener so the fresh conversation isn't blank
+      // (Explore self-seeds via its opener effect when switched into).
+      (async () => {
+        let greeting = FALLBACK_GREETING;
+        try {
+          const next = await api.getReturningGreeting();
+          if (next?.greeting && next.greeting.trim()) greeting = next.greeting.trim();
+        } catch {}
+        addAssistantMessageToProcess(greeting);
+        processHistoryRef.current.push({ role: 'assistant', content: greeting });
+      })();
+    }
+    chatModeRef.current = nextMode;
+    setChatMode(nextMode);
   }
 
   /** Append a user voice-note message IMMEDIATELY (showing "Transcribing…"
@@ -1397,7 +1489,7 @@ export default function ChatScreen() {
       ) : null}
       <ChatModeToggle
         mode={chatMode}
-        onChange={setChatMode}
+        onChange={handleModeChange}
         // Both modes share the centerSlot now (previously the ring was
         // Explore-only and Process showed the triangle permanently —
         // which made Process-mode mapping invisible). The split is
@@ -1637,6 +1729,7 @@ export default function ChatScreen() {
               setProcessMessages([]);
               setExploreMessages([]);
               exploreGreetedRef.current = false; // re-arm Explore opener for next session
+              resumeLockedModeRef.current = null; // ending clears any resume mode-lock
               sessionIdRef.current = uuidv4();
               const next = await api.getReturningGreeting();
               const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;

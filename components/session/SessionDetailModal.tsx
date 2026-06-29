@@ -22,6 +22,11 @@ import { api } from '../../services/api';
 import { parseChatMeta, stripMarkers } from '../../utils/markers';
 import { MessageBubble, ChatMsg } from '../MessageBubble';
 import { buildSessionExport, shareSessionText } from '../../utils/sessionExport';
+import { useRouter } from 'expo-router';
+import { armPendingSessionResume } from '../../utils/pendingSessionResume';
+import type { ChatMode } from '../../utils/pendingChatMessage';
+import { SESSION_RESUME_ENABLED } from '../../constants/features';
+import { continuedLabel } from '../../utils/sessionDisplay';
 
 type Props = {
   visible: boolean;
@@ -76,6 +81,25 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
   }, [session]);
 
   const header = formatHeader(session);
+  const router = useRouter();
+
+  // Continue this conversation — arm the resume handoff with the (already
+  // marker-stripped) transcript + the session's saved mode, then route to
+  // the chat tab, which hydrates the matching thread and appends in-place.
+  function handleContinue() {
+    if (!session || !sessionId) return;
+    Haptics.selectionAsync().catch(() => {});
+    const msgs = ((session.messages as any[]) || [])
+      .map((m) => ({
+        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: stripMarkers(m.content || '').trim(),
+      }))
+      .filter((m) => m.content);
+    const mode: ChatMode = session.chatMode === 'explore' ? 'explore' : 'process';
+    armPendingSessionResume({ sessionId, messages: msgs, mode });
+    onClose();
+    router.push('/');
+  }
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
@@ -181,6 +205,21 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
             {messages.map((m) => <MessageBubble key={m.id} msg={m} />)}
           </ScrollView>
         )}
+
+        {/* Continue this conversation — gated behind SESSION_RESUME_ENABLED
+            for staged rollout. Pinned below the scrollable transcript. Hidden
+            for synthetic partner sessions (`partner::` ids) — those are
+            relationship-mode and can't be continued in the solo chat. */}
+        {SESSION_RESUME_ENABLED && session && messages.length > 0 && !String(sessionId).startsWith('partner::') ? (
+          <Pressable
+            onPress={handleContinue}
+            style={({ pressed }) => [styles.continueBtn, pressed && { opacity: 0.85 }]}
+            accessibilityLabel="Continue this conversation"
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.background} style={{ marginRight: 8 }} />
+            <Text style={styles.continueText}>Continue this conversation</Text>
+          </Pressable>
+        ) : null}
       </SafeAreaView>
     </Modal>
   );
@@ -189,7 +228,12 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
 // ---- helpers ----
 function formatHeader(session: any | null): { date: string; title: string } {
   if (!session) return { date: '', title: '' };
-  const d = formatDate(session.date) + (session.time ? ' · ' + session.time : '');
+  const base = formatDate(session.date) + (session.time ? ' · ' + session.time : '');
+  // Provenance — when the session was continued on a later day, label it
+  // "Started <date> · continued <when>" so its top-of-list position (driven
+  // by last activity) reads truthfully against its original start date.
+  const cont = continuedLabel(session.date, session.updatedAt);
+  const d = cont ? `Started ${base} · ${cont}` : base;
   const title = session.title?.trim?.() || session.preview?.trim?.() || '';
   return { date: d, title };
 }
@@ -242,4 +286,17 @@ const styles = StyleSheet.create({
   },
   summaryLabel: { color: colors.amber, fontSize: 10, letterSpacing: 1.4, marginBottom: 4 },
   summaryText: { color: colors.cream, fontSize: 14, lineHeight: 22 },
+
+  continueBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.amber,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+    paddingVertical: 14,
+    borderRadius: radii.md,
+  },
+  continueText: { color: colors.background, fontSize: 15, fontWeight: '600', letterSpacing: 0.3 },
 });

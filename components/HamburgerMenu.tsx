@@ -5,13 +5,13 @@
 //   2. Recent Sessions — last 8 sessions from /api/sessions, each with date,
 //      AI-generated title, most-active-part colored dot. Tap opens the
 //      shared SessionDetailModal.
-//   3. Settings — Audio + Notifications toggles
+//   3. Settings — experience level
 //   4. About / Feedback / Privacy links
 //   5. Reset onboarding (long-press) + version number
 
 import React, { useEffect, useState } from 'react';
 import {
-  Modal, View, Text, Pressable, Switch, ScrollView, StyleSheet,
+  Modal, View, Text, Pressable, ScrollView, StyleSheet,
   Linking, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,7 +22,6 @@ import { useRouter } from 'expo-router';
 
 import { colors, radii, spacing } from '../constants/theme';
 import { api, RelationshipSession } from '../services/api';
-import { getSettings, setAudioEnabled, setPushEnabled } from '../services/settings';
 import {
   useExperienceLevel, setExperienceLevel,
   LEVEL_OPTIONS, LEVEL_LABELS, ExperienceLevel,
@@ -30,6 +29,7 @@ import {
 import { resetOnboarding } from '../services/onboarding';
 import { subscribeInbox, refreshInboxStatus } from '../services/messagesInbox';
 import { PART_COLOR } from '../utils/markers';
+import { continuedLabel } from '../utils/sessionDisplay';
 import { SessionDetailModal } from './session/SessionDetailModal';
 import { RelationshipSessionSummaryModal } from './relationships/RelationshipSessionSummaryModal';
 
@@ -43,8 +43,6 @@ export function HamburgerMenu({
   onClose: () => void;
 }) {
   const [name, setName] = useState<string | null>(null);
-  const [audioOn, setAudioOn] = useState(true);
-  const [pushOn, setPushOn]   = useState(true);
   const [sessions, setSessions] = useState<any[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   // Partner-session summary modal state — opened when the user taps a
@@ -71,14 +69,11 @@ export function HamburgerMenu({
     if (!visible) return;
     refreshInboxStatus().catch(() => {});
     (async () => {
-      const [intake, settings, sessionList] = await Promise.all([
+      const [intake, sessionList] = await Promise.all([
         api.getIntake(),
-        getSettings(),
         api.listSessions(),
       ]);
       setName(intake?.name?.trim() || null);
-      setAudioOn(settings.audioEnabled);
-      setPushOn(settings.pushEnabled);
       setSessions((sessionList || []).slice(0, 8));
     })();
   }, [visible]);
@@ -114,17 +109,6 @@ export function HamburgerMenu({
     onClose();
     // Brief delay so the close animation doesn't fight the push.
     setTimeout(() => router.push(path as any), 120);
-  }
-
-  async function toggleAudio(v: boolean) {
-    Haptics.selectionAsync().catch(() => {});
-    setAudioOn(v);
-    await setAudioEnabled(v);
-  }
-  async function togglePush(v: boolean) {
-    Haptics.selectionAsync().catch(() => {});
-    setPushOn(v);
-    await setPushEnabled(v);
   }
 
   function doReset() {
@@ -194,6 +178,7 @@ export function HamburgerMenu({
               <SessionRow
                 key={s.id}
                 date={s.date}
+                updatedAt={s.updatedAt}
                 title={s.title || s.preview}
                 mostActivePart={s.mostActivePart}
                 chatMode={s.chatMode}
@@ -207,30 +192,6 @@ export function HamburgerMenu({
 
         {/* ===== SETTINGS ===== */}
         <SectionLabel>SETTINGS</SectionLabel>
-        <Row
-          label="Audio"
-          sub="Speak replies aloud"
-          right={
-            <Switch
-              value={audioOn}
-              onValueChange={toggleAudio}
-              trackColor={{ false: colors.border, true: colors.amberDim }}
-              thumbColor={audioOn ? colors.amber : colors.creamFaint}
-            />
-          }
-        />
-        <Row
-          label="Notifications"
-          sub="Gentle check-ins + session reminders"
-          right={
-            <Switch
-              value={pushOn}
-              onValueChange={togglePush}
-              trackColor={{ false: colors.border, true: colors.amberDim }}
-              thumbColor={pushOn ? colors.amber : colors.creamFaint}
-            />
-          }
-        />
         <ExperienceLevelRow />
 
 
@@ -313,9 +274,12 @@ export function HamburgerMenu({
 
 // ---------- session row ----------
 function SessionRow({
-  date, title, mostActivePart, chatMode, onPress,
+  date, updatedAt, title, mostActivePart, chatMode, onPress,
 }: {
   date?: string;
+  /** Last-activity timestamp (ISO) — drives the "continued <when>"
+   *  provenance label when it lands on a later day than `date`. */
+  updatedAt?: string | null;
   title?: string;
   mostActivePart?: string | null;
   /** Mode the session was ended in. NULL for legacy rows that
@@ -338,6 +302,7 @@ function SessionRow({
     chatMode === 'explore' ? 'Explore' :
     chatMode === 'partner_private' ? '💗 Partner' :
     'Process';
+  const cont = continuedLabel(date, updatedAt);
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.sessionRow, pressed && { opacity: 0.65 }]}>
       <View style={[styles.sessionDot, { backgroundColor: dotColor }]} />
@@ -359,6 +324,7 @@ function SessionRow({
             </Text>
           ) : null}
         </View>
+        {cont ? <Text style={styles.sessionContinued}>{cont}</Text> : null}
         <Text style={styles.sessionTitle} numberOfLines={1}>
           {title?.trim() || 'Untitled session'}
         </Text>
@@ -448,17 +414,6 @@ function ExperienceLevelPicker({
 // ---------- reusable bits ----------
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return <Text style={styles.sectionLabel}>{children}</Text>;
-}
-function Row({ label, sub, right }: { label: string; sub?: string; right: React.ReactNode }) {
-  return (
-    <View style={styles.row}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        {sub ? <Text style={styles.rowSub}>{sub}</Text> : null}
-      </View>
-      {right}
-    </View>
-  );
 }
 function LinkRow({
   label, onPress, icon, badge,
@@ -685,6 +640,7 @@ const styles = StyleSheet.create({
     color: '#E0879A',
   },
   sessionTitle: { color: colors.cream, fontSize: 14, marginTop: 2 },
+  sessionContinued: { color: 'rgba(230,180,122,0.8)', fontSize: 10, fontStyle: 'italic', marginTop: 2 },
 
   divider: {
     height: 1,

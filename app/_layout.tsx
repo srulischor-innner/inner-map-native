@@ -30,6 +30,7 @@ import { markSignInChoiceMade } from '../services/onboarding';
 import { colors } from '../constants/theme';
 import { getOnboardingState, OnboardingState } from '../services/onboarding';
 import { registerForPushNotifications } from '../services/push';
+import { NOTIFICATIONS_ENABLED } from '../constants/features';
 import {
   ensureDefaultPreference, authenticate as authenticateBiometric, isLockEnabled,
 } from '../services/biometrics';
@@ -451,10 +452,14 @@ function RootLayout() {
         } else if (!complete) {
           console.log('[boot] flags incomplete but already redirected this session — not re-redirecting');
         } else {
-          console.log('[boot] step 3/3 — registering push notifications (fire-and-forget)');
-          registerForPushNotifications().catch((e) =>
-            console.warn('[boot] push register failed:', (e as Error)?.message),
-          );
+          if (NOTIFICATIONS_ENABLED) {
+            console.log('[boot] step 3/3 — registering push notifications (fire-and-forget)');
+            registerForPushNotifications().catch((e) =>
+              console.warn('[boot] push register failed:', (e as Error)?.message),
+            );
+          } else {
+            console.log('[boot] step 3/3 — push registration gated off (NOTIFICATIONS_ENABLED=false)');
+          }
         }
         console.log('[boot] boot sequence complete');
       } catch (e) {

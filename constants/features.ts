@@ -35,3 +35,28 @@ export const PARTNER_ENABLED: boolean = false;
 // pre-existing "last line not read aloud" bug is moot while this is off;
 // re-test it when read-aloud returns.
 export const CHAT_READ_ALOUD_ENABLED: boolean = false;
+
+// Push notifications hidden for v1 launch — flip to true to restore. The
+// ONLY entry point is the boot-time registerForPushNotifications() call in
+// app/_layout.tsx; with it gated off, the app never requests OS notification
+// permission and never POSTs a push token at boot. All push infrastructure
+// stays in the codebase, compiling, untouched: services/push.ts, the
+// /api/push-token server endpoint, and the push_tokens table.
+//
+// WHY OFF FOR v1: nothing actually sends a notification yet (no
+// scheduleNotificationAsync client-side, no server send path), so registering
+// at boot only produced an OS permission prompt for a feature that delivers
+// nothing. When notifications ship, re-enable here AND move the permission
+// request to a contextual opt-in (the moment the user turns on reminders),
+// not cold boot.
+export const NOTIFICATIONS_ENABLED: boolean = false;
+
+// Conversation continuation — reopen ANY past session (incl. old, ended,
+// summarized ones) and keep talking in it, instead of starting fresh.
+// Off by default for staged rollout; flip to true to expose the
+// "Continue this conversation" entry point on the shared
+// SessionDetailModal. ALL resume plumbing stays compiled regardless of
+// the flag — utils/pendingSessionResume, the chat-tab hydrate-on-resume,
+// the mode-lock, and the server-side updatedAt ordering + re-summary
+// idempotency. Only the entry-point button is gated.
+export const SESSION_RESUME_ENABLED: boolean = false;

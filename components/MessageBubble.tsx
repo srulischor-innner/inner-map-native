@@ -763,17 +763,15 @@ const styles = StyleSheet.create({
   // app/_layout.tsx). The next-best already-loaded variant for
   // matching Welcome's perceived stroke weight at smaller size is
   // 600SemiBold (CormorantGaramond_600SemiBold = fonts.serifBold).
-  // SemiBold is one step heavier than Medium would have been, so we
-  // pair it with a slightly smaller size (17/26) and 0.15 letter-
-  // spacing to keep the optical density close to Welcome's
-  // 400Regular@20pt without overshooting. If Medium is added to the
-  // bundle later, this can swap to a true 500 weight without other
-  // changes.
+  // Body copy is DM Sans (fonts.sans) at 13/19 with 0.15 letter-
+  // spacing — dropped from 15/22 after device testing showed 15 ran
+  // large on-device. The ~1.45 line-height keeps long replies easy to
+  // read without feeling cramped.
   text: {
     color: colors.cream,
     fontFamily: fonts.sans,
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 13,
+    lineHeight: 19,
     letterSpacing: 0.15,
   },
   // Home-screen redesign — opening greeting as the screen's anchor: a touch
