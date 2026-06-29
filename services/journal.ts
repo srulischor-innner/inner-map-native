@@ -17,6 +17,7 @@
 
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import * as encryptedStorage from '../utils/encryptedStorage';
 import { runMigrationOnce } from './journalMigration';
@@ -34,6 +35,26 @@ import type { JournalKind, JournalEntry } from '../utils/encryptedStorage';
  *  resolve instantly. */
 function ensureReady(): Promise<unknown> {
   return runMigrationOnce();
+}
+
+// ---- Global "share journal with AI" default (Settings) ----------------------
+// A single device preference, replacing the old per-entry compose toggle. The
+// Settings switch writes it; each new compose seeds its `shared` flag from it
+// (which remains the save-time snapshot stored on the entry + read by the
+// server-sync gate `entry.shared !== false`). Defaults to TRUE (shared) when
+// never written — matching the prior per-entry default and the legacy
+// "no flag = shared" treatment — so nothing changes until the user opts out.
+const SHARE_DEFAULT_KEY = 'journal.shareDefault';
+
+export async function getJournalShareDefault(): Promise<boolean> {
+  try {
+    const v = await AsyncStorage.getItem(SHARE_DEFAULT_KEY);
+    return v === null ? true : v === 'true';
+  } catch { return true; }
+}
+
+export async function setJournalShareDefault(on: boolean): Promise<void> {
+  try { await AsyncStorage.setItem(SHARE_DEFAULT_KEY, on ? 'true' : 'false'); } catch {}
 }
 
 export const journal = {

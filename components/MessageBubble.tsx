@@ -774,13 +774,13 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     letterSpacing: 0.15,
   },
-  // Home-screen redesign — opening greeting as the screen's anchor: a touch
-  // larger with more line-height + a little top room to breathe. Applied
-  // only to the opening assistant bubble (isOpening); all other bubbles use
-  // `text`. Presentation-only.
+  // Opening greeting — a warm opener, only slightly larger than the regular
+  // 13/19 body (device testing showed 20 ran oversized). Applied only to the
+  // opening assistant bubble (isOpening); all other bubbles use `text`.
+  // Presentation-only.
   openingText: {
-    fontSize: 20,
-    lineHeight: 31,
+    fontSize: 15,
+    lineHeight: 22,
     marginTop: 6,
   },
   caret: { color: colors.amber, fontSize: 14 },

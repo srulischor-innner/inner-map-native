@@ -20,7 +20,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Modal, View, Text, TextInput, Pressable, StyleSheet, Switch,
+  Modal, View, Text, TextInput, Pressable, StyleSheet,
   Platform, ScrollView, Animated, Easing, Keyboard,
   GestureResponderEvent, Alert, ActivityIndicator,
 } from 'react-native';
@@ -38,7 +38,7 @@ import ReAnimated, {
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
-import { JournalKind } from '../../services/journal';
+import { JournalKind, getJournalShareDefault } from '../../services/journal';
 
 const FREE_FLOW_GUIDANCE = [
   'This works best when you bypass your inner editor entirely — the part of you that shapes what you say before you say it.',
@@ -77,8 +77,10 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   const [transcribing, setTranscribing] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [saving, setSaving] = useState(false);
-  // Per-entry privacy — chosen here, locked at save. Default ON (shared): the
-  // AI can read it for RAG. OFF (private): stays on-device, never synced.
+  // Share flag — now a save-time SNAPSHOT of the global default (Settings →
+  // "Share journal with AI"), seeded on open below. The in-compose per-entry
+  // toggle was removed in favour of the single global setting. true → synced
+  // to the server for RAG; false → stays on-device, never sent.
   const [shared, setShared] = useState(true);
   // Build 14 — manual kbHeight lift, replacing the prior
   // KeyboardAvoidingView with behavior:'height' on Android (which
@@ -150,7 +152,9 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     setTranscribing(false);
     setSeconds(0);
     setSaving(false);
-    setShared(true);
+    // Seed the share flag from the global default (Settings → "Share journal
+    // with AI"); no per-entry toggle — this is the save-time snapshot.
+    getJournalShareDefault().then(setShared).catch(() => setShared(true));
     setGuidanceCollapsed(false);
     guidanceOpacity.setValue(1);
   }, [visible, guidanceOpacity, recorder]);
@@ -411,29 +415,6 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
             />
           </ScrollView>
 
-          {/* Per-entry privacy toggle — set before saving, locked at save.
-              Default ON (shared). MICROCOPY below is flagged for the copy pass. */}
-          <View style={styles.shareRow}>
-            <View style={styles.shareTextWrap}>
-              <Text style={styles.shareLabel}>
-                {shared ? 'Shared with the AI' : 'Private to this device'}
-              </Text>
-              <Text style={styles.shareHelp}>
-                {shared
-                  ? 'The AI can read this entry and bring it into conversation.'
-                  : "Kept on this device only — we genuinely can't read it."}
-              </Text>
-            </View>
-            <Switch
-              value={shared}
-              onValueChange={setShared}
-              trackColor={{ false: 'rgba(255,255,255,0.16)', true: 'rgba(230,180,122,0.5)' }}
-              thumbColor={shared ? colors.amber : '#9a9a9a'}
-              ios_backgroundColor="rgba(255,255,255,0.16)"
-              accessibilityLabel="Share this entry with the AI"
-            />
-          </View>
-
           {/* Recording / transcribing overlay-style row above the mic. */}
           {(recording || transcribing) ? (
             <View style={styles.recordingBar}>
@@ -543,33 +524,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.6,
   },
   saveBtnTextDisabled: { color: 'rgba(230,180,122,0.35)' },
-
-  // ----- per-entry privacy toggle row (above the recording bar / mic dock) -----
-  shareRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderTopWidth: 0.5,
-    borderTopColor: colors.border,
-    backgroundColor: colors.background,
-  },
-  shareTextWrap: { flex: 1 },
-  shareLabel: {
-    color: colors.cream,
-    fontFamily: fonts.sansBold,
-    fontSize: 13,
-    letterSpacing: 0.3,
-    marginBottom: 2,
-  },
-  shareHelp: {
-    color: 'rgba(240,237,232,0.5)',
-    fontFamily: fonts.sans,
-    fontSize: 12,
-    lineHeight: 16,
-  },
 
   scrollContent: {
     paddingHorizontal: spacing.lg,

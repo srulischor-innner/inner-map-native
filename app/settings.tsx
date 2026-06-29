@@ -47,6 +47,7 @@ import {
 import {
   biometricsAvailable, isLockEnabled, setLockEnabled,
 } from '../services/biometrics';
+import { getJournalShareDefault, setJournalShareDefault } from '../services/journal';
 import { api } from '../services/api';
 import * as Sentry from '@sentry/react-native';
 
@@ -61,10 +62,14 @@ export default function SettingsScreen() {
   // never offer a setting that does nothing.
   const [bioAvailable, setBioAvailable] = useState<boolean>(false);
   const [lockOn, setLockOn] = useState<boolean>(false);
+  // Global "share new journal entries with the AI" default. true = shared
+  // (synced to the server for RAG); false = new entries stay on-device.
+  const [journalShareOn, setJournalShareOn] = useState<boolean>(true);
 
   useEffect(() => {
     loadExperienceLevel().catch(() => {});
     getUserId().then(setUserId).catch(() => {});
+    getJournalShareDefault().then(setJournalShareOn).catch(() => {});
     (async () => {
       const ok = await biometricsAvailable();
       setBioAvailable(ok);
@@ -76,6 +81,12 @@ export default function SettingsScreen() {
     Haptics.selectionAsync().catch(() => {});
     setLockOn(next);
     await setLockEnabled(next);
+  }
+
+  async function toggleJournalShare(next: boolean) {
+    Haptics.selectionAsync().catch(() => {});
+    setJournalShareOn(next);
+    await setJournalShareDefault(next);
   }
 
   const version = (Constants.expoConfig?.version || '1.0.0');
@@ -176,6 +187,23 @@ export default function SettingsScreen() {
             />
           </View>
         ) : null}
+        <View style={[styles.row, { marginBottom: spacing.sm }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Share journal with AI</Text>
+            <Text style={styles.rowSub}>
+              New entries are shared with the AI by default — stored on our server
+              so it can reference them in conversation. Turn off to keep new
+              entries private: encrypted on your device, never sent.
+            </Text>
+          </View>
+          <Switch
+            value={journalShareOn}
+            onValueChange={toggleJournalShare}
+            trackColor={{ false: '#3A3340', true: 'rgba(230,180,122,0.45)' }}
+            thumbColor={journalShareOn ? colors.amber : '#bdb6c8'}
+            ios_backgroundColor="#3A3340"
+          />
+        </View>
         <Pressable onPress={() => router.push('/privacy')} style={styles.linkRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowTitle}>Privacy policy</Text>
