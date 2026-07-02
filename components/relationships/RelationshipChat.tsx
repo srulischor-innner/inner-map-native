@@ -698,16 +698,19 @@ export function RelationshipChat({
           overlay, the min-duration guard, and the input clearing
           fix. The wrapper's paddingBottom lifts the bar above the
           keyboard (kbHeight) plus the safe-area home-indicator gap
-          (insets.bottom) when the keyboard is hidden. When the
-          keyboard is up, kbHeight already covers the home-indicator
-          area so we don't double-pad.
+          (insets.bottom) when the keyboard is hidden. When the keyboard
+          is up: iOS kbHeight already covers the home-indicator area, but
+          on Android (edgeToEdge) the reported height lands ~one nav-bar
+          short on Samsung One UI, so we add insets.bottom — matching the
+          main chat tab's dock fix. (Partner gated off — device-test on
+          Samsung when PARTNER_ENABLED flips on.)
           End-session pill sits beneath the input, mirroring the
           main chat tab's dock layout — visible once the user has
           sent at least one message in the active session AND the
           server returned a session id (otherwise End would be a
           no-op). Hidden during the ending transition so the user
           can't tap twice. */}
-      <View style={{ paddingBottom: kbHeight > 0 ? kbHeight : Math.max(insets.bottom, 6) }}>
+      <View style={{ paddingBottom: kbHeight > 0 ? kbHeight + (Platform.OS === 'android' ? insets.bottom : 0) : Math.max(insets.bottom, 6) }}>
         <ChatInput
           disabled={sending}
           onSend={handleSend}

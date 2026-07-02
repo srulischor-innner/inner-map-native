@@ -46,7 +46,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { useKeyboardInset } from '../../utils/useKeyboardInset';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -579,13 +579,15 @@ function NoRelationshipView({
   // The paste-code field sits near the bottom of the scroll list;
   // without the lift, the soft keyboard covers the input + CONNECT
   // button on Android in particular.
-  // Centralized in utils/useKeyboardInset. Non-modal screen → on Android
-  // the OS resize lifts the scrollable content (inset stays 0); iOS lifts
-  // by the live keyboard height. (Partner is gated off for v1 — device-
-  // test this surface when PARTNER_ENABLED is flipped on.)
+  // Centralized in utils/useKeyboardInset. Non-modal screen → manual lift on
+  // both platforms. On Android (edgeToEdge) the reported height lands ~one
+  // nav-bar short on Samsung One UI, so paddingBottom adds insets.bottom below
+  // (matching main chat); iOS uses the raw height. (Partner is gated off for
+  // v1 — device-test this surface when PARTNER_ENABLED is flipped on.)
   const kbHeight = useKeyboardInset();
+  const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.kav, { paddingBottom: kbHeight }]}>
+    <View style={[styles.kav, { paddingBottom: kbHeight + (kbHeight > 0 && Platform.OS === 'android' ? insets.bottom : 0) }]}>
     <ScrollView
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}

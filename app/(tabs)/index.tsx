@@ -1559,11 +1559,18 @@ export default function ChatScreen() {
             end-of-session moment (haptic + structured 3-part summary). */}
         {/* Bottom dock — wraps the input bar + end-session pill in a
             single container so we can lift them off the home indicator
-            (insets.bottom + 10) AND above the keyboard when it's open
-            (kbHeight, set by the keyboardWill/DidShow listener above).
-            When the keyboard is up, kbHeight already accounts for the
-            home-indicator area on iOS, so we don't double-pad. */}
-        <View style={{ paddingBottom: kbHeight > 0 ? kbHeight : insets.bottom + 10 }}>
+            (insets.bottom + 10) AND above the keyboard when it's open.
+            When the keyboard is up:
+              • iOS — kbHeight already includes the home-indicator area, so
+                bare kbHeight is exact. Do NOT add insets here (would double-pad).
+              • Android — under edgeToEdgeEnabled the keyboardDidShow height
+                lands ~one nav-bar short on Samsung One UI (the input sits behind
+                the GIF/settings/mic toolbar strip), so we add insets.bottom to
+                clear it. This mirrors the journal modal, which gets that same
+                nav-bar inset for free from its <SafeAreaView edges={['bottom']}>.
+                insets.bottom is read at the top level (a stable nav-bar constant),
+                not sampled mid-keyboard where it can collapse to 0. */}
+        <View style={{ paddingBottom: kbHeight > 0 ? kbHeight + (Platform.OS === 'android' ? insets.bottom : 0) : insets.bottom + 10 }}>
         {/* Inline notice for the daily TTS cap. Shows for ~5s when
             /api/speak returns 429, then auto-dismisses. Sits just
             above the input bar so it never covers a message in the

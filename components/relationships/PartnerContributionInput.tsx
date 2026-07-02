@@ -26,6 +26,7 @@ import {
   Platform, Keyboard, Animated,
 } from 'react-native';
 import { useKeyboardInset } from '../../utils/useKeyboardInset';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
@@ -89,11 +90,13 @@ export function PartnerContributionInput({
   // stayed under the keyboard on real devices). The endCoordinates
   // listener catches both iOS keyboardWillShow (pre-animation, no
   // perceptible lag) and Android keyboardDidShow.
-  // Centralized in utils/useKeyboardInset. Non-modal inline input → on
-  // Android the OS resize lifts the screen (inset stays 0); iOS lifts by
-  // the live keyboard height. (Partner is gated off for v1 — device-test
-  // when PARTNER_ENABLED is flipped on.)
+  // Centralized in utils/useKeyboardInset. Non-modal inline input → manual
+  // lift on both platforms. On Android (edgeToEdge) the reported height lands
+  // ~one nav-bar short on Samsung One UI, so paddingBottom adds insets.bottom
+  // below (matching main chat); iOS uses the raw height. (Partner is gated off
+  // for v1 — device-test when PARTNER_ENABLED is flipped on.)
   const kbHeight = useKeyboardInset();
+  const insets = useSafeAreaInsets();
 
   // Unmount cleanup — if the user collapses or navigates away mid-
   // recording, stop the recorder so the mic isn't held open in the
@@ -269,7 +272,7 @@ export function PartnerContributionInput({
   }
 
   return (
-    <View style={[styles.expandedWrap, { paddingBottom: kbHeight }]}>
+    <View style={[styles.expandedWrap, { paddingBottom: kbHeight + (kbHeight > 0 && Platform.OS === 'android' ? insets.bottom : 0) }]}>
       <View style={styles.expanded}>
         <View style={styles.inputRow}>
           <TextInput
