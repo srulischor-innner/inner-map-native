@@ -133,7 +133,11 @@ function PendingPartsCard({ message }: { message: InboxMessage }) {
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardKicker}>FROM A PAST SESSION{message.payload.sessionDate ? ` · ${message.payload.sessionDate}` : ''}</Text>
+      <Text style={styles.cardKicker}>
+        {message.payload.source === 'journal'
+          ? `FROM A JOURNAL ENTRY${message.payload.entryDate ? ` · ${message.payload.entryDate}` : ''}`
+          : `FROM A PAST SESSION${message.payload.sessionDate ? ` · ${message.payload.sessionDate}` : ''}`}
+      </Text>
       <Text style={styles.cardLede}>A few things surfaced that might belong on your map:</Text>
       {items.map((it, i) => {
         const st = states[i];

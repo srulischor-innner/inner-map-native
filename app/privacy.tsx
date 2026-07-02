@@ -51,7 +51,7 @@ export default function PrivacyScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.h1}>Privacy at a glance</Text>
-        <Text style={styles.updated}>Reflects the policy last updated: June 25, 2026</Text>
+        <Text style={styles.updated}>Reflects the policy last updated: July 1, 2026</Text>
 
         <View style={styles.banner}>
           <Text style={styles.bannerTitle}>This is a summary.</Text>
@@ -101,8 +101,10 @@ export default function PrivacyScreen() {
         <Text style={styles.h2}>Your journal</Text>
         <Text style={styles.paragraph}>
           You control each entry. Shared entries help the AI understand you
-          and are stored on our servers; private entries stay encrypted on
-          your device, unreadable to us.
+          and are stored on our servers; a shared entry may also be analyzed
+          to suggest something for your map, which lands in your inbox for you
+          to approve — nothing is added automatically. Private entries stay
+          encrypted on your device, unreadable to us.
         </Text>
 
         <Text style={styles.h2}>What we don't do</Text>

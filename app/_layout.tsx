@@ -51,6 +51,32 @@ if (SENTRY_DSN) {
   Sentry.init({
     dsn: SENTRY_DSN,
     sendDefaultPii: false,
+    // --- Content scrubbing (mental-health app: a crash report must carry NO
+    // user content — conversations, journals, messages, or map data). We keep
+    // the exception TYPE, STACK TRACE, and device/OS context (what actually
+    // locates a crash) and strip every free-text field that could carry
+    // content. ---
+    // 1) Drop console breadcrumbs — the SDK records console.* by default, and
+    //    a log line could include content. This is the main residual vector.
+    beforeBreadcrumb: (breadcrumb) =>
+      breadcrumb.category === 'console' ? null : breadcrumb,
+    // 2) On the outgoing event: remove ALL breadcrumbs, and redact any
+    //    free-text message / exception value (type + stack are preserved), so
+    //    even an Error whose message interpolated user text cannot leak it.
+    //    Also drop request payload + any app-set extra (the app sets neither
+    //    today) as defense in depth.
+    beforeSend: (event) => {
+      delete event.breadcrumbs;
+      if (event.message) event.message = '[redacted]';
+      if (event.exception?.values) {
+        for (const ex of event.exception.values) {
+          if (ex.value) ex.value = '[redacted]';
+        }
+      }
+      delete event.request;
+      delete event.extra;
+      return event;
+    },
   });
   console.log('[sentry] initialized');
 } else {

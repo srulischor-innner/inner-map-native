@@ -15,7 +15,7 @@
 import { Linking } from 'react-native';
 
 // Canonical, legally-binding documents (hosted at my-inner-map.com via
-// Cloudflare; authored in the inner-map-legal repo). Last updated June 25, 2026.
+// Cloudflare; authored in the inner-map-legal repo). Last updated July 1, 2026.
 export const PRIVACY_POLICY_URL = 'https://my-inner-map.com/privacy-policy.html';
 export const TERMS_OF_SERVICE_URL = 'https://my-inner-map.com/terms-of-service.html';
 

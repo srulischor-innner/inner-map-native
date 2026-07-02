@@ -420,7 +420,7 @@ export const USING_FEATURES: GuideFeature[] = [
     title: 'Chat',
     body: [
       "Chat is where most of the work happens. Two modes: Explore for active inner work — naming patterns, identifying parts, building your map. Process for being heard, working through something, or just talking it out. Both build your map; Process just doesn't make that the focus.",
-      "You can type, or press and hold the mic to send a voice note. The AI will read its responses aloud if you tap the speaker icon. End a session anytime to get a summary and a few things to try.",
+      "You can type, or press and hold the mic to send a voice note. End a session anytime to get a summary and a few things to try.",
     ],
   },
   {

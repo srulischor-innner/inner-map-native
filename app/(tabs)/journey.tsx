@@ -126,7 +126,7 @@ export default function JourneyScreen() {
           <MapDepth parts={parts} />
         </Section>
 
-        <Section title="Most active energies">
+        <Section title="Most active parts">
           <EnergiesBar energies={data?.mostActiveParts || []} />
         </Section>
 

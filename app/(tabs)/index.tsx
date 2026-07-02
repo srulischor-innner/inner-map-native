@@ -680,11 +680,11 @@ export default function ChatScreen() {
   // scrollToEnd on show is kept inside the same effect — without it,
   // the ScrollView keeps its contentOffset and the last 1-2 messages
   // slide under the now-smaller view area.
-  // Keyboard avoidance — centralized in utils/useKeyboardInset. On
-  // Android the window resizes (softwareKeyboardLayoutMode:'resize'), so
-  // the inset stays 0 and the OS lifts the dock; onShow still fires so the
-  // thread scrolls to the latest message. On iOS the inset is the live
-  // keyboard height, applied as paddingBottom on the bottom dock below.
+  // Keyboard avoidance — centralized in utils/useKeyboardInset. kbHeight is
+  // the live keyboard height on BOTH platforms: Android's adjustResize is a
+  // no-op under edge-to-edge, so we lift the dock manually exactly as on iOS
+  // (applied as paddingBottom on the bottom dock below). onShow scrolls the
+  // thread to the latest message.
   const kbHeight = useKeyboardInset({
     onShow: () => requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true })),
   });

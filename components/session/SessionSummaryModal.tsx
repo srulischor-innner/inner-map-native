@@ -158,7 +158,7 @@ export function SessionSummaryModal({ visible, summary, failed, messages, onCont
           contentContainerStyle={styles.body}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.title}>Session Complete</Text>
+          <Text style={styles.title}>Session reflection</Text>
           <Text style={styles.dateText}>{today}</Text>
 
           {isLoading ? (

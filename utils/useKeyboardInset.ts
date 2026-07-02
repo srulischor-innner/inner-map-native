@@ -10,23 +10,26 @@
 //     keyboardWillShow/Hide, so the lift animates in on the same frame
 //     the keyboard starts rising — no perceptible lag.
 //
-//   Android, normal screens — the activity is set to
-//     softwareKeyboardLayoutMode:'resize' (app.config.js). With edge-to-
-//     edge that makes the OS shrink the window to the area above the IME,
-//     so a bottom-docked input ALREADY clears the keyboard. Adding manual
-//     padding on top of that double-shifts the input (floats it above the
-//     keyboard with a gap, or — depending on measure timing — leaves it
-//     hidden). So on Android we return 0 and let the OS resize do the work.
+//   Android — with edgeToEdgeEnabled:true (Expo SDK 54 / Android 15), the
+//     activity's softwareKeyboardLayoutMode:'resize' (adjustResize) is
+//     INEFFECTIVE: an edge-to-edge window is NOT auto-resized for the IME —
+//     the keyboard draws OVER the content, and the app must inset itself. So
+//     Android needs the SAME manual lift as iOS. (A previous version returned
+//     0 here, trusting adjustResize to lift the dock; that left the main-chat
+//     input covered by the keyboard on Samsung One UI / Android 15 — the bug
+//     this fixes. Android emits only keyboardDidShow, so the lift lands a frame
+//     after the keyboard is up — a tiny, acceptable lag.)
 //
-//   Android, inside an RN <Modal> — a Modal is a separate window that does
-//     NOT inherit the activity's adjustResize, so the OS does not shrink
-//     it and the keyboard covers the modal's input. There we DO need the
-//     manual lift, same as iOS. Pass { insideModal: true }.
+//   RN <Modal> — a Modal is a separate window that never inherited the
+//     activity's adjustResize anyway, so it was always lifted manually and is
+//     unaffected by this. { insideModal: true } is retained for back-compat
+//     but no longer changes the decision.
 //
-// The prior approach used softwareKeyboardLayoutMode:'pan' + manual
-// padding everywhere. 'pan' + edge-to-edge does not deliver a reliable IME
-// inset on all OEM keyboards (worked on the AOSP emulator, left the input
-// covered on Samsung One UI) — which is the bug this replaces.
+// History (why this keeps getting "fixed"): v1 used softwareKeyboardLayoutMode
+// 'pan' + manual padding (double-shift / covered on One UI); v2 used 'resize'
+// + NO manual padding on Android (covered — adjustResize is a no-op under
+// edge-to-edge). BOTH relied on the OS. This version does not: it lifts
+// manually on every native surface — exactly what already works in <Modal>s.
 //
 // onShow — optional callback fired on every keyboard-show, on ALL
 // platforms (even where the inset stays 0), for side effects like
@@ -49,12 +52,15 @@ export function useKeyboardInset(opts?: {
   onShowRef.current = onShow;
 
   useEffect(() => {
-    // Whether THIS surface lifts manually: iOS always; Android only
-    // inside a Modal (the activity-level resize doesn't reach Modals).
-    const padThisSurface = Platform.OS === 'ios' || insideModal;
+    // Lift manually on every native surface (iOS + Android). We do NOT rely
+    // on the Android activity's adjustResize: under edgeToEdgeEnabled the
+    // window is not auto-resized for the IME, so a non-modal Android screen
+    // gets no lift unless we provide it — the same mechanism iOS and RN
+    // <Modal>s already use. (insideModal is kept for API back-compat; it no
+    // longer affects this decision.)
+    const padThisSurface = Platform.OS !== 'web';
 
-    // Nothing to do on an Android normal screen with no onShow side
-    // effect — the OS resize handles the lift, so we skip the listeners.
+    // Web never lifts and has no onShow side effects worth wiring.
     if (!padThisSurface && !onShowRef.current) return;
 
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';

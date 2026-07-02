@@ -296,8 +296,14 @@ export type InboxMessage = {
   id: string;
   kind: 'pending_parts' | 'system_note' | 'release_note';
   payload: {
+    /** Present on session-sourced cards. */
     sessionId?: string;
     sessionDate?: string | null;
+    /** 'journal' on cards derived from a shared journal entry; absent /
+     *  'session' otherwise. Drives the card kicker label. */
+    source?: 'session' | 'journal';
+    entryId?: string;
+    entryDate?: string | null;
     items?: {
       part: string;
       name: string;
@@ -907,7 +913,9 @@ export const api = {
       // clone()'s body stream isn't independently readable from the
       // original. One read + JSON.parse is universally safe.
       const text = await res.text();
-      console.log(`[latest-map] status=${res.status} bodyLen=${text.length} body="${text.slice(0, 600)}${text.length > 600 ? '…' : ''}"`);
+      // Never log the body — the latest-map response is the user's map (part
+      // names, beliefs, core phrases). Status + length only.
+      console.log(`[latest-map] status=${res.status} bodyLen=${text.length}`);
       if (!res.ok) return null;
       try {
         return JSON.parse(text);
@@ -2584,10 +2592,11 @@ export const api = {
       // error response on non-OK paths (otherwise the operator can
       // see "non-OK 401" with no context on which guard tripped).
       const bodyText = await res.text().catch(() => '');
-      const bodyPreview = bodyText.length > 500 ? bodyText.slice(0, 500) + '…' : bodyText;
-      console.log(`[auth-sign-in:client] body: ${bodyPreview}`);
       if (!res.ok) {
-        console.warn(`[auth-sign-in:client] non-OK ${res.status} — returning null to caller`);
+        // Log the server's ERROR envelope only ({error,message}) — never the
+        // OK-path body, which carries access/refresh tokens.
+        const bodyPreview = bodyText.length > 500 ? bodyText.slice(0, 500) + '…' : bodyText;
+        console.warn(`[auth-sign-in:client] non-OK ${res.status} — body: ${bodyPreview}`);
         return null;
       }
       let j: any = null;

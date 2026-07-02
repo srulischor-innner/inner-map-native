@@ -175,7 +175,7 @@ export default function SettingsScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>App Lock</Text>
               <Text style={styles.rowSub}>
-                Require Face ID to open Inner Map. Your conversations are private.
+                Require Face ID to open Inner Map, so no one else who picks up your phone can open it.
               </Text>
             </View>
             <Switch
@@ -192,8 +192,9 @@ export default function SettingsScreen() {
             <Text style={styles.rowTitle}>Share journal with AI</Text>
             <Text style={styles.rowSub}>
               New entries are shared with the AI by default — stored on our server
-              so it can reference them in conversation. Turn off to keep new
-              entries private: encrypted on your device, never sent.
+              so it can reference them in conversation, and occasionally suggest
+              something for your map (which you always approve first). Turn off to
+              keep new entries private: encrypted on your device, never sent.
             </Text>
           </View>
           <Switch
