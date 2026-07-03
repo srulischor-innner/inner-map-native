@@ -179,6 +179,13 @@ const base = {
       'expo-font',
       'expo-asset',
       'expo-local-authentication',
+      // expo-notifications config plugin. The library is a dependency + used
+      // at runtime (services/push.ts) for the opt-in inbox push, but the
+      // plugin was unregistered. Registering it is the recommended setup: it
+      // wires the native notifications module config into the build. The iOS
+      // aps-environment entitlement + APNs key are provisioned via EAS
+      // credentials (eas credentials → iOS → Push Notifications) at build time.
+      'expo-notifications',
       // Build 11 — Apple Sign-In runtime + entitlement plumbing.
       'expo-apple-authentication',
       // Build 13 fatal-crash fix (June 2026): the Google Sign-In config
