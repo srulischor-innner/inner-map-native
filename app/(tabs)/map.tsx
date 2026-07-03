@@ -23,7 +23,7 @@ import { ProgressStrip } from '../../components/map/ProgressStrip';
 import { CircleMapCanvas, IntegrationKey } from '../../components/map/CircleMapCanvas';
 import { IntegrationPanel } from '../../components/map/IntegrationPanel';
 import { subscribeMapActivation } from '../../utils/mapActivation';
-import { markMapSeen } from '../../services/mapSeen';
+import { markMapSeen, refreshMapSeenStatus } from '../../services/mapSeen';
 
 const INTEGRATION_VIEW_SEEN_KEY = 'integration_view_seen';
 const SECOND_LAYER_INTRODUCED_KEY = 'second_layer_introduced';
@@ -52,12 +52,24 @@ export default function MapScreen() {
   // mark-seen POST + the confirmation refresh; the dot in the top
   // tab bar clears the moment the focus event fires, before the
   // network round-trip completes.
+  // "Changed since last visit" baseline. We snapshot mapLastViewedAt BEFORE
+  // markMapSeen advances it to now — otherwise the per-node markers would
+  // self-clear on entry before they ever render. Re-read each focus so the
+  // baseline steps forward to the previous visit's mark. null → first-ever
+  // visit (changedNodes lights every populated node; see below).
+  const [seenBaselineAt, setSeenBaselineAt] = useState<string | null>(null);
   useFocusEffect(
     useCallback(() => {
-      markMapSeen().catch((e) =>
-        console.warn('[map] markMapSeen on focus threw:', (e as Error)?.message),
-      );
-      return () => {};
+      let active = true;
+      refreshMapSeenStatus()
+        .then((st) => { if (active) setSeenBaselineAt(st?.lastSeenMapAt ?? null); })
+        .catch(() => {})
+        .finally(() => {
+          markMapSeen().catch((e) =>
+            console.warn('[map] markMapSeen on focus threw:', (e as Error)?.message),
+          );
+        });
+      return () => { active = false; };
     }, []),
   );
 
@@ -199,6 +211,27 @@ export default function MapScreen() {
     }
   }, []);
   useEffect(() => { loadMap(); }, [loadMap]);
+
+  // Per-node "changed since last visit" set. Category-level (the map has 7
+  // nodes, not one per part): a node lights if ANY part in its category was
+  // touched (lastDetected) after the frozen baseline. First-ever visit (null
+  // baseline) lights every populated node. Self is excluded — it never carries
+  // map changes. Cleared next visit when markMapSeen advances the baseline —
+  // same lastSeenMapAt + same mechanic as the tab dot.
+  const changedNodes = useMemo(() => {
+    const set = new Set<NodeKey>();
+    const KEYS: NodeKey[] = ['wound', 'fixer', 'skeptic', 'self-like', 'manager', 'firefighter'];
+    const firstEver = !seenBaselineAt;
+    const baseline = seenBaselineAt ? Date.parse(seenBaselineAt) : NaN;
+    for (const p of parts) {
+      const cat = String(p?.category || '').toLowerCase().trim() as NodeKey;
+      if (!KEYS.includes(cat)) continue;
+      const upd = Date.parse(p?.lastDetected || '');
+      if (!Number.isFinite(upd)) continue;
+      if (firstEver || (Number.isFinite(baseline) && upd > baseline)) set.add(cat);
+    }
+    return set;
+  }, [parts, seenBaselineAt]);
 
 
   // The mapData passed to the canvas + folder reflects whichever layer is
@@ -570,6 +603,7 @@ export default function MapScreen() {
                 managerCount={managerCount}
                 firefighterCount={firefighterCount}
                 onNodeTap={handleTap}
+                changedNodes={changedNodes}
               />
             </Animated.View>
           ) : null}

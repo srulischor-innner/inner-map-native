@@ -85,10 +85,16 @@ type Props = {
   /** Same as managerCount, for the firefighters ring. */
   firefighterCount?: number;
   onNodeTap?: (k: NodeKey) => void;
+  /** Category-level "changed since last visit" set. A NodeKey is present when
+   *  any part in that category has a lastDetected newer than the frozen
+   *  mapLastViewedAt snapshot (see app/(tabs)/map.tsx). Renders a subtle accent
+   *  dot at the node's shoulder; clears on the next visit when markMapSeen
+   *  advances the baseline. Quiet + non-interactive. */
+  changedNodes?: Set<NodeKey> | null;
 };
 
 export function InnerMapCanvas({
-  geom, activePart, activeLabel, managerCount = 0, firefighterCount = 0, onNodeTap,
+  geom, activePart, activeLabel, managerCount = 0, firefighterCount = 0, onNodeTap, changedNodes,
 }: Props) {
   // ===== SHARED VALUES (Reanimated) =====
   const breath = useSharedValue(0.55);          // triangle-line opacity cycle
@@ -410,6 +416,23 @@ export function InnerMapCanvas({
         />
       ) : null}
 
+      {/* CHANGED-SINCE-LAST-VISIT markers — one subtle accent dot per node
+          category that has a part touched since the frozen mapLastViewedAt
+          baseline. Category-level (the map has 7 nodes, not one per part);
+          cleared automatically next visit when markMapSeen advances the
+          baseline. Self never fires MAP_UPDATE so it never lights. */}
+      {changedNodes && changedNodes.size > 0 ? (
+        <>
+          {changedNodes.has('wound')       ? <ChangedDot x={wound.x - wound.r * 0.72}               y={wound.y - wound.r * 0.72} /> : null}
+          {changedNodes.has('fixer')       ? <ChangedDot x={fixer.x - fixer.r * 0.72}               y={fixer.y - fixer.r * 0.72} /> : null}
+          {changedNodes.has('skeptic')     ? <ChangedDot x={skeptic.x - skeptic.r * 0.72}           y={skeptic.y - skeptic.r * 0.72} /> : null}
+          {changedNodes.has('self')        ? <ChangedDot x={self.x - self.r * 0.72}                 y={self.y - self.r * 0.72} /> : null}
+          {changedNodes.has('manager')     ? <ChangedDot x={managers.x - managers.r * 0.72}         y={managers.y - managers.r * 0.72} /> : null}
+          {changedNodes.has('firefighter') ? <ChangedDot x={firefighters.x - firefighters.r * 0.72} y={firefighters.y - firefighters.r * 0.72} /> : null}
+          {changedNodes.has('self-like')   ? <ChangedDot x={selfLike.cx - selfLike.size}            y={selfLike.cy - selfLike.size} /> : null}
+        </>
+      ) : null}
+
       {/* ===== TAP OVERLAY ===== Absolutely-positioned Pressable per node. Hit region
            is slightly larger than the drawn circle for comfortable tap targets. */}
       <TapTarget node={wound}     kind="wound"       onTap={onNodeTap} label="WOUND" />
@@ -450,6 +473,20 @@ function CountBadge({
         {count > 99 ? '99+' : String(count)}
       </Text>
     </View>
+  );
+}
+
+// Subtle "changed since your last visit" marker — a small accent dot at a
+// node's top-LEFT shoulder (the CountBadge owns the top-right, so they never
+// collide). Purely visual + pointerEvents='none'; the node's TapTarget still
+// owns the touch.
+function ChangedDot({ x, y }: { x: number; y: number }) {
+  const SIZE = 9;
+  return (
+    <View
+      pointerEvents="none"
+      style={[styles.changedDot, { left: x - SIZE / 2, top: y - SIZE / 2, width: SIZE, height: SIZE, borderRadius: SIZE / 2 }]}
+    />
   );
 }
 
@@ -697,5 +734,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 0.2,
     textAlign: 'center',
+  },
+  // "Changed since last visit" dot. Amber to rhyme with the part-folder
+  // ADDED/UPDATED provenance labels; a thin dark ring keeps it legible on both
+  // bright (fixer/firefighter) and dim nodes. Small + quiet by design.
+  changedDot: {
+    position: 'absolute',
+    backgroundColor: '#E6B47A',
+    borderWidth: 1,
+    borderColor: 'rgba(16,14,20,0.55)',
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
   },
 });

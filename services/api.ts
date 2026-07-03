@@ -1015,6 +1015,23 @@ export const api = {
     }
   },
 
+  /** GET /api/sessions/:id/enrichment-summary — the batched "what deepened
+   *  this session" list for the SessionSummaryModal. Empty array on any
+   *  failure — a quiet recap, never blocking. */
+  async getEnrichmentSummary(
+    sessionId: string,
+  ): Promise<Array<{ category: string; name: string; facets: Array<{ field: string; value: string }> }>> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/enrichment-summary`, {
+        label: 'enrichment-summary', method: 'GET', headers, timeoutMs: 15000,
+      });
+      if (!res.ok) return [];
+      const j: any = await res.json().catch(() => null);
+      return Array.isArray(j?.deepened) ? j.deepened : [];
+    } catch { return []; }
+  },
+
   /** POST /api/sessions/:id/gather-noticed — end-of-session NOTICED
    *  gathering. Called when the user taps End Session, before the
    *  summary fetch. When the session holds parts the AI noticed but

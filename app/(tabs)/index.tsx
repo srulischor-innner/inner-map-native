@@ -68,7 +68,7 @@ import { optimisticMarkUnseen } from '../../services/mapSeen';
 import { setChatSessionActive } from '../../services/chatActivity';
 
 import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
-import { SessionSummaryModal, SessionSummary } from '../../components/session/SessionSummaryModal';
+import { SessionSummaryModal, SessionSummary, DeepenedPart } from '../../components/session/SessionSummaryModal';
 import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
 import { ConversationStarters } from '../../components/ConversationStarters';
@@ -352,6 +352,9 @@ export default function ChatScreen() {
   const [summaryVisible, setSummaryVisible] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [summaryFailed, setSummaryFailed] = useState(false);
+  // "What deepened this session" — parts that gained facets (consent-gated
+  // enrichment). Fetched at session end, rendered quietly in the summary modal.
+  const [deepened, setDeepened] = useState<DeepenedPart[]>([]);
 
   // First-session state. Tri-state:
   //   undefined  — initial / loading from /api/first-session-status
@@ -1686,6 +1689,7 @@ export default function ChatScreen() {
             // Reset summary state and open the modal in loading mode.
             setSummary(null);
             setSummaryFailed(false);
+            setDeepened([]);
             setSummaryVisible(true);
 
             // Fire the structured-summary call. The server picks the
@@ -1693,6 +1697,8 @@ export default function ChatScreen() {
             // Persists the result onto the session row; we still call
             // saveSession so the messages array is stored.
             (async () => {
+              // "What deepened this session" recap — parallel, quiet, non-blocking.
+              api.getEnrichmentSummary(sessionIdForSave).then(setDeepened).catch(() => setDeepened([]));
               const sum = await api.getSessionSummary(transcriptForSave, sessionIdForSave, turnMode);
               if (sum) {
                 setSummary({
@@ -1757,6 +1763,7 @@ export default function ChatScreen() {
         visible={summaryVisible}
         summary={summary}
         failed={summaryFailed}
+        deepened={deepened}
         messages={activeMessages.map((m) => ({ role: m.role, text: m.text }))}
         onContinue={async () => {
           // Hide the modal first so the dismiss animation overlaps with

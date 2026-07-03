@@ -48,6 +48,7 @@ import {
   biometricsAvailable, isLockEnabled, setLockEnabled,
 } from '../services/biometrics';
 import { getJournalShareDefault, setJournalShareDefault } from '../services/journal';
+import { getInboxPushOptIn, enableInboxPush, disableInboxPush } from '../services/push';
 import { api } from '../services/api';
 import * as Sentry from '@sentry/react-native';
 
@@ -65,11 +66,15 @@ export default function SettingsScreen() {
   // Global "share new journal entries with the AI" default. true = shared
   // (synced to the server for RAG); false = new entries stay on-device.
   const [journalShareOn, setJournalShareOn] = useState<boolean>(true);
+  // Inbox notification opt-in (the ONLY notification type). Local mirror of the
+  // opt-in state; the server-side gate is token presence. Off by default.
+  const [notifyOn, setNotifyOn] = useState<boolean>(false);
 
   useEffect(() => {
     loadExperienceLevel().catch(() => {});
     getUserId().then(setUserId).catch(() => {});
     getJournalShareDefault().then(setJournalShareOn).catch(() => {});
+    getInboxPushOptIn().then(setNotifyOn).catch(() => {});
     (async () => {
       const ok = await biometricsAvailable();
       setBioAvailable(ok);
@@ -87,6 +92,23 @@ export default function SettingsScreen() {
     Haptics.selectionAsync().catch(() => {});
     setJournalShareOn(next);
     await setJournalShareDefault(next);
+  }
+
+  async function toggleInboxNotify(next: boolean) {
+    Haptics.selectionAsync().catch(() => {});
+    if (next) {
+      const ok = await enableInboxPush(); // OS permission ask + token register
+      setNotifyOn(ok);
+      if (!ok) {
+        Alert.alert(
+          'Notifications are off',
+          'To get a quiet heads-up when something is waiting, allow notifications for Inner Map in your device settings.',
+        );
+      }
+    } else {
+      setNotifyOn(false);
+      await disableInboxPush();
+    }
   }
 
   const version = (Constants.expoConfig?.version || '1.0.0');
@@ -202,6 +224,23 @@ export default function SettingsScreen() {
             onValueChange={toggleJournalShare}
             trackColor={{ false: '#3A3340', true: 'rgba(230,180,122,0.45)' }}
             thumbColor={journalShareOn ? colors.amber : '#bdb6c8'}
+            ios_backgroundColor="#3A3340"
+          />
+        </View>
+        <View style={[styles.row, { marginBottom: spacing.sm }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Notify me when something's waiting</Text>
+            <Text style={styles.rowSub}>
+              A quiet heads-up when something you noticed lands in your inbox. The
+              notification never shows what it is — only that something's there.
+              Nothing else is ever sent.
+            </Text>
+          </View>
+          <Switch
+            value={notifyOn}
+            onValueChange={toggleInboxNotify}
+            trackColor={{ false: '#3A3340', true: 'rgba(230,180,122,0.45)' }}
+            thumbColor={notifyOn ? colors.amber : '#bdb6c8'}
             ios_backgroundColor="#3A3340"
           />
         </View>

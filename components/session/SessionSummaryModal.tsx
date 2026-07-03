@@ -32,6 +32,14 @@ export type SessionSummary = {
   somethingToTryText: string;
 };
 
+// One part that gained facets this session (consent-gated enrichment). Fed from
+// GET /api/sessions/:id/enrichment-summary.
+export type DeepenedPart = {
+  category: string;
+  name: string;
+  facets: Array<{ field: string; value: string }>;
+};
+
 type Props = {
   visible: boolean;
   /** null while loading, or after fetch completes. The parent passes the
@@ -43,11 +51,14 @@ type Props = {
   /** Marker-stripped transcript for the share-export action. Optional —
    *  if absent the share button still works but only includes the summary. */
   messages?: ExportMessage[];
+  /** Parts that gained new facets this session (consent-gated enrichment).
+   *  Rendered as a single quiet "what deepened" recap — NOT the inbox. */
+  deepened?: DeepenedPart[];
   /** Fires when the user taps "Begin New Session". */
   onContinue: () => void;
 };
 
-export function SessionSummaryModal({ visible, summary, failed, messages, onContinue }: Props) {
+export function SessionSummaryModal({ visible, summary, failed, messages, deepened, onContinue }: Props) {
   const insets = useSafeAreaInsets();
   // Soft success haptic the moment the modal becomes visible — this is
   // the "the session landed" felt-sense the spec calls for. Fires once
@@ -176,6 +187,10 @@ export function SessionSummaryModal({ visible, summary, failed, messages, onCont
             </>
           ) : null}
 
+          {deepened && deepened.length > 0 ? (
+            <DeepenedBlock deepened={deepened} />
+          ) : null}
+
           {(failed || (summary && !hasContent)) ? (
             <View style={{ marginTop: spacing.xl, paddingHorizontal: spacing.md }}>
               <Text style={styles.fallbackText}>
@@ -212,6 +227,39 @@ function Section({ label, text }: { label: string; text: string }) {
     <View style={styles.section}>
       <Text style={styles.sectionLabel}>{label}</Text>
       <Text style={styles.sectionText}>{text.trim()}</Text>
+      <View style={styles.divider} />
+    </View>
+  );
+}
+
+// ============================================================================
+// "What deepened this session" — the parts that gained new facets while the
+// user was present with them (consent-gated enrichment). One quiet recap; the
+// map's "new since last visit" markers are the passive channel, this the active
+// one. No action needed — consent was given at the in-session handshake.
+// ============================================================================
+const FACET_LABEL: Record<string, string> = {
+  trigger: 'trigger', body: 'body', situation: 'situation', example: 'example', voice: 'phrase',
+};
+function DeepenedBlock({ deepened }: { deepened: DeepenedPart[] }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>WHAT DEEPENED</Text>
+      <Text style={styles.deepenedIntro}>
+        Parts you were present with grew a little fuller. Open your map to
+        see — or prune — what's new.
+      </Text>
+      {deepened.map((p) => (
+        <View key={p.category + p.name} style={styles.deepenedPart}>
+          <Text style={styles.deepenedPartName}>{p.name}</Text>
+          {p.facets.map((f, i) => (
+            <Text key={i} style={styles.deepenedFacet}>
+              <Text style={styles.deepenedFacetKind}>new {FACET_LABEL[f.field] || f.field}</Text>
+              {`  ·  ${f.value}`}
+            </Text>
+          ))}
+        </View>
+      ))}
       <View style={styles.divider} />
     </View>
   );
@@ -313,6 +361,34 @@ const styles = StyleSheet.create({
     height: 0.5,
     backgroundColor: colors.border,
     marginTop: spacing.lg,
+  },
+
+  deepenedIntro: {
+    color: colors.creamDim,
+    fontFamily: fonts.serifItalic,
+    fontSize: 13.5,
+    lineHeight: 20,
+    marginBottom: spacing.sm,
+  },
+  deepenedPart: { marginTop: spacing.sm },
+  deepenedPartName: {
+    color: colors.cream,
+    fontFamily: fonts.sansBold,
+    fontSize: 13,
+    letterSpacing: 0.3,
+    marginBottom: 2,
+  },
+  deepenedFacet: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  deepenedFacetKind: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 11,
+    letterSpacing: 0.5,
   },
 
   fallbackText: {

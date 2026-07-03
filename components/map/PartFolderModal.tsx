@@ -812,6 +812,7 @@ function WoundSections({ mapData, part }: { mapData: any; part: any }) {
         placeholder="Still emerging..."
       />
       <SelfVoiceButton part={part} />
+      <PartRecencyRows firstDetected={part?.firstDetected} lastDetected={part?.lastDetected} lastSource={part?.lastSource} />
       <GoDeeperSection part={part} fields={WOUND_DEEPER} />
     </View>
   );
@@ -841,6 +842,7 @@ function FixerSections({ part }: { part: any }) {
         placeholder="Still getting to know this part..."
       />
       <SelfVoiceButton part={part} />
+      <PartRecencyRows firstDetected={part?.firstDetected} lastDetected={part?.lastDetected} lastSource={part?.lastSource} />
       <GoDeeperSection part={part} fields={PROTECTOR_DEEPER} />
     </View>
   );
@@ -870,6 +872,7 @@ function SkepticSections({ part }: { part: any }) {
         placeholder="Still getting to know this part..."
       />
       <SelfVoiceButton part={part} />
+      <PartRecencyRows firstDetected={part?.firstDetected} lastDetected={part?.lastDetected} lastSource={part?.lastSource} />
       <GoDeeperSection part={part} fields={PROTECTOR_DEEPER} />
     </View>
   );
@@ -933,6 +936,7 @@ function SelfLikeSections({ part, mapData }: { part: any; mapData: any }) {
         placeholder="How this part is currently holding things — relaxed and trusting, or tight and managing."
       />
       <SelfVoiceButton part={part} />
+      <PartRecencyRows firstDetected={part?.firstDetected} lastDetected={part?.lastDetected} lastSource={part?.lastSource} />
       <GoDeeperSection part={part} fields={SELF_LIKE_DEEPER} />
     </View>
   );
@@ -980,13 +984,47 @@ function formatRelativeTime(iso: string | null | undefined): string | null {
   return `${yr} year${yr === 1 ? '' : 's'} ago`;
 }
 
-function LastActivatedRow({ lastDetected }: { lastDetected: string | null | undefined }) {
-  const rel = formatRelativeTime(lastDetected);
-  if (!rel) return null;
+// Absolute short date ("Mar 3") for the "Added" milestone. firstDetected is a
+// stable created-at, so a relative time reads oddly ("3 months ago") for a
+// one-time event — a date is clearer.
+function formatAbsoluteDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// Quiet recency footnote: "NOTICED · Mar 3" and "LAST SEEN · 3 hours ago".
+// When a part was just created (noticed ≈ last-seen within a minute), collapse
+// to the single Noticed line. Renders nothing when the part has no timestamps
+// (Self). NOTE: lastSource ("from a conversation / journal entry") is threaded
+// end-to-end and recorded server-side, but its DISPLAY is BANKED/deferred — the
+// dates carry the need for now. To surface it later, append a source clause to
+// the LAST SEEN value (source tracks the most-recent write).
+function PartRecencyRows({
+  firstDetected, lastDetected,
+}: { firstDetected?: string | null; lastDetected?: string | null; lastSource?: string | null }) {
+  const noticed = formatAbsoluteDate(firstDetected);
+  const lastSeenRel = formatRelativeTime(lastDetected);
+  if (!noticed && !lastSeenRel) return null;
+  const addTs = Date.parse(firstDetected || '');
+  const updTs = Date.parse(lastDetected || '');
+  const sameMoment = Number.isFinite(addTs) && Number.isFinite(updTs) && Math.abs(updTs - addTs) < 60_000;
+  const showLastSeen = !sameMoment && !!lastSeenRel;
   return (
-    <View style={styles.lastActivatedRow}>
-      <Text style={styles.lastActivatedLabel}>LAST ACTIVATED</Text>
-      <Text style={styles.lastActivatedValue}>{rel}</Text>
+    <View style={styles.recencyBlock}>
+      {noticed ? (
+        <View style={styles.recencyLine}>
+          <Text style={styles.lastActivatedLabel}>NOTICED</Text>
+          <Text style={styles.lastActivatedValue}>{noticed}</Text>
+        </View>
+      ) : null}
+      {showLastSeen ? (
+        <View style={styles.recencyLine}>
+          <Text style={styles.lastActivatedLabel}>LAST SEEN</Text>
+          <Text style={styles.lastActivatedValue}>{lastSeenRel}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1028,7 +1066,7 @@ function ProtectorList({
                 which protectors are currently busy vs. which haven't
                 fired in weeks. Hidden when the row has never been
                 detected (a brand-new part inserted via direct edit). */}
-            <LastActivatedRow lastDetected={row.lastDetected} />
+            <PartRecencyRows firstDetected={row.firstDetected} lastDetected={row.lastDetected} lastSource={row.lastSource} />
             <SelfVoiceButton part={row} />
             <GoDeeperSection part={row} fields={MANAGER_FIREFIGHTER_DEEPER} />
           </View>
@@ -1428,6 +1466,20 @@ const styles = StyleSheet.create({
     fontFamily: fonts.serifItalic,
     fontSize: 13,
     letterSpacing: 0.2,
+  },
+  // Provenance footnote block (ADDED / UPDATED · from a …). One top border for
+  // the whole block; the two lines share it, so protector + core parts read the
+  // same quiet register as the old LAST ACTIVATED row.
+  recencyBlock: {
+    marginTop: 14,
+    paddingTop: 8,
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(230,180,122,0.15)',
+  },
+  recencyLine: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginTop: 2,
   },
 
   // Legacy fallback list-item (when partsRows is empty but

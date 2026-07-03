@@ -21,14 +21,22 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, fonts, spacing } from '../constants/theme';
 import { api, InboxMessage } from '../services/api';
 import { refreshInboxStatus } from '../services/messagesInbox';
+import { getInboxPushOptIn, enableInboxPush } from '../services/push';
+
+// One-time contextual opt-in prompt: shown the first time the user opens the
+// inbox with a card present and hasn't opted in. Declining is permanent-quiet
+// (they can still enable in Settings). Once-ever flag.
+const PUSH_PROMPT_SEEN_KEY = 'push.inboxPromptSeen';
 
 export default function MessagesScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
+  const [showPushPrompt, setShowPushPrompt] = useState(false);
 
   const load = useCallback(async () => {
     const { messages: list } = await api.listMessages();
@@ -41,6 +49,26 @@ export default function MessagesScreen() {
       api.markMessageRead(m.id).catch(() => {});
     }
     if (unread.length) refreshInboxStatus(true).catch(() => {});
+    // One-time opt-in offer: only with a card present, only if not already
+    // opted in, and only once ever.
+    if (list.length) {
+      try {
+        const [optedIn, seen] = await Promise.all([
+          getInboxPushOptIn(),
+          AsyncStorage.getItem(PUSH_PROMPT_SEEN_KEY),
+        ]);
+        if (!optedIn && seen !== '1') setShowPushPrompt(true);
+      } catch {}
+    }
+  }, []);
+
+  // Dismiss the one-time prompt. Either choice marks it seen forever
+  // (permanent-quiet); "enable" additionally runs the OS permission ask.
+  const dismissPushPrompt = useCallback(async (enable: boolean) => {
+    Haptics.selectionAsync().catch(() => {});
+    setShowPushPrompt(false);
+    try { await AsyncStorage.setItem(PUSH_PROMPT_SEEN_KEY, '1'); } catch {}
+    if (enable) { try { await enableInboxPush(); } catch {} }
   }, []);
 
   useEffect(() => { load().catch(() => setLoading(false)); }, [load]);
@@ -70,6 +98,22 @@ export default function MessagesScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+          {showPushPrompt ? (
+            <View style={styles.pushPrompt}>
+              <Text style={styles.pushPromptTitle}>Want to know when something's waiting here?</Text>
+              <Text style={styles.pushPromptSub}>
+                A quiet heads-up — never what it is, only that something arrived.
+              </Text>
+              <View style={styles.pushPromptRow}>
+                <Pressable onPress={() => dismissPushPrompt(false)} hitSlop={8} style={styles.pushPromptDismiss}>
+                  <Text style={styles.pushPromptDismissText}>Not now</Text>
+                </Pressable>
+                <Pressable onPress={() => dismissPushPrompt(true)} hitSlop={8} style={styles.pushPromptEnable}>
+                  <Text style={styles.pushPromptEnableText}>Enable</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
           {messages.map((m) =>
             m.kind === 'pending_parts' ? (
               <PendingPartsCard key={m.id} message={m} />
@@ -256,6 +300,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   body: { padding: spacing.md, paddingBottom: spacing.xxl },
+
+  // One-time contextual opt-in prompt. Quiet amber card matching the inbox
+  // register — no urgency, no color alarm.
+  pushPrompt: {
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.28)',
+    backgroundColor: 'rgba(230,180,122,0.06)',
+    borderRadius: 14,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  pushPromptTitle: {
+    color: colors.cream,
+    fontFamily: fonts.serifItalic,
+    fontSize: 15,
+    marginBottom: 4,
+  },
+  pushPromptSub: {
+    color: colors.creamFaint,
+    fontFamily: fonts.sans,
+    fontSize: 12.5,
+    lineHeight: 18,
+  },
+  pushPromptRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+  },
+  pushPromptDismiss: { paddingVertical: 6, paddingHorizontal: 12, marginRight: 6 },
+  pushPromptDismissText: { color: colors.creamFaint, fontFamily: fonts.sans, fontSize: 13 },
+  pushPromptEnable: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: 'rgba(230,180,122,0.18)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.4)',
+  },
+  pushPromptEnableText: { color: colors.amber, fontFamily: fonts.sansBold, fontSize: 13 },
 
   card: {
     borderWidth: 0.5,

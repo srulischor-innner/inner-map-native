@@ -219,7 +219,7 @@ export function stripMarkers(text: string): string {
     .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)(?:\s*\|\s*part:\s*[a-z-]+)?\s*\]?/gi, '')
     // Line-anchored bare forms emitted by the new MAPPING prompt at the
     // very end of replies — same set as the bracketed versions above.
-    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META|NOTICED):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
+    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_CONSENT|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META|NOTICED):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
     // NOTICED — parked part-observation marker (server persists onto the
     // session's noticedParts; consumed by end-session gathering). Never
@@ -291,7 +291,7 @@ export function stripMarkers(text: string): string {
 
 // Line-anchored marker tokens the server/prompts emit at end of reply.
 const LINE_MARKER_TOKENS = [
-  'MAP_UPDATE:', 'MAP_READY:', 'MAP_FILL:', 'MAP_SECONDARY:',
+  'MAP_UPDATE:', 'MAP_CONSENT:', 'MAP_READY:', 'MAP_FILL:', 'MAP_SECONDARY:',
   'CHAT_META:', 'SUMMARY_META:', 'SPECTRUM_UPDATE:', 'PART_UPDATE:',
   'PART_SUMMARY_UPDATE:', 'ATTENTION_STATE:', 'NOTICED:', 'INTAKE_COMPLETE:',
 ];
@@ -374,7 +374,7 @@ export function stripMarkersForDisplay(text: string): string {
     .replace(/\[CHAT_META:[\s\S]*?\]/g, '')
     .replace(/\[(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|SUMMARY_META|NOTICED):[\s\S]*?\]/g, '')
     .replace(/\[?ATTENTION_STATE:\s*(?:quiet|listening|noticing)(?:\s*\|\s*part:\s*[a-z-]+)?\s*\]?/gi, '')
-    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META|NOTICED):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
+    .replace(/(?:^|\n)\s*(?:MAP_UPDATE|MAP_CONSENT|MAP_READY|MAP_FILL|MAP_SECONDARY|CHAT_META|SUMMARY_META|NOTICED):\s*\{[\s\S]*?\}\s*(?=\n|$)/g, '')
     .replace(/\b(?:PART_UPDATE|PART_SUMMARY_UPDATE|SPECTRUM_UPDATE):[\s\S]*?$/gm, '')
     // ADDED_TO_MAP and SHARE_SUGGEST intentionally NOT stripped here.
     // STARTER_MAP_COMPLETE — UNLIKE the pill markers, this one IS

@@ -105,3 +105,40 @@ export async function getCachedPushToken(): Promise<string | null> {
   try { return await AsyncStorage.getItem(TOKEN_STORE_KEY); }
   catch { return null; }
 }
+
+// ── Opt-in for inbox notifications ──────────────────────────────────────────
+// The ONLY notification type is the inbox card. Opt-in is contextual (a
+// Settings toggle + a one-time in-app prompt) — never at boot. The server-side
+// send gate is token PRESENCE: opting in registers a token; opting out clears
+// it, so the send path finds none and silently no-ops.
+const OPTIN_STORE_KEY = 'push.optedIn';
+
+/** Local source of truth for the Settings toggle's on/off state. */
+export async function getInboxPushOptIn(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(OPTIN_STORE_KEY)) === '1'; }
+  catch { return false; }
+}
+
+/** Opt IN: run the OS permission ask + register the Expo token (reusing
+ *  registerForPushNotifications), then persist the opt-in. Returns true only if
+ *  a token was obtained (permission granted, real device). */
+export async function enableInboxPush(): Promise<boolean> {
+  const token = await registerForPushNotifications();
+  if (!token) return false; // denied / simulator — stay opted-out
+  try { await AsyncStorage.setItem(OPTIN_STORE_KEY, '1'); } catch {}
+  return true;
+}
+
+/** Opt OUT: clear the server token(s) + local token + opt-in flag. Best-effort,
+ *  never throws — the send path then finds no token and no-ops. */
+export async function disableInboxPush(): Promise<void> {
+  try {
+    await fetch(
+      ((Constants.expoConfig?.extra as any)?.apiBaseUrl ||
+        'https://inner-map-production.up.railway.app') + '/api/push-token',
+      { method: 'DELETE', headers: await buildIdentityHeaders() },
+    );
+  } catch {}
+  try { await AsyncStorage.removeItem(TOKEN_STORE_KEY); } catch {}
+  try { await AsyncStorage.setItem(OPTIN_STORE_KEY, '0'); } catch {}
+}
