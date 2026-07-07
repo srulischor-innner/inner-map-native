@@ -1067,11 +1067,11 @@ function PrivacyDataSection() {
       <View style={styles.privacyBlock}>
         <Text style={styles.privacyH3}>ABOUT THE AI</Text>
         <Text style={styles.privacyBody}>
-          Inner Map uses Anthropic (for chat) and OpenAI (for voice and
-          transcription). These providers process your conversations to
-          generate replies — that's how the app works. Per their paid API
-          agreements, they don't retain your data or use it to train their
-          models.
+          Inner Map uses Anthropic (for chat), OpenAI (for voice notes and
+          the app's memory), and Cartesia + ElevenLabs (for live voice).
+          These providers process your conversations or audio to generate
+          replies — that's how the app works. Per their paid API agreements,
+          they don't retain your data or use it to train their models.
         </Text>
         <Text style={[styles.privacyBody, { marginTop: spacing.sm }]}>
           We do not use your conversations to train any model either. Your
@@ -1084,7 +1084,7 @@ function PrivacyDataSection() {
 
         <Text style={styles.privacyBodyBold}>Export your data</Text>
         <Text style={styles.privacyBody}>
-          Download everything we have on you as a JSON file, anytime.
+          Download a copy of your data as a JSON file, anytime.
         </Text>
         <Pressable
           onPress={handleExport}

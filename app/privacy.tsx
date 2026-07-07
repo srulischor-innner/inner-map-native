@@ -117,13 +117,20 @@ export default function PrivacyScreen() {
         </Bullet>
 
         <Text style={styles.h2}>Third parties we use</Text>
-        <Bullet>OpenAI: for audio transcription and text-to-speech</Bullet>
         <Bullet>Anthropic: for AI conversation</Bullet>
+        <Bullet>
+          OpenAI: for voice-note transcription, spoken audio, and the app's
+          memory
+        </Bullet>
+        <Bullet>
+          Cartesia and ElevenLabs: for live voice (speech-to-text and
+          text-to-speech)
+        </Bullet>
         <Text style={styles.paragraph}>
-          Our AI providers (Anthropic, OpenAI) process your messages to
-          generate responses and do not retain or train on them, per our API
-          agreements. Both also have their own privacy policies that govern
-          their handling of data passed to them.
+          These providers process your messages or audio to power those
+          features and do not retain or train on them, per our API
+          agreements. Each also has its own privacy policy that governs its
+          handling of data passed to it.
         </Text>
 
         <Text style={styles.h2}>Your rights</Text>

@@ -294,7 +294,7 @@ export type SavedBelief = {
  *  context }] }. Other kinds render read-only. */
 export type InboxMessage = {
   id: string;
-  kind: 'pending_parts' | 'system_note' | 'release_note';
+  kind: 'pending_parts' | 'enrichment' | 'system_note' | 'release_note';
   payload: {
     /** Present on session-sourced cards. */
     sessionId?: string;
@@ -306,12 +306,19 @@ export type InboxMessage = {
     entryDate?: string | null;
     items?: {
       part: string;
-      name: string;
-      context: string;
+      /** pending_parts items: the suggested part name + grounding context. */
+      name?: string;
+      context?: string;
+      /** enrichment items: the facet field + value (+ optional manager/
+       *  firefighter label). Accepting appends to the part's enrichment log. */
+      label?: string | null;
+      field?: string;
+      value?: string;
       /** Per-item review state (server-owned). Missing = pending. */
       status?: 'pending' | 'accepted' | 'declined';
-      /** The name the user refined before accepting, if any. */
+      /** The name (pending_parts) or value (enrichment) the user refined. */
       editedName?: string;
+      editedValue?: string;
     }[];
     title?: string;
     body?: string;

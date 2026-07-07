@@ -36,19 +36,18 @@ export const PARTNER_ENABLED: boolean = false;
 // re-test it when read-aloud returns.
 export const CHAT_READ_ALOUD_ENABLED: boolean = false;
 
-// Push notifications hidden for v1 launch — flip to true to restore. The
-// ONLY entry point is the boot-time registerForPushNotifications() call in
-// app/_layout.tsx; with it gated off, the app never requests OS notification
-// permission and never POSTs a push token at boot. All push infrastructure
-// stays in the codebase, compiling, untouched: services/push.ts, the
-// /api/push-token server endpoint, and the push_tokens table.
+// Boot-time push auto-registration stays off. This flag gates ONLY the
+// cold-boot registerForPushNotifications() call in app/_layout.tsx; with it
+// off, the app never asks for OS notification permission at launch.
 //
-// WHY OFF FOR v1: nothing actually sends a notification yet (no
-// scheduleNotificationAsync client-side, no server send path), so registering
-// at boot only produced an OS permission prompt for a feature that delivers
-// nothing. When notifications ship, re-enable here AND move the permission
-// request to a contextual opt-in (the moment the user turns on reminders),
-// not cold boot.
+// The inbox push feature itself is LIVE and deliberately bypasses this flag:
+// users opt in contextually (the Settings "Notify me when something's
+// waiting" toggle, or the one-time prompt on the Messages screen), which
+// calls enableInboxPush() in services/push.ts → POST /api/push-token. The
+// server sends content-opaque inbox notifications via lib/pushSender.js
+// (fixed strings only — never card/conversation content). Opting out
+// DELETEs the token. Keep this false so the OS permission prompt only ever
+// appears at those opt-in moments, never at cold boot.
 export const NOTIFICATIONS_ENABLED: boolean = false;
 
 // Conversation continuation — reopen ANY past session (incl. old, ended,

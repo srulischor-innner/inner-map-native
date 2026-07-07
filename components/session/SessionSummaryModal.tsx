@@ -240,6 +240,7 @@ function Section({ label, text }: { label: string; text: string }) {
 // ============================================================================
 const FACET_LABEL: Record<string, string> = {
   trigger: 'trigger', body: 'body', situation: 'situation', example: 'example', voice: 'phrase',
+  manner: 'way of speaking', worldview: 'worldview', story: 'story', memory: 'memory',
 };
 function DeepenedBlock({ deepened }: { deepened: DeepenedPart[] }) {
   return (

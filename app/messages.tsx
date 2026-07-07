@@ -117,6 +117,8 @@ export default function MessagesScreen() {
           {messages.map((m) =>
             m.kind === 'pending_parts' ? (
               <PendingPartsCard key={m.id} message={m} />
+            ) : m.kind === 'enrichment' ? (
+              <EnrichmentCard key={m.id} message={m} />
             ) : (
               <NoteCard key={m.id} message={m} />
             ),
@@ -141,7 +143,7 @@ function PendingPartsCard({ message }: { message: InboxMessage }) {
       it.status === 'accepted' || it.status === 'declined' ? it.status : 'pending',
     ),
   );
-  const [names, setNames] = useState<string[]>(items.map((it) => it.editedName || it.name));
+  const [names, setNames] = useState<string[]>(items.map((it) => it.editedName || it.name || ''));
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
 
   function setItemState(i: number, s: ItemState) {
@@ -242,6 +244,138 @@ function PendingPartsCard({ message }: { message: InboxMessage }) {
                   accessibilityLabel={`Dismiss ${names[i]}`}
                 >
                   <Text style={styles.itemBtnTextDim}>Doesn’t resonate</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+// One enrichment message: new facets of parts already on the map, surfaced
+// when the in-session consent handshake hadn't happened. Same per-item
+// accept/edit/decline machinery as PendingPartsCard (same endpoints), but
+// EDIT refines the facet VALUE, and accepting appends to the part's folder
+// rather than creating anything new.
+const ENRICH_FACET_LABEL: Record<string, string> = {
+  trigger: 'trigger', body: 'where it lives', situation: 'situation',
+  example: 'example', voice: 'phrase', manner: 'way of speaking',
+  worldview: 'worldview', story: 'story it carries', memory: 'memory',
+};
+
+function EnrichmentCard({ message }: { message: InboxMessage }) {
+  const items = message.payload.items || [];
+  const [states, setStates] = useState<ItemState[]>(
+    items.map((it) =>
+      it.status === 'accepted' || it.status === 'declined' ? it.status : 'pending',
+    ),
+  );
+  const [values, setValues] = useState<string[]>(items.map((it) => it.editedValue || it.value || ''));
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+
+  function setItemState(i: number, s: ItemState) {
+    setStates((prev) => prev.map((v, j) => (j === i ? s : v)));
+  }
+
+  async function accept(i: number) {
+    if (states[i] !== 'pending') return;
+    setItemState(i, 'sending');
+    Haptics.selectionAsync().catch(() => {});
+    const trimmed = values[i].trim();
+    const edits = trimmed && trimmed !== items[i].value ? { [i]: trimmed } : undefined;
+    const res = await api.actOnMessage(message.id, [i], edits);
+    setItemState(i, res.ok ? 'accepted' : 'pending');
+    if (res.ok) {
+      if (editingIdx === i) setEditingIdx(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      refreshInboxStatus(true).catch(() => {});
+    }
+  }
+
+  async function decline(i: number) {
+    if (states[i] !== 'pending') return;
+    setItemState(i, 'sending');
+    Haptics.selectionAsync().catch(() => {});
+    const res = await api.declineMessageItems(message.id, [i]);
+    setItemState(i, res.ok ? 'declined' : 'pending');
+    if (res.ok) {
+      if (editingIdx === i) setEditingIdx(null);
+      refreshInboxStatus(true).catch(() => {});
+    }
+  }
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardKicker}>
+        {`YOUR PARTS, IN MORE DETAIL${message.payload.sessionDate ? ` · ${message.payload.sessionDate}` : ''}`}
+      </Text>
+      <Text style={styles.cardLede}>
+        New facets of parts already on your map surfaced in conversation. Keep what fits:
+      </Text>
+      {items.map((it, i) => {
+        const st = states[i];
+        const editing = editingIdx === i;
+        const partName = it.label || it.part;
+        const facetLabel = ENRICH_FACET_LABEL[it.field || ''] || it.field || 'detail';
+        return (
+          <View key={`${message.id}-${i}`} style={styles.noticedItem}>
+            <Text style={[styles.itemName, st === 'declined' && styles.itemNameDim]}>
+              {partName}
+              <Text style={styles.itemCategory}>  ·  new {facetLabel}</Text>
+            </Text>
+            {editing ? (
+              <TextInput
+                value={values[i]}
+                onChangeText={(t) => setValues((prev) => prev.map((v, j) => (j === i ? t : v)))}
+                style={styles.itemNameInput}
+                selectionColor={colors.amber}
+                autoFocus
+                multiline
+                returnKeyType="done"
+                onSubmitEditing={() => setEditingIdx(null)}
+                accessibilityLabel="Edit the facet wording"
+              />
+            ) : (
+              <Text style={styles.itemContext}>{values[i]}</Text>
+            )}
+
+            {st === 'accepted' ? (
+              <View style={styles.itemResolvedRow}>
+                <Ionicons name="checkmark-circle" size={15} color={colors.amber} />
+                <Text style={styles.itemResolvedText}>Added to the part’s folder.</Text>
+              </View>
+            ) : st === 'declined' ? (
+              <View style={styles.itemResolvedRow}>
+                <Ionicons name="close-circle-outline" size={15} color={colors.creamFaint} />
+                <Text style={styles.itemResolvedTextDim}>Doesn’t fit — dismissed.</Text>
+              </View>
+            ) : (
+              <View style={styles.itemActionRow}>
+                <Pressable
+                  onPress={() => accept(i)}
+                  disabled={st === 'sending'}
+                  style={[styles.itemBtnAccept, st === 'sending' && styles.itemBtnDim]}
+                  accessibilityLabel={`Add this ${facetLabel} to ${partName}`}
+                >
+                  <Text style={styles.itemBtnAcceptText}>{st === 'sending' ? 'ADDING…' : 'ADD TO PART'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setEditingIdx(editing ? null : i)}
+                  disabled={st === 'sending'}
+                  style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
+                  accessibilityLabel="Edit the facet wording"
+                >
+                  <Text style={styles.itemBtnText}>{editing ? 'DONE' : 'EDIT'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => decline(i)}
+                  disabled={st === 'sending'}
+                  style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
+                  accessibilityLabel="Dismiss this facet"
+                >
+                  <Text style={styles.itemBtnTextDim}>Doesn’t fit</Text>
                 </Pressable>
               </View>
             )}
