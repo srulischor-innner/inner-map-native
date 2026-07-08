@@ -12,9 +12,10 @@
 // serif headers, amber accents, calm spacing. Messages expire after
 // 14 days server-side (auto-archived, never re-asked).
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator, TextInput,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +27,7 @@ import { colors, fonts, spacing } from '../constants/theme';
 import { api, InboxMessage } from '../services/api';
 import { refreshInboxStatus } from '../services/messagesInbox';
 import { getInboxPushOptIn, enableInboxPush } from '../services/push';
+import { useKeyboardInset } from '../utils/useKeyboardInset';
 
 // One-time contextual opt-in prompt: shown the first time the user opens the
 // inbox with a card present and hasn't opted in. Declining is permanent-quiet
@@ -37,6 +39,36 @@ export default function MessagesScreen() {
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [showPushPrompt, setShowPushPrompt] = useState(false);
+
+  // Keyboard avoidance for the per-item EDIT fields (enrichment +
+  // pending_parts cards). Manual lift via useKeyboardInset — the app-wide
+  // pattern (adjustResize is a no-op under Android 15 edge-to-edge, and iOS
+  // never resizes; see utils/useKeyboardInset.ts). The inset pads the scroll
+  // content so the covered region becomes scrollable, and ensureEditVisible
+  // scrolls the focused field (plus its action row) above the keyboard.
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+  const kbInset = useKeyboardInset();
+  const kbRef = useRef(0);
+  kbRef.current = kbInset;
+
+  const ensureEditVisible = useCallback((node: { measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void } | null) => {
+    const attempt = () => {
+      node?.measureInWindow?.((x, y, w, h) => {
+        const visibleBottom = Dimensions.get('window').height - kbRef.current;
+        // +96 keeps the ADD/DONE action row under the field reachable too.
+        const overlap = y + h + 96 - visibleBottom;
+        if (overlap > 0) {
+          scrollRef.current?.scrollTo({ y: scrollYRef.current + overlap, animated: true });
+        }
+      });
+    };
+    // Two passes: immediately (iOS keyboardWillShow has already set the
+    // inset) and after the keyboard animation settles (Android only emits
+    // keyboardDidShow, so the first pass can run before the inset exists).
+    requestAnimationFrame(attempt);
+    setTimeout(attempt, 350);
+  }, []);
 
   const load = useCallback(async () => {
     const { messages: list } = await api.listMessages();
@@ -97,7 +129,14 @@ export default function MessagesScreen() {
           </Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          ref={scrollRef}
+          onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={[styles.body, kbInset > 0 && { paddingBottom: kbInset + spacing.xl }]}
+          showsVerticalScrollIndicator={false}
+        >
           {showPushPrompt ? (
             <View style={styles.pushPrompt}>
               <Text style={styles.pushPromptTitle}>Want to know when something's waiting here?</Text>
@@ -116,9 +155,9 @@ export default function MessagesScreen() {
           ) : null}
           {messages.map((m) =>
             m.kind === 'pending_parts' ? (
-              <PendingPartsCard key={m.id} message={m} />
+              <PendingPartsCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
             ) : m.kind === 'enrichment' ? (
-              <EnrichmentCard key={m.id} message={m} />
+              <EnrichmentCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
             ) : (
               <NoteCard key={m.id} message={m} />
             ),
@@ -136,7 +175,10 @@ export default function MessagesScreen() {
 // resolved lines — is flagged for the copy pass.)
 type ItemState = 'pending' | 'sending' | 'accepted' | 'declined';
 
-function PendingPartsCard({ message }: { message: InboxMessage }) {
+type EditFocusHandler = (node: { measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void } | null) => void;
+
+function PendingPartsCard({ message, onEditFocus }: { message: InboxMessage; onEditFocus?: EditFocusHandler }) {
+  const editInputRef = useRef<TextInput>(null);
   const items = message.payload.items || [];
   const [states, setStates] = useState<ItemState[]>(
     items.map((it) =>
@@ -192,6 +234,7 @@ function PendingPartsCard({ message }: { message: InboxMessage }) {
           <View key={`${message.id}-${i}`} style={styles.noticedItem}>
             {editing ? (
               <TextInput
+                ref={editInputRef}
                 value={names[i]}
                 onChangeText={(t) => setNames((prev) => prev.map((v, j) => (j === i ? t : v)))}
                 style={styles.itemNameInput}
@@ -199,6 +242,7 @@ function PendingPartsCard({ message }: { message: InboxMessage }) {
                 autoFocus
                 returnKeyType="done"
                 onSubmitEditing={() => setEditingIdx(null)}
+                onFocus={() => onEditFocus?.(editInputRef.current)}
                 accessibilityLabel="Edit the part name"
               />
             ) : (
@@ -265,7 +309,8 @@ const ENRICH_FACET_LABEL: Record<string, string> = {
   worldview: 'worldview', story: 'story it carries', memory: 'memory',
 };
 
-function EnrichmentCard({ message }: { message: InboxMessage }) {
+function EnrichmentCard({ message, onEditFocus }: { message: InboxMessage; onEditFocus?: EditFocusHandler }) {
+  const editInputRef = useRef<TextInput>(null);
   const items = message.payload.items || [];
   const [states, setStates] = useState<ItemState[]>(
     items.map((it) =>
@@ -327,6 +372,7 @@ function EnrichmentCard({ message }: { message: InboxMessage }) {
             </Text>
             {editing ? (
               <TextInput
+                ref={editInputRef}
                 value={values[i]}
                 onChangeText={(t) => setValues((prev) => prev.map((v, j) => (j === i ? t : v)))}
                 style={styles.itemNameInput}
@@ -335,6 +381,7 @@ function EnrichmentCard({ message }: { message: InboxMessage }) {
                 multiline
                 returnKeyType="done"
                 onSubmitEditing={() => setEditingIdx(null)}
+                onFocus={() => onEditFocus?.(editInputRef.current)}
                 accessibilityLabel="Edit the facet wording"
               />
             ) : (
