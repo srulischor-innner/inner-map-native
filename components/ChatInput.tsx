@@ -44,6 +44,11 @@
 // second clips (mic warmup + capture latency leave near-silence). Tuned
 // up from 300ms after the empty-transcript bug — see [voice-note] logs.
 const MIN_RECORDING_MS = 500;
+// How long the finger must stay down before the pan ACTIVATES and recording
+// starts. 250ms (was 150ms): a slow, deliberate tap no longer reads as a
+// hold — it falls through to the teaching tooltip instead of starting a
+// recording the user didn't want.
+const HOLD_ACTIVATE_MS = 250;
 
 // Trailing-audio safeguards — mirror the MapVoiceBar fix (commit
 // 13b650b). On real devices the Pressable.onPressOut event can fire
@@ -72,7 +77,7 @@ const POST_STOP_FLUSH_MS = 150;
 const LOCK_DY = -64;
 const CANCEL_DX = -88;
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -163,6 +168,18 @@ export function ChatInput({
 
   const startTimeRef = useRef<number>(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ---- Start/stop race guards (the Android "zombie recording" fix) ----
+  // recordingRef mirrors the `recording` state synchronously so the stop
+  // paths read truth, not a stale closure. holdActiveRef is true from the
+  // moment a hold begins until a stop path claims it — startRecording
+  // checks it after every await and aborts if the finger already lifted
+  // (unless the recording locked, which deliberately outlives the finger).
+  // startPromiseRef lets finalize/cancel AWAIT an in-flight start instead
+  // of bailing on stale state and stranding a recorder that starts late.
+  const recordingRef = useRef(false);
+  const holdActiveRef = useRef(false);
+  const startPromiseRef = useRef<Promise<boolean> | null>(null);
 
   // Swipe-to-lock state. `recording` stays the single source of truth for
   // "the recorder is capturing" — it covers BOTH the finger-held phase and the
@@ -262,52 +279,89 @@ export function ChatInput({
   }
 
   // ------------------------------------------------------------------------
-  // Press-and-hold voice recording — uses onLongPress (fires after 150ms of
-  // hold) so a quick tap can show the teaching tooltip without accidentally
-  // triggering a recording.
+  // Press-and-hold voice recording — the pan gesture activates after
+  // HOLD_ACTIVATE_MS of hold, so a quick tap can show the teaching tooltip
+  // without accidentally triggering a recording.
   // ------------------------------------------------------------------------
 
   async function startRecording() {
-    console.log(`[voice-note] startRecording — minRecordingMs=${MIN_RECORDING_MS} timestamp=${Date.now()}`);
-    // No explicit focus() call — the parent ScrollView's
-    // keyboardShouldPersistTaps="handled" preserves focus when the
-    // user was already typing, and we explicitly do NOT want to OPEN
-    // the keyboard if it was closed (which is what calling focus()
-    // unconditionally caused).
+    // RACE GUARD (the "zombie recording" bug): everything before
+    // recorder.record() awaits — the permission prompt, the audio-session
+    // handoff, prepare. A short hold could fully RELEASE inside that
+    // window; the old code then bailed in finalizeAndSend (state still
+    // false) and the recorder started anyway — capturing indefinitely with
+    // no send affordance (guaranteed on Android's first-run permission
+    // dialog, likely on its slower session switch every time). Fix: the
+    // hold marks itself active synchronously here; each async seam below
+    // re-checks and aborts if the hold already ended (a LOCKED recording
+    // keeps holdActiveRef true — it deliberately outlives the finger); and
+    // the whole start is exposed via startPromiseRef so the stop paths can
+    // await it instead of racing it.
+    holdActiveRef.current = true;
+    const run = (async (): Promise<boolean> => {
+      console.log(`[voice-note] startRecording — minRecordingMs=${MIN_RECORDING_MS} timestamp=${Date.now()}`);
+      // No explicit focus() call — the parent ScrollView's
+      // keyboardShouldPersistTaps="handled" preserves focus when the
+      // user was already typing, and we explicitly do NOT want to OPEN
+      // the keyboard if it was closed (which is what calling focus()
+      // unconditionally caused).
+      try {
+        const perm = await AudioModule.requestRecordingPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert('Microphone off', 'Grant mic access in Settings to record voice notes.');
+          return false;
+        }
+        if (!holdActiveRef.current) {
+          console.log('[voice-note] hold ended during permission prompt — aborting start');
+          return false;
+        }
+        // Authoritative playback→record handoff. ensureRecordingMode hard-
+        // stops any read-aloud, releases its audio player, and AWAITS the
+        // switch to a record-capable audio category. Previously this was a
+        // non-awaited cancelTTSStream() + a swallowed setAudioModeAsync, so
+        // on the turn right after a spoken reply the category switch raced
+        // the player teardown and capture began in playback mode → silent
+        // recording → empty transcript (the "every other message" bug). If
+        // the switch fails we ABORT rather than capture silence.
+        const ready = await ensureRecordingMode();
+        if (!ready) {
+          console.warn('[voice-note] audio session not record-ready — aborting (refusing to record silence)');
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+          Alert.alert('One sec', 'Audio is still finishing playback. Try the mic again in a moment.');
+          return false;
+        }
+        if (!holdActiveRef.current) {
+          console.log('[voice-note] hold ended during audio-session handoff — aborting start');
+          return false;
+        }
+        await recorder.prepareToRecordAsync();
+        if (!holdActiveRef.current) {
+          console.log('[voice-note] hold ended during prepare — aborting start');
+          return false;
+        }
+        recorder.record();
+        recordingRef.current = true;
+        setRecording(true);
+        setSeconds(0);
+        startTimeRef.current = Date.now();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        tickRef.current = setInterval(() => {
+          const s = Math.floor((Date.now() - startTimeRef.current) / 1000);
+          setSeconds(s);
+        }, 250);
+        return true;
+      } catch (err) {
+        console.warn('[mic] startRecording failed:', (err as Error).message);
+        recordingRef.current = false;
+        setRecording(false);
+        return false;
+      }
+    })();
+    startPromiseRef.current = run;
     try {
-      const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Microphone off', 'Grant mic access in Settings to record voice notes.');
-        return;
-      }
-      // Authoritative playback→record handoff. ensureRecordingMode hard-
-      // stops any read-aloud, releases its audio player, and AWAITS the
-      // switch to a record-capable audio category. Previously this was a
-      // non-awaited cancelTTSStream() + a swallowed setAudioModeAsync, so
-      // on the turn right after a spoken reply the category switch raced
-      // the player teardown and capture began in playback mode → silent
-      // recording → empty transcript (the "every other message" bug). If
-      // the switch fails we ABORT rather than capture silence.
-      const ready = await ensureRecordingMode();
-      if (!ready) {
-        console.warn('[voice-note] audio session not record-ready — aborting (refusing to record silence)');
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-        Alert.alert('One sec', 'Audio is still finishing playback. Try the mic again in a moment.');
-        return;
-      }
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      setRecording(true);
-      setSeconds(0);
-      startTimeRef.current = Date.now();
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      tickRef.current = setInterval(() => {
-        const s = Math.floor((Date.now() - startTimeRef.current) / 1000);
-        setSeconds(s);
-      }, 250);
-    } catch (err) {
-      console.warn('[mic] startRecording failed:', (err as Error).message);
-      setRecording(false);
+      await run;
+    } finally {
+      if (startPromiseRef.current === run) startPromiseRef.current = null;
     }
   }
 
@@ -328,10 +382,16 @@ export function ChatInput({
   // identical stop/flush/guard logic, so the trailing-audio + M4A-finalize
   // safeguards apply uniformly. This is the only place that reads recorder.uri.
   async function finalizeAndSend() {
-    // If the recorder never started (a misfire, or startRecording aborted
-    // because the audio session wasn't record-ready), there's nothing to
-    // send — just make sure no locked UI is left stranded.
-    if (!recording) { setLocked(false); return; }
+    // Claim the hold FIRST (any still-pending start aborts at its next
+    // seam), then settle an in-flight start so we never race the recorder
+    // mid-startup — either it finished and we stop a real recording, or it
+    // aborted and there's nothing to do.
+    holdActiveRef.current = false;
+    if (startPromiseRef.current) { try { await startPromiseRef.current; } catch {} }
+    // If the recorder never started (a misfire, an aborted start, or a
+    // start the race guard cancelled), there's nothing to send — just make
+    // sure no locked UI is left stranded.
+    if (!recordingRef.current) { setLocked(false); return; }
     const stopTs = Date.now();
     const heldMs = stopTs - startTimeRef.current;
     const heldSec = Math.max(0.1, heldMs / 1000);
@@ -348,6 +408,7 @@ export function ChatInput({
     if (!willDiscard) {
       await new Promise<void>((r) => setTimeout(r, STOP_GRACE_MS));
     }
+    recordingRef.current = false;
     setRecording(false);
     setLocked(false);
     setSeconds(0);
@@ -395,9 +456,13 @@ export function ChatInput({
   // since we're throwing the audio away. Reachable via swipe-left-to-cancel
   // (finger held) or the trash affordance (locked).
   async function cancelRecording() {
-    if (!recording) { setLocked(false); return; }
+    // Same claim-then-settle as finalizeAndSend — see the race guard there.
+    holdActiveRef.current = false;
+    if (startPromiseRef.current) { try { await startPromiseRef.current; } catch {} }
+    if (!recordingRef.current) { setLocked(false); return; }
     console.log('[voice-note] cancelRecording — user discarded the take');
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    recordingRef.current = false;
     setRecording(false);
     setLocked(false);
     setSeconds(0);
@@ -427,14 +492,40 @@ export function ChatInput({
   // ------------------------------------------------------------------------
   // Voice-note gesture — press-and-hold + swipe-to-lock / swipe-to-cancel.
   // A thin UI shell over the existing recorder (see header). The pan ACTIVATES
-  // only after a 150ms long-press, so a quick tap can't start a recording; the
-  // tap handles the teaching tooltip. Exclusive(pan, tap) gives the long-press
-  // pan priority, with the tap firing only when the pan fails (a release before
-  // 150ms). High-frequency drag tracking stays on the UI thread (shared values);
-  // runOnJS hops the discrete transitions back to JS (state + expo-audio).
+  // only after a HOLD_ACTIVATE_MS long-press, so a quick tap can't start a
+  // recording; the tap handles the teaching tooltip. Exclusive(pan, tap) gives
+  // the long-press pan priority, with the tap firing only when the pan fails
+  // (a release before the hold threshold). High-frequency drag tracking stays
+  // on the UI thread (shared values); runOnJS hops the discrete transitions
+  // back to JS (state + expo-audio).
+  //
+  // MEMOIZATION IS LOAD-BEARING (the Android dead-send bug). These gesture
+  // objects are created exactly ONCE (useMemo, all-stable deps). The previous
+  // version rebuilt them on every render — and the seconds ticker re-renders
+  // this component 4×/second during a hold, so GestureDetector reattached a
+  // brand-new gesture mid-interaction. iOS tolerates the reattach; Android
+  // CANCELS the in-flight pan: onUpdate stopped (dead swipe-to-lock) and
+  // onEnd never fired (dead release-to-send), leaving the recorder running
+  // with no way to send. The worklets therefore call stable trampolines that
+  // read the LATEST handlers through a ref — fresh closures with zero
+  // reattachment (same pattern as MapVoiceBar's handlersRef).
   // ------------------------------------------------------------------------
-  const recordPan = Gesture.Pan()
-    .activateAfterLongPress(150)
+  const gestureHandlersRef = useRef({
+    startRecording, finalizeAndSend, cancelRecording, onLockCrossed, onCancelArm, handleShortTap,
+  });
+  gestureHandlersRef.current = {
+    startRecording, finalizeAndSend, cancelRecording, onLockCrossed, onCancelArm, handleShortTap,
+  };
+
+  const callStartRecording = useCallback(() => { gestureHandlersRef.current.startRecording(); }, []);
+  const callFinalizeAndSend = useCallback(() => { gestureHandlersRef.current.finalizeAndSend(); }, []);
+  const callCancelRecording = useCallback(() => { gestureHandlersRef.current.cancelRecording(); }, []);
+  const callLockCrossed = useCallback(() => { gestureHandlersRef.current.onLockCrossed(); }, []);
+  const callCancelArm = useCallback((armed: boolean) => { gestureHandlersRef.current.onCancelArm(armed); }, []);
+  const callShortTap = useCallback(() => { gestureHandlersRef.current.handleShortTap(); }, []);
+
+  const recordPan = useMemo(() => Gesture.Pan()
+    .activateAfterLongPress(HOLD_ACTIVATE_MS)
     .hitSlop(14)
     .onStart(() => {
       'worklet';
@@ -442,7 +533,7 @@ export function ChatInput({
       dragX.value = 0;
       lockArmedSV.value = 0;
       cancelArmedSV.value = 0;
-      runOnJS(startRecording)();
+      runOnJS(callStartRecording)();
     })
     .onUpdate((e) => {
       'worklet';
@@ -457,7 +548,7 @@ export function ChatInput({
         -e.translationY > Math.abs(e.translationX)
       ) {
         lockArmedSV.value = 1;
-        runOnJS(onLockCrossed)();
+        runOnJS(callLockCrossed)();
         return;
       }
       // CANCEL-ARM — dragged left past the threshold, dominantly horizontal.
@@ -467,10 +558,10 @@ export function ChatInput({
         const armed = e.translationX <= CANCEL_DX && -e.translationX > Math.abs(e.translationY);
         if (armed && cancelArmedSV.value === 0) {
           cancelArmedSV.value = 1;
-          runOnJS(onCancelArm)(true);
+          runOnJS(callCancelArm)(true);
         } else if (!armed && cancelArmedSV.value === 1) {
           cancelArmedSV.value = 0;
-          runOnJS(onCancelArm)(false);
+          runOnJS(callCancelArm)(false);
         }
       }
     })
@@ -482,11 +573,11 @@ export function ChatInput({
         return;
       }
       if (cancelArmedSV.value === 1) {
-        runOnJS(cancelRecording)();
+        runOnJS(callCancelRecording)();
         return;
       }
       // Plain release below both thresholds → send (the original behavior).
-      runOnJS(finalizeAndSend)();
+      runOnJS(callFinalizeAndSend)();
     })
     .onFinalize(() => {
       'worklet';
@@ -494,18 +585,21 @@ export function ChatInput({
       // not these shared values, so it persists past this reset.
       dragY.value = withTiming(0, { duration: 140 });
       dragX.value = withTiming(0, { duration: 140 });
-    });
+    }),
+  // Shared values + trampolines are all referentially stable — this memo
+  // creates the pan exactly once for the component's lifetime.
+  [dragY, dragX, lockArmedSV, cancelArmedSV, callStartRecording, callFinalizeAndSend, callCancelRecording, callLockCrossed, callCancelArm]);
 
   // Quick tap → teaching tooltip. Only reached when the pan fails to activate
-  // (release before the 150ms long-press), via Gesture.Exclusive below.
-  const recordTap = Gesture.Tap()
+  // (release before the HOLD_ACTIVATE_MS long-press), via Gesture.Exclusive.
+  const recordTap = useMemo(() => Gesture.Tap()
     .hitSlop(14)
     .onStart(() => {
       'worklet';
-      runOnJS(handleShortTap)();
-    });
+      runOnJS(callShortTap)();
+    }), [callShortTap]);
 
-  const micGesture = Gesture.Exclusive(recordPan, recordTap);
+  const micGesture = useMemo(() => Gesture.Exclusive(recordPan, recordTap), [recordPan, recordTap]);
 
   return (
     <View style={styles.wrap}>

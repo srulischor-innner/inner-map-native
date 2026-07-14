@@ -18,7 +18,7 @@
 // Tapping the (now dim) guidance restores it to full opacity. First
 // open of the modal always starts at full opacity.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, StyleSheet,
   Platform, ScrollView, Animated, Easing, Keyboard,
@@ -211,38 +211,78 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     if (next.length > 0) collapseGuidance();
   }
 
+  // ---- Start/stop race guards — same fix as ChatInput's voice note ----
+  // (the "zombie recording": a short hold could fully release inside
+  // startRecording's awaits; endRecording then bailed on stale state and
+  // the recorder started anyway, capturing with no way to stop.)
+  // recordingRef itself is declared near the top of the component (effect-
+  // synced from state for the close/unmount guards); the paths below ALSO
+  // write it synchronously at each transition so stop paths read truth,
+  // not a stale render.
+  const holdActiveRef = useRef(false);
+  const startPromiseRef = useRef<Promise<boolean> | null>(null);
+
   async function startRecording() {
-    try {
-      const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Microphone off', 'Grant mic access in Settings to record voice notes.');
-        return;
-      }
+    holdActiveRef.current = true;
+    const run = (async (): Promise<boolean> => {
       try {
-        await setAudioModeAsync({
-          allowsRecording: true, playsInSilentMode: true,
-          interruptionMode: 'doNotMix', shouldPlayInBackground: false,
-        });
-      } catch {}
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      setRecording(true);
-      setSeconds(0);
-      startTimeRef.current = Date.now();
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      tickRef.current = setInterval(() => {
-        setSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000));
-      }, 250);
-    } catch (err) {
-      console.warn('[journal-mic] startRecording failed:', (err as Error).message);
-      setRecording(false);
+        const perm = await AudioModule.requestRecordingPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert('Microphone off', 'Grant mic access in Settings to record voice notes.');
+          return false;
+        }
+        if (!holdActiveRef.current) {
+          console.log('[journal-mic] hold ended during permission prompt — aborting start');
+          return false;
+        }
+        try {
+          await setAudioModeAsync({
+            allowsRecording: true, playsInSilentMode: true,
+            interruptionMode: 'doNotMix', shouldPlayInBackground: false,
+          });
+        } catch {}
+        if (!holdActiveRef.current) {
+          console.log('[journal-mic] hold ended during audio-session switch — aborting start');
+          return false;
+        }
+        await recorder.prepareToRecordAsync();
+        if (!holdActiveRef.current) {
+          console.log('[journal-mic] hold ended during prepare — aborting start');
+          return false;
+        }
+        recorder.record();
+        recordingRef.current = true;
+        setRecording(true);
+        setSeconds(0);
+        startTimeRef.current = Date.now();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        tickRef.current = setInterval(() => {
+          setSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000));
+        }, 250);
+        return true;
+      } catch (err) {
+        console.warn('[journal-mic] startRecording failed:', (err as Error).message);
+        recordingRef.current = false;
+        setRecording(false);
+        return false;
+      }
+    })();
+    startPromiseRef.current = run;
+    try {
+      await run;
+    } finally {
+      if (startPromiseRef.current === run) startPromiseRef.current = null;
     }
   }
 
   async function endRecording() {
-    if (!recording) return;
+    // Claim the hold, then settle any in-flight start (see race guards above).
+    holdActiveRef.current = false;
+    if (startPromiseRef.current) { try { await startPromiseRef.current; } catch {} }
+    if (!recordingRef.current) { setLocked(false); return; }
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
+    recordingRef.current = false;
     setRecording(false);
     setLocked(false);
     setSeconds(0);
@@ -311,22 +351,36 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   }
 
   // Hold-to-record + swipe-up-to-lock (NO cancel). The pan activates only after
-  // a 180ms long-press (matching the prior press-and-hold), so a quick tap
-  // stays a no-op. This is a thin shell over startRecording/endRecording — it
-  // adds NO audio-session calls (those stay inside those two functions). Mirrors
-  // the chat gesture (ChatInput) minus the swipe-left-cancel axis.
-  const micPan = Gesture.Pan()
-    .activateAfterLongPress(180)
+  // a 250ms long-press, so a quick tap stays a no-op. This is a thin shell over
+  // startRecording/endRecording — it adds NO audio-session calls (those stay
+  // inside those two functions). Mirrors the chat gesture (ChatInput) minus the
+  // swipe-left-cancel axis.
+  //
+  // MEMOIZATION IS LOAD-BEARING (Android): the gesture is created once and
+  // calls stable trampolines that read the latest handlers through a ref.
+  // The previous unmemoized version was reattached by GestureDetector on
+  // every render (the seconds ticker re-renders 4×/s during a hold) — on
+  // Android that cancels the in-flight pan, killing release-to-stop and
+  // swipe-to-lock. Same fix as ChatInput.
+  const micHandlersRef = useRef({ micHaptic, startRecording, endRecording, onLockCrossed });
+  micHandlersRef.current = { micHaptic, startRecording, endRecording, onLockCrossed };
+  const callMicHaptic = useCallback(() => { micHandlersRef.current.micHaptic(); }, []);
+  const callStartRecording = useCallback(() => { micHandlersRef.current.startRecording(); }, []);
+  const callEndRecording = useCallback(() => { micHandlersRef.current.endRecording(); }, []);
+  const callLockCrossed = useCallback(() => { micHandlersRef.current.onLockCrossed(); }, []);
+
+  const micPan = useMemo(() => Gesture.Pan()
+    .activateAfterLongPress(250)
     .hitSlop(12)
     .onBegin(() => {
       'worklet';
       dragY.value = 0;
       lockArmedSV.value = 0;
-      runOnJS(micHaptic)();
+      runOnJS(callMicHaptic)();
     })
     .onStart(() => {
       'worklet';
-      runOnJS(startRecording)();
+      runOnJS(callStartRecording)();
     })
     .onUpdate((e) => {
       'worklet';
@@ -334,7 +388,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
       // Lock once the finger rises past the threshold (one-shot guard).
       if (lockArmedSV.value === 0 && e.translationY <= LOCK_DY) {
         lockArmedSV.value = 1;
-        runOnJS(onLockCrossed)();
+        runOnJS(callLockCrossed)();
       }
     })
     .onEnd(() => {
@@ -342,12 +396,13 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
       // Locked → recording continues; the dock's finish button stops it.
       if (lockArmedSV.value === 1) return;
       // Plain release → stop + transcribe (the original behavior).
-      runOnJS(endRecording)();
+      runOnJS(callEndRecording)();
     })
     .onFinalize(() => {
       'worklet';
       dragY.value = withTiming(0, { duration: 140 });
-    });
+    }),
+  [dragY, lockArmedSV, callMicHaptic, callStartRecording, callEndRecording, callLockCrossed]);
 
   return (
     <Modal
