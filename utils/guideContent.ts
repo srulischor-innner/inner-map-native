@@ -69,7 +69,13 @@ export type GuideSlide = {
 // later in onboarding is intentional. Safety messaging in
 // mental-health-adjacent apps benefits from reinforcement, and App
 // Review favors multiple disclosures over a single buried one.
-// Result: 6 slides total.
+// July 2026: "You talk. It listens." added at position 3 — the deck
+// previously jumped from the human-condition slide straight into
+// "As you talk, patterns emerge" without ever practically saying the
+// app IS a conversation. This slide carries that fact (and revives
+// the chatBubble visual, whose renderer had outlived its original
+// slide), so the patterns slide reads as a payoff, not a cold open.
+// Result: 7 slides total.
 export const WELCOME_SLIDES: GuideSlide[] = [
   {
     visual: 'intro',
@@ -83,6 +89,13 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     title: 'We all have patterns',
     body: [
       "Ways we react. Things that trigger us. Feelings we can't explain. Most of us don't fully understand why — they live just below the surface, shaping our days without us seeing them.",
+    ],
+  },
+  {
+    visual: 'chatBubble',
+    title: 'You talk. It listens.',
+    body: [
+      "Inner Map is a conversation — you bring whatever is alive right now, in your own words, and it meets you there. No forms, no exercises. Just talking, the way you'd talk to someone who really listens.",
     ],
   },
   {
