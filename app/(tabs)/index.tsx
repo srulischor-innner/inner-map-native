@@ -805,7 +805,7 @@ export default function ChatScreen() {
     let transcript = '';
     try {
       const t = await Promise.race([
-        api.transcribe(uri, mime),
+        api.transcribe(uri, mime, durationSec),
         new Promise<null>((_, reject) =>
           setTimeout(() => reject(new Error('transcribe timeout (30s)')), 30000),
         ),

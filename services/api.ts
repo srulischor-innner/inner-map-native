@@ -1609,7 +1609,7 @@ export const api = {
     }
   },
 
-  async transcribe(uri: string, mime: string): Promise<string | null> {
+  async transcribe(uri: string, mime: string, durationSec?: number): Promise<string | null> {
     const t0 = Date.now();
     try {
       // Read the local recording file. RN's fetch supports file:// URIs on both
@@ -1623,10 +1623,18 @@ export const api = {
       // recorder didn't actually start, etc.); a healthy size with an
       // empty transcript points to a server-side Whisper issue or a
       // codec the API can't decode.
-      console.log(`[voice-note] transcribe — uri=${uri.slice(-60)} mime=${mime} blobSize=${blob.size}B`);
+      console.log(`[voice-note] transcribe — uri=${uri.slice(-60)} mime=${mime} blobSize=${blob.size}B durationSec=${durationSec ?? '(not provided)'}`);
+      const headers = await buildIdentityHeaders({ contentType: mime });
+      // Intended-duration telemetry (iOS truncation triage): the server
+      // compares this against the file's byte-derived length and logs a
+      // DURATION MISMATCH when audio the client believed it captured never
+      // made it into the file.
+      if (typeof durationSec === 'number' && isFinite(durationSec) && durationSec > 0) {
+        headers['x-audio-duration-sec'] = String(Math.round(durationSec * 10) / 10);
+      }
       const up = await apiFetch('/api/transcribe', {
         label: 'transcribe', method: 'POST',
-        headers: await buildIdentityHeaders({ contentType: mime }),
+        headers,
         body: blob as any,
         timeoutMs: 30000,
       });

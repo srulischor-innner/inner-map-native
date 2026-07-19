@@ -39,6 +39,7 @@ import ReAnimated, {
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { JournalKind, getJournalShareDefault } from '../../services/journal';
+import { useRecorderWatch } from '../../utils/recorderWatch';
 
 const FREE_FLOW_GUIDANCE = [
   'This works best when you bypass your inner editor entirely — the part of you that shapes what you say before you say it.',
@@ -99,7 +100,6 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   const [guidanceCollapsed, setGuidanceCollapsed] = useState(false);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
   // Red-dot pulse during recording.
   const pulse = useRef(new Animated.Value(1)).current;
@@ -108,6 +108,22 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   // `recording` covers both the held and the locked phases; `locked` adds:
   // the finger has lifted and recording continues until the finish button.
   const [locked, setLocked] = useState(false);
+
+  // ---- Native-truth reconciliation (iOS truncation fix, July 2026) ----
+  // `interrupted` = the native recorder stopped/paused and it wasn't us
+  // (screen lock, backgrounding, call/Siri with failed auto-resume, encode
+  // error). The UI switches to a visible PAUSED state the user resolves —
+  // Resume (appends to the same file) or finish (keeps what's captured).
+  // capturedMsRef holds the recorder's own durationMillis — the timer and
+  // the transcribe duration come from THIS, never from wall clock, so the
+  // display freezes exactly when capture freezes. The watch itself is
+  // wired below via useRecorderWatch (utils/recorderWatch.ts).
+  const [interrupted, setInterrupted] = useState(false);
+  const interruptedRef = useRef(false);
+  const stoppingRef = useRef(false);
+  const capturedMsRef = useRef(0);
+  const [gapNote, setGapNote] = useState<number | null>(null);
+  const gapNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Mirror of `recording` for the teardown effects (which capture mount-time
   // scope and can't read live state).
   const recordingRef = useRef(false);
@@ -134,14 +150,18 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
       // resets. (A held, non-locked recording can't reach here — the finger is
       // still on the mic.)
       if (recordingRef.current) {
-        if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+        stoppingRef.current = true;
         recorder.stop().catch(() => {});
         setAudioModeAsync({
           allowsRecording: false, playsInSilentMode: true,
           interruptionMode: 'doNotMix', shouldPlayInBackground: false,
         }).catch(() => {});
+        recordingRef.current = false;
+        interruptedRef.current = false;
         setRecording(false);
         setLocked(false);
+        setInterrupted(false);
+        setGapNote(null);
         setTranscribing(false);
       }
       return;
@@ -159,9 +179,10 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     guidanceOpacity.setValue(1);
   }, [visible, guidanceOpacity, recorder]);
 
-  // Cleanup timers if the modal closes mid-recording.
+  // Cleanup if the modal closes mid-recording. (The recorder watch's poll
+  // clears itself via its own effect cleanup; the gap-note timer here.)
   useEffect(() => () => {
-    if (tickRef.current) clearInterval(tickRef.current);
+    if (gapNoteTimer.current) clearTimeout(gapNoteTimer.current);
     // Do NOT call recorder.stop() here. useAudioRecorder wraps the recorder in
     // expo's useReleasingSharedObject, which already calls recorder.release()
     // on unmount (its effect runs before this one), freeing the native recorder
@@ -178,9 +199,10 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     }
   }, []);
 
-  // Pulse the red recording dot.
+  // Pulse the red recording dot — static while interrupted (nothing is
+  // being captured; a pulsing dot would be the exact lie we're fixing).
   useEffect(() => {
-    if (!recording) { pulse.setValue(1); return; }
+    if (!recording || interrupted) { pulse.setValue(1); return; }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1.2, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
@@ -189,7 +211,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     );
     loop.start();
     return () => loop.stop();
-  }, [recording, pulse]);
+  }, [recording, interrupted, pulse]);
 
   function collapseGuidance() {
     if (guidanceCollapsed) return;
@@ -221,6 +243,56 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   // not a stale render.
   const holdActiveRef = useRef(false);
   const startPromiseRef = useRef<Promise<boolean> | null>(null);
+
+  function markInterrupted(reason: string) {
+    if (interruptedRef.current) return;
+    console.warn(`[journal-mic] native recorder stopped without our stop (${reason}) — surfacing paused state`);
+    interruptedRef.current = true;
+    setInterrupted(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+  }
+
+  useRecorderWatch(recorder, {
+    active: recording,
+    stoppingRef,
+    startTimeRef,
+    interruptedRef,
+    onCapturedMs: (ms) => {
+      capturedMsRef.current = ms;
+      setSeconds(Math.floor(ms / 1000));
+    },
+    onInterrupted: () => markInterrupted('poll saw isRecording=false'),
+    onEncodeError: (msg) => markInterrupted(`encode error: ${msg || '(none)'}`),
+    onAutoResumed: (gapSec) => {
+      // The library's own auto-resume brought capture back (foreground
+      // return / interruption ended). Clear the paused state but SHOW the
+      // gap — audio from that window is gone and the user should know.
+      interruptedRef.current = false;
+      setInterrupted(false);
+      setGapNote(gapSec);
+      if (gapNoteTimer.current) clearTimeout(gapNoteTimer.current);
+      gapNoteTimer.current = setTimeout(() => setGapNote(null), 6000);
+    },
+  });
+
+  // User-initiated resume from the visible paused state — continues
+  // appending to the same file (expo-audio's pause keeps it open).
+  function resumeRecording() {
+    try {
+      recorder.record();
+      const st = recorder.getStatus();
+      if (st.isRecording) {
+        interruptedRef.current = false;
+        setInterrupted(false);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      } else {
+        Alert.alert("Can't resume", "The microphone isn't available right now. You can keep what's recorded so far — tap the check to use it.");
+      }
+    } catch (err) {
+      console.warn('[journal-mic] resume failed:', (err as Error).message);
+      Alert.alert("Can't resume", "The microphone isn't available right now. You can keep what's recorded so far — tap the check to use it.");
+    }
+  }
 
   async function startRecording() {
     holdActiveRef.current = true;
@@ -254,11 +326,15 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
         recordingRef.current = true;
         setRecording(true);
         setSeconds(0);
+        // Fresh take — reset the reconciliation state. The timer is driven
+        // by the recorder watch (native durationMillis), not wall clock.
+        capturedMsRef.current = 0;
+        interruptedRef.current = false;
+        stoppingRef.current = false;
+        setInterrupted(false);
+        setGapNote(null);
         startTimeRef.current = Date.now();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-        tickRef.current = setInterval(() => {
-          setSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000));
-        }, 250);
         return true;
       } catch (err) {
         console.warn('[journal-mic] startRecording failed:', (err as Error).message);
@@ -280,9 +356,18 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     holdActiveRef.current = false;
     if (startPromiseRef.current) { try { await startPromiseRef.current; } catch {} }
     if (!recordingRef.current) { setLocked(false); return; }
-    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
-    const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
+    // Suppress the recorder watch while OUR stop runs, and use the
+    // recorder's own captured duration — never wall clock, which keeps
+    // climbing across an interruption while the file does not.
+    stoppingRef.current = true;
+    const capturedSec = capturedMsRef.current > 0
+      ? capturedMsRef.current / 1000
+      : (Date.now() - startTimeRef.current) / 1000; // fallback: watch never ticked
+    const heldSec = Math.max(0.1, capturedSec);
     recordingRef.current = false;
+    interruptedRef.current = false;
+    setInterrupted(false);
+    setGapNote(null);
     setRecording(false);
     setLocked(false);
     setSeconds(0);
@@ -303,7 +388,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
         return;
       }
       const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
-      const transcript = await api.transcribe(uri, mime);
+      const transcript = await api.transcribe(uri, mime, heldSec);
       const cleaned = (transcript || '').trim();
       setTranscribing(false);
       if (!cleaned) return;
@@ -480,10 +565,26 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
                   {FREE_FLOW_RECORD_PROMPT}
                 </Text>
               ) : null}
-              {recording ? (
+              {recording && interrupted ? (
+                // PAUSED — the native recorder stopped underneath us (lock/
+                // background/call). Never show a live recording over a dead
+                // session: frozen captured time + explicit user resolution.
+                <View style={styles.recordingRow}>
+                  <View style={styles.pausedDot} />
+                  <Text style={styles.recordingText}>Paused — {formatSecs(seconds)} captured</Text>
+                  <Pressable onPress={resumeRecording} hitSlop={8} style={styles.resumeBtn} accessibilityLabel="Resume recording">
+                    <Text style={styles.resumeBtnText}>Resume</Text>
+                  </Pressable>
+                  <Pressable onPress={endRecording} hitSlop={8} style={styles.useCapturedBtn} accessibilityLabel="Use what was captured">
+                    <Text style={styles.useCapturedBtnText}>Use it</Text>
+                  </Pressable>
+                </View>
+              ) : recording ? (
                 <View style={styles.recordingRow}>
                   <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
-                  <Text style={styles.recordingText}>Recording…</Text>
+                  <Text style={styles.recordingText}>
+                    {gapNote ? `Resumed — ~${gapNote}s missed while paused` : 'Recording…'}
+                  </Text>
                   <Text style={styles.recordingTime}>{formatSecs(seconds)}</Text>
                 </View>
               ) : (
@@ -499,7 +600,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
               free; release (below the lock) to transcribe. Locked → the mic
               becomes a finish button. (No swipe-to-cancel in the journal.) */}
           <View style={styles.micDock}>
-            <Text style={styles.micLabel}>{locked ? 'Tap to finish' : 'Or speak'}</Text>
+            <Text style={styles.micLabel}>{locked || interrupted ? 'Tap to finish' : 'Or speak'}</Text>
             {/* Lock affordance — floats above the mic while holding (pre-lock),
                 brightening + lifting as the finger rises toward the lock. */}
             {recording && !locked ? (
@@ -508,8 +609,11 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
                 <Ionicons name="chevron-up" size={12} color={colors.creamFaint} style={{ marginTop: 1 }} />
               </ReAnimated.View>
             ) : null}
-            {locked ? (
-              // LOCKED — hands-free. This finish button stops + transcribes.
+            {locked || interrupted ? (
+              // LOCKED (hands-free) or PAUSED-BY-INTERRUPTION — the finish
+              // button stops + transcribes what's captured. While interrupted
+              // the mic gesture is disabled so a new hold can't double-start
+              // over a paused recorder; Resume lives in the bar above.
               <Pressable
                 onPress={endRecording}
                 hitSlop={12}
@@ -646,6 +750,32 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 12,
     marginLeft: 'auto',
+  },
+  // Interruption-paused state (recorder stopped underneath us).
+  pausedDot: {
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: colors.creamFaint,
+  },
+  resumeBtn: {
+    marginLeft: 'auto',
+    paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: colors.amber,
+  },
+  resumeBtnText: {
+    color: colors.background,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+  },
+  useCapturedBtn: {
+    paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1, borderColor: colors.creamFaint,
+  },
+  useCapturedBtnText: {
+    color: colors.cream,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
   },
   // Free-Flow-only encouragement above the dot/timer row.
   freeFlowRecordPrompt: {

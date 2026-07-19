@@ -104,6 +104,7 @@ import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
 import { colors, fonts, spacing } from '../constants/theme';
 import { ensureRecordingMode } from '../utils/ttsStream';
+import { useRecorderWatch } from '../utils/recorderWatch';
 
 export function ChatInput({
   disabled,
@@ -167,7 +168,6 @@ export function ChatInput({
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const startTimeRef = useRef<number>(0);
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ---- Start/stop race guards (the Android "zombie recording" fix) ----
   // recordingRef mirrors the `recording` state synchronously so the stop
@@ -180,6 +180,68 @@ export function ChatInput({
   const recordingRef = useRef(false);
   const holdActiveRef = useRef(false);
   const startPromiseRef = useRef<Promise<boolean> | null>(null);
+
+  // ---- Native-truth reconciliation (iOS truncation fix, July 2026) ----
+  // Same machinery as JournalEntryModal: `interrupted` = the native recorder
+  // stopped/paused and it wasn't us (screen lock, backgrounding, call/Siri
+  // with failed auto-resume, encode error). The pill flips to a visible
+  // PAUSED state — Resume (appends to the same file), send (uses what's
+  // captured), or trash. capturedMsRef holds the recorder's own
+  // durationMillis; the timer and the voice note's durationSec come from
+  // THIS, never wall clock, so display freezes when capture freezes.
+  const [interrupted, setInterrupted] = useState(false);
+  const interruptedRef = useRef(false);
+  const stoppingRef = useRef(false);
+  const capturedMsRef = useRef(0);
+  const [gapNote, setGapNote] = useState<number | null>(null);
+  const gapNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function markInterrupted(reason: string) {
+    if (interruptedRef.current) return;
+    console.warn(`[voice-note] native recorder stopped without our stop (${reason}) — surfacing paused state`);
+    interruptedRef.current = true;
+    setInterrupted(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+  }
+
+  useRecorderWatch(recorder, {
+    active: recording,
+    stoppingRef,
+    startTimeRef,
+    interruptedRef,
+    onCapturedMs: (ms) => {
+      capturedMsRef.current = ms;
+      setSeconds(Math.floor(ms / 1000));
+    },
+    onInterrupted: () => markInterrupted('poll saw isRecording=false'),
+    onEncodeError: (msg) => markInterrupted(`encode error: ${msg || '(none)'}`),
+    onAutoResumed: (gapSec) => {
+      interruptedRef.current = false;
+      setInterrupted(false);
+      setGapNote(gapSec);
+      if (gapNoteTimer.current) clearTimeout(gapNoteTimer.current);
+      gapNoteTimer.current = setTimeout(() => setGapNote(null), 6000);
+    },
+  });
+
+  // User-initiated resume from the paused pill — continues appending to the
+  // same file (expo-audio's pause keeps it open).
+  function resumeRecording() {
+    try {
+      recorder.record();
+      const st = recorder.getStatus();
+      if (st.isRecording) {
+        interruptedRef.current = false;
+        setInterrupted(false);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      } else {
+        Alert.alert("Can't resume", "The microphone isn't available right now. You can send what's recorded so far, or discard it.");
+      }
+    } catch (err) {
+      console.warn('[voice-note] resume failed:', (err as Error).message);
+      Alert.alert("Can't resume", "The microphone isn't available right now. You can send what's recorded so far, or discard it.");
+    }
+  }
 
   // Swipe-to-lock state. `recording` stays the single source of truth for
   // "the recorder is capturing" — it covers BOTH the finger-held phase and the
@@ -224,7 +286,7 @@ export function ChatInput({
   useEffect(() => () => {
     if (tapHintHoldTimer.current) clearTimeout(tapHintHoldTimer.current);
     if (tapHintFadeTimer.current) clearTimeout(tapHintFadeTimer.current);
-    if (tickRef.current) clearInterval(tickRef.current);
+    if (gapNoteTimer.current) clearTimeout(gapNoteTimer.current);
     // Do NOT call recorder.stop() here. useAudioRecorder wraps the recorder in
     // expo's useReleasingSharedObject, which already calls recorder.release()
     // in its OWN unmount cleanup — and that effect is registered before this
@@ -236,10 +298,11 @@ export function ChatInput({
     // down and the mic freed without any explicit stop here.
   }, []);
 
-  // Red pulse while recording.
+  // Red pulse while recording — static while interrupted (nothing is being
+  // captured; a pulsing dot would be the exact lie the recorder watch fixes).
   const pulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    if (!recording) { pulse.setValue(1); return; }
+    if (!recording || interrupted) { pulse.setValue(1); return; }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1.2, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
@@ -248,7 +311,7 @@ export function ChatInput({
     );
     loop.start();
     return () => loop.stop();
-  }, [recording, pulse]);
+  }, [recording, interrupted, pulse]);
 
   const canSend = text.trim().length > 0 && !disabled && !recording;
 
@@ -343,12 +406,15 @@ export function ChatInput({
         recordingRef.current = true;
         setRecording(true);
         setSeconds(0);
+        // Fresh take — reset reconciliation state. The timer is driven by
+        // the recorder watch (native durationMillis), not wall clock.
+        capturedMsRef.current = 0;
+        interruptedRef.current = false;
+        stoppingRef.current = false;
+        setInterrupted(false);
+        setGapNote(null);
         startTimeRef.current = Date.now();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-        tickRef.current = setInterval(() => {
-          const s = Math.floor((Date.now() - startTimeRef.current) / 1000);
-          setSeconds(s);
-        }, 250);
         return true;
       } catch (err) {
         console.warn('[mic] startRecording failed:', (err as Error).message);
@@ -392,11 +458,19 @@ export function ChatInput({
     // start the race guard cancelled), there's nothing to send — just make
     // sure no locked UI is left stranded.
     if (!recordingRef.current) { setLocked(false); return; }
+    // Suppress the recorder watch while OUR stop runs, and measure from the
+    // recorder's own captured duration — never wall clock, which keeps
+    // climbing across an interruption while the file does not.
+    stoppingRef.current = true;
     const stopTs = Date.now();
-    const heldMs = stopTs - startTimeRef.current;
+    const heldMs = capturedMsRef.current > 0
+      ? capturedMsRef.current
+      : stopTs - startTimeRef.current; // fallback: watch never ticked (sub-500ms take)
     const heldSec = Math.max(0.1, heldMs / 1000);
-    console.log(`[voice-note] finalizeAndSend — stopTimestamp=${stopTs} heldMs=${heldMs} heldSec=${heldSec.toFixed(3)} threshold=${MIN_RECORDING_MS}ms`);
-    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    console.log(`[voice-note] finalizeAndSend — stopTimestamp=${stopTs} capturedMs=${heldMs} heldSec=${heldSec.toFixed(3)} threshold=${MIN_RECORDING_MS}ms`);
+    interruptedRef.current = false;
+    setInterrupted(false);
+    setGapNote(null);
     // Skip the grace + flush for micro-taps that would be discarded anyway.
     // Otherwise we'd burn 400ms waiting on audio we're not going to send.
     const willDiscard = heldMs < MIN_RECORDING_MS;
@@ -461,7 +535,10 @@ export function ChatInput({
     if (startPromiseRef.current) { try { await startPromiseRef.current; } catch {} }
     if (!recordingRef.current) { setLocked(false); return; }
     console.log('[voice-note] cancelRecording — user discarded the take');
-    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    stoppingRef.current = true;
+    interruptedRef.current = false;
+    setInterrupted(false);
+    setGapNote(null);
     recordingRef.current = false;
     setRecording(false);
     setLocked(false);
@@ -639,8 +716,8 @@ export function ChatInput({
             // through to the input below (the user can't accidentally
             // type while recording).
             <View style={styles.recordingOverlay} pointerEvents="auto">
-              {locked ? (
-                // Locked: trash discards the take (mirrors swipe-left-cancel).
+              {locked || interrupted ? (
+                // Locked or interruption-paused: trash discards the take.
                 <Pressable
                   onPress={cancelRecording}
                   hitSlop={10}
@@ -650,9 +727,25 @@ export function ChatInput({
                   <Ionicons name="trash-outline" size={18} color="#d4726a" />
                 </Pressable>
               ) : null}
-              <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
-              <Text style={styles.recordingLabel}>Recording…</Text>
-              {locked ? (
+              {interrupted ? (
+                <View style={styles.pausedDot} />
+              ) : (
+                <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulse }] }]} />
+              )}
+              <Text style={styles.recordingLabel}>
+                {interrupted ? 'Paused' : gapNote ? `Resumed — ~${gapNote}s gap` : 'Recording…'}
+              </Text>
+              {interrupted ? (
+                // PAUSED — the native recorder stopped underneath us. Resume
+                // appends to the same file; the arrow button sends what's
+                // captured; trash discards.
+                <>
+                  <View style={{ flex: 1 }} />
+                  <Pressable onPress={resumeRecording} hitSlop={8} style={styles.resumeBtn} accessibilityLabel="Resume recording">
+                    <Text style={styles.resumeBtnText}>Resume</Text>
+                  </Pressable>
+                </>
+              ) : locked ? (
                 // Spacer so the timer right-aligns when no cancel hint is shown.
                 <View style={{ flex: 1 }} />
               ) : (
@@ -677,9 +770,12 @@ export function ChatInput({
           <Pressable onPress={onStop} style={[styles.btn, styles.stopBtn]} accessibilityLabel="Stop response">
             <Ionicons name="stop" size={18} color={colors.background} />
           </Pressable>
-        ) : locked ? (
-          // LOCKED — hands-free recording; the mic hold is over. This button
-          // stops + sends. Cancel lives in the pill's trash affordance.
+        ) : locked || interrupted ? (
+          // LOCKED (hands-free) or PAUSED-BY-INTERRUPTION — this button
+          // stops + sends what's captured. Cancel lives in the pill's trash;
+          // while interrupted, Resume lives in the pill and the mic gesture
+          // is swapped out so a new hold can't double-start over a paused
+          // recorder.
           <Pressable onPress={finalizeAndSend} style={[styles.btn, styles.sendBtn]} accessibilityLabel="Stop and send voice note">
             <Ionicons name="arrow-up" size={20} color={colors.background} />
           </Pressable>
@@ -842,6 +938,22 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
   },
 
+  // Interruption-paused state (recorder stopped underneath us).
+  pausedDot: {
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: colors.creamFaint,
+  },
+  resumeBtn: {
+    paddingHorizontal: 12, paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: colors.amber,
+    marginRight: 8,
+  },
+  resumeBtnText: {
+    color: colors.background,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+  },
   recordingDot: {
     width: 10, height: 10, borderRadius: 5,
     backgroundColor: '#d4726a',
