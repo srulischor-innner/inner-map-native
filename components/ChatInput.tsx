@@ -149,6 +149,13 @@ export function ChatInput({
   }, [prefillText, onPrefillConsumed]);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  // Multi-line auto-expand (beta fix, July 2026): RN's INTRINSIC multiline
+  // growth is what this input relied on, and it is unreliable on Android
+  // under Fabric — the input stayed single-line as text wrapped. Explicit
+  // height driven by onContentSizeChange, clamped to [1..5] lines
+  // (lineHeight 22 + paddingVertical 14×2 → 52..138). Cross-platform; no
+  // reliance on platform intrinsic sizing.
+  const [inputHeight, setInputHeight] = useState(52);
   // Direct ref to the TextInput. The previous version called focus()
   // on press to keep the keyboard up, but that ALSO opened the
   // keyboard from a closed state — pushing the UI up whenever the
@@ -334,6 +341,9 @@ export function ChatInput({
     try { (inputRef.current as any)?.setNativeProps?.({ text: '' }); } catch {}
     try { inputRef.current?.clear(); } catch {}
     setText('');
+    // The setNativeProps clear path doesn't reliably fire
+    // onContentSizeChange — collapse the grown input explicitly.
+    setInputHeight(52);
     setTimeout(() => {
       try { (inputRef.current as any)?.setNativeProps?.({ text: '' }); } catch {}
       setText('');
@@ -706,7 +716,13 @@ export function ChatInput({
             // the now-opaque overlay below.
             placeholder={recording ? '' : 'Share what feels true…'}
             placeholderTextColor={colors.creamFaint}
-            style={styles.input}
+            style={[styles.input, { height: inputHeight }]}
+            onContentSizeChange={(e) => {
+              // contentSize is the text block only (padding excluded on
+              // both platforms under Fabric) — add vertical padding back.
+              const h = Math.ceil(e.nativeEvent.contentSize.height) + 28;
+              setInputHeight(Math.min(138, Math.max(52, h)));
+            }}
             selectionColor={colors.amber}
             onSubmitEditing={handleSend}
           />

@@ -102,6 +102,14 @@ export default function ChatScreen() {
   // Persistent session id for this app launch (a fresh one per "session" like the web app).
   const sessionIdRef = useRef<string>(uuidv4());
   const scrollRef = useRef<ScrollView | null>(null);
+  // Auto-scroll engagement gate (beta fix, July 2026): until the user has
+  // actually participated in the conversation (sent text/voice, tapped a
+  // starter, or resumed a session that already contains their turns), the
+  // view must REST AT THE TOP — the opening greeting reads top-down. The
+  // ScrollView's onContentSizeChange={scrollToBottom} otherwise fires on
+  // the greeting bubble's first render and, when the greeting is taller
+  // than the viewport, lands the user at its bottom.
+  const hasEngagedRef = useRef(false);
 
   // ===== PER-MODE CONVERSATION THREADS =====
   // Process and Explore each maintain an independent thread within
@@ -619,6 +627,9 @@ export default function ChatScreen() {
       const t = threadFor(mode);
       t.setMessages(bubbles);
       t.historyRef.current = wire;
+      // A resumed session that already contains the user's own turns is an
+      // engaged conversation — landing at the bottom (most recent) is right.
+      if (bubbles.some((b) => b.role === 'user')) hasEngagedRef.current = true;
 
       sessionIdRef.current = resume.sessionId;
       resumeLockedModeRef.current = mode;   // lock + suppress boot greeting
@@ -660,7 +671,6 @@ export default function ChatScreen() {
     const id = uuidv4();
     setExploreMessages((prev) => [...prev, { id, role: 'assistant', text: opener }]);
     exploreHistoryRef.current.push({ role: 'assistant', content: opener });
-    scrollToBottom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatMode, firstSessionPending]);
 
@@ -687,9 +697,15 @@ export default function ChatScreen() {
   // the live keyboard height on BOTH platforms: Android's adjustResize is a
   // no-op under edge-to-edge, so we lift the dock manually exactly as on iOS
   // (applied as paddingBottom on the bottom dock below). onShow scrolls the
-  // thread to the latest message.
+  // thread to the latest message — engagement-gated: tapping the input to
+  // type BEFORE participating must not bottom-scroll past the greeting
+  // (that would re-create the greeting-scrolled-away bug at the exact
+  // moment of engagement).
   const kbHeight = useKeyboardInset({
-    onShow: () => requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true })),
+    onShow: () => {
+      if (!hasEngagedRef.current) return;
+      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    },
   });
 
   // ===== MESSAGE HELPERS =====
@@ -729,6 +745,7 @@ export default function ChatScreen() {
   }
 
   function addUserMessage(text: string) {
+    hasEngagedRef.current = true;
     const t = threadFor(chatModeRef.current);
     t.setMessages((prev) => [...prev, { id: uuidv4(), role: 'user', text }]);
     scrollToBottom();
@@ -752,6 +769,7 @@ export default function ChatScreen() {
       exploreHistoryRef.current = [];
       setProcessMessages([]);
       setExploreMessages([]);
+      hasEngagedRef.current = false;     // fresh conversation → greeting rests at top
       exploreGreetedRef.current = false; // re-arm the Explore opener
       // Seed the Process opener so the fresh conversation isn't blank
       // (Explore self-seeds via its opener effect when switched into).
@@ -784,6 +802,7 @@ export default function ChatScreen() {
     const turnMode = chatModeRef.current;
     const turnThread = threadFor(turnMode);
     const bubbleId = uuidv4();
+    hasEngagedRef.current = true;
     turnThread.setMessages((prev) => [
       ...prev,
       {
@@ -866,6 +885,7 @@ export default function ChatScreen() {
   }, []);
 
   function scrollToBottom() {
+    if (!hasEngagedRef.current) return;        // pre-engagement: greeting rests at top
     if (userTouchingRef.current) return;       // pause while finger is down
     if (userScrolledAwayRef.current) return;   // pause while reading higher up
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
@@ -1339,6 +1359,7 @@ export default function ChatScreen() {
       const turnMode = chatModeRef.current;
       const t = threadFor(turnMode);
       const id = uuidv4();
+      hasEngagedRef.current = true;
       t.setMessages((prev) => [...prev, { id, role: 'user', text }]);
       // User-initiated turn — even if they were scrolled up reading
       // earlier turns, sending implies they want to follow this new
@@ -1741,6 +1762,7 @@ export default function ChatScreen() {
               exploreHistoryRef.current = [];
               setProcessMessages([]);
               setExploreMessages([]);
+              hasEngagedRef.current = false;     // fresh conversation → greeting rests at top
               exploreGreetedRef.current = false; // re-arm Explore opener for next session
               resumeLockedModeRef.current = null; // ending clears any resume mode-lock
               sessionIdRef.current = uuidv4();

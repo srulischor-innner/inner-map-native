@@ -340,16 +340,25 @@ function WelcomeSlides({ onDone }: { onDone: () => void }) {
           active={index}
           onTap={(i) => { listRef.current?.scrollToIndex({ index: i, animated: true }); }}
         />
+        {/* Advance affordance (beta fix, July 2026): testers didn't know the
+            deck swipes — dots read as status, not instruction. One persistent
+            button in a constant position: NEXT advances a slide; on the last
+            slide it becomes BEGIN. No skip — everyone sees every slide.
+            Swipe and dot-taps still work. */}
+        <Pressable
+          onPress={atLast
+            ? onDone
+            : () => listRef.current?.scrollToIndex({ index: index + 1, animated: true })}
+          style={[styles.beginBtn, { marginTop: spacing.md }]}
+          accessibilityLabel={atLast ? 'Begin' : 'Next slide'}
+        >
+          <Text style={styles.beginText}>{atLast ? 'B E G I N' : 'N E X T   →'}</Text>
+        </Pressable>
         {atLast ? (
-          <>
-            <Pressable onPress={onDone} style={[styles.beginBtn, { marginTop: spacing.md }]}>
-              <Text style={styles.beginText}>B E G I N</Text>
-            </Pressable>
-            <Text style={styles.disclaimer}>
-              Inner Map is a self-reflection tool, not a substitute for professional
-              mental health support.
-            </Text>
-          </>
+          <Text style={styles.disclaimer}>
+            Inner Map is a self-reflection tool, not a substitute for professional
+            mental health support.
+          </Text>
         ) : null}
       </View>
     </View>
