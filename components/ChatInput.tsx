@@ -907,9 +907,13 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(212,114,106,0.7)',
   },
   input: {
-    // Fills the inputWrap so the TextInput's tappable area stays full-
-    // width whether or not the recording overlay is on top.
-    flex: 1,
+    // NO flex here — and that's load-bearing. `flex: 1` expands to
+    // flexBasis: 0%, and in inputWrap's column layout Yoga lets flexBasis
+    // override the height style on the main (vertical) axis — which
+    // silently defeated the auto-expand height and pinned the input at
+    // minHeight forever (builds ≤35/37). Width needs no flex either:
+    // inputWrap is a column, so its default cross-axis stretch already
+    // makes the input full-width under the recording overlay.
     color: colors.cream,
     fontFamily: fonts.sans,
     fontSize: 16,
