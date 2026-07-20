@@ -256,7 +256,19 @@ const VARIANTS = {
 };
 
 module.exports = () => {
-  const profile = process.env.EAS_BUILD_PROFILE || 'production';
+  // Variant selection MUST use APP_VARIANT (set per-profile in eas.json
+  // "env"), not EAS_BUILD_PROFILE. EAS_BUILD_PROFILE exists only on the
+  // EAS builder — the local eas-cli evaluating this config at submit time
+  // doesn't set it, so it resolved 'production' locally while the builder
+  // resolved 'development': submitted metadata/credentials said target
+  // "InnerMap" (com.srulischor.innermap), the builder's prebuild generated
+  // target "InnerMapDev" (.dev), and the Configure Xcode project phase
+  // failed with "Could not find target 'InnerMap' in project.pbxproj"
+  // (dev builds 9ffc38ce + bc8fed8b, July 20 2026 — the variant map's
+  // first-ever non-production runs). eas.json profile env is applied in
+  // BOTH evaluations, so both sides agree. EAS_BUILD_PROFILE kept as a
+  // builder-side fallback only.
+  const profile = process.env.APP_VARIANT || process.env.EAS_BUILD_PROFILE || 'production';
   const variant = VARIANTS[profile] || VARIANTS.production;
 
   // Spread the inlined base, then overlay only the fields that change

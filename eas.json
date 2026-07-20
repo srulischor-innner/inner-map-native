@@ -9,12 +9,18 @@
       "distribution": "internal",
       "ios": {
         "simulator": false
+      },
+      "env": {
+        "APP_VARIANT": "development"
       }
     },
     "preview": {
       "distribution": "internal",
       "ios": {
         "simulator": false
+      },
+      "env": {
+        "APP_VARIANT": "preview"
       }
     },
     "production": {
