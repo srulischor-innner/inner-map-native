@@ -87,6 +87,7 @@ import {
   StyleSheet,
   Alert,
   Easing,
+  Platform,
 } from 'react-native';
 import ReAnimated, {
   useSharedValue,
@@ -149,12 +150,16 @@ export function ChatInput({
   }, [prefillText, onPrefillConsumed]);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  // Multi-line auto-expand (beta fix, July 2026): RN's INTRINSIC multiline
-  // growth is what this input relied on, and it is unreliable on Android
-  // under Fabric — the input stayed single-line as text wrapped. Explicit
-  // height driven by onContentSizeChange, clamped to [1..5] lines
-  // (lineHeight 22 + paddingVertical 14×2 → 52..138). Cross-platform; no
-  // reliance on platform intrinsic sizing.
+  // Multi-line auto-expand (beta fix, July 2026), forked per platform:
+  // ANDROID — intrinsic multiline growth is unreliable under Fabric (the
+  // input stayed single-line as text wrapped), so height is explicit,
+  // driven by onContentSizeChange, clamped to [1..5] lines (lineHeight 22
+  // + paddingVertical 14×2 → 52..138). iOS — the OPPOSITE failure:
+  // intrinsic growth works natively, but onContentSizeChange reports a
+  // frozen, padding-INCLUSIVE contentSize (measured live: 50 forever,
+  // regardless of wrapped text), so the explicit-height mechanism pinned
+  // the box at 78px. iOS therefore uses intrinsic sizing capped by
+  // maxHeight (styles.inputIosGrow); inputHeight is Android-only state.
   const [inputHeight, setInputHeight] = useState(52);
   // Direct ref to the TextInput. The previous version called focus()
   // on press to keep the keyboard up, but that ALSO opened the
@@ -343,6 +348,8 @@ export function ChatInput({
     setText('');
     // The setNativeProps clear path doesn't reliably fire
     // onContentSizeChange — collapse the grown input explicitly.
+    // (Android-only in effect: iOS height is intrinsic and collapses
+    // with the cleared text.)
     setInputHeight(52);
     setTimeout(() => {
       try { (inputRef.current as any)?.setNativeProps?.({ text: '' }); } catch {}
@@ -716,13 +723,17 @@ export function ChatInput({
             // the now-opaque overlay below.
             placeholder={recording ? '' : 'Share what feels true…'}
             placeholderTextColor={colors.creamFaint}
-            style={[styles.input, { height: inputHeight }]}
-            onContentSizeChange={(e) => {
-              // contentSize is the text block only (padding excluded on
-              // both platforms under Fabric) — add vertical padding back.
+            style={[styles.input, Platform.OS === 'ios' ? styles.inputIosGrow : { height: inputHeight }]}
+            onContentSizeChange={Platform.OS === 'android' ? (e) => {
+              // Assumes Android Fabric reports the text block's height with
+              // padding excluded — add vertical padding back. NOTE: still
+              // unverified on a live Android device (the mechanism shipped
+              // inert in builds ≤35); if each wrap adds ~2 lines of height,
+              // this +28 is double-counting padding there too — iOS
+              // measured padding-INCLUSIVE, contra this assumption.
               const h = Math.ceil(e.nativeEvent.contentSize.height) + 28;
               setInputHeight(Math.min(138, Math.max(52, h)));
-            }}
+            } : undefined}
             selectionColor={colors.amber}
             onSubmitEditing={handleSend}
           />
@@ -925,6 +936,15 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: 'rgba(230,180,122,0.2)',
+  },
+  inputIosGrow: {
+    // iOS auto-expand: NO explicit height — native intrinsic multiline
+    // sizing grows and shrinks the input with its content (minHeight 52
+    // from styles.input floors it at one line). maxHeight caps growth at
+    // 5 lines; past that the UITextView scrolls internally
+    // (scrollEnabled defaults true). See the inputHeight state comment
+    // for why iOS can't use the onContentSizeChange mechanism.
+    maxHeight: 138,
   },
 
   // The mic Pressable itself — 48×48 minimum tap area, larger than the
