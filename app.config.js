@@ -218,6 +218,16 @@ const base = {
       // it is NOT a secret). Read at runtime by app/_layout.tsx's Sentry.init.
       // The source-map upload AUTH TOKEN is the secret and lives in EAS only.
       sentryDsn: 'https://416df2827990254e90410d555fd22faf@o4511603923353600.ingest.us.sentry.io/4511603945570304',
+      // RevenueCat PUBLIC SDK keys — safe to ship in a committed config, by
+      // design: they identify the app to RC and can only do what the SDK can
+      // do on behalf of a user. The SECRET API key and RC_WEBHOOK_AUTH are
+      // the real secrets and live server-side / in Railway env only, never
+      // here. Same rule as sentryDsn above.
+      //
+      // Project "Innermap" (61addd09) · bundle com.srulischor.innermap
+      //   App Store app id: app59d360e6a1
+      //   Play Store app id: app1d14531c80  (key not yet fetched — iOS first)
+      revenueCatApiKeyIos: 'appl_ewysvfFZFWSmDXeLyHqTgXxXscf',
       eas: {
         projectId: '14bce05f-41e2-42f3-aa6c-3c153023894f',
       },
