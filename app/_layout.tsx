@@ -285,6 +285,18 @@ function RootLayout() {
 
   // ONE-TIME cold-start auth gate. Empty deps array — runs once per
   // process. No AppState listener that fires on every focus change.
+  // RevenueCat module-registration probe — dev-client only, logs PASS/FAIL to
+  // Metro. Verdict 2026-07-30: PASS (see utils/rcSmokeTest.ts header).
+  // ⚠️ NOTE: this runs Purchases.configure() + VERBOSE logging during cold
+  // start, i.e. in the same window as the boot I/O drain the ANR plugin
+  // mitigates. It is DEV-ONLY, so it cannot affect production boot — but it
+  // does mean dev-client cold-start timings are not representative of release.
+  useEffect(() => {
+    if (__DEV__) {
+      require('../utils/rcSmokeTest').runRcSmokeTest();
+    }
+  }, []);
+
   // While this is in flight we keep `isCheckingBiometrics` true so the
   // app renders only a dark+triangle splash; nothing else is visible
   // behind / around the Face ID prompt.

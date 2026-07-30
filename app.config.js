@@ -205,6 +205,12 @@ const base = {
       // path needs NO useFrameworks:static / Podfile patch (unlike
       // Crashlytics), so it doesn't perturb the Skia/Reanimated/New-Arch pods.
       ['@sentry/react-native/expo', { organization: 'innermap', project: 'react-native' }],
+      // ANR fix (July 2026) — pre-warm the Expo ActivityResult SharedPreferences
+      // off the main thread so the first onHostResume's DataPersistor.getLong
+      // doesn't block the UI thread on the load barrier and ANR-crash under slow
+      // cold-start disk I/O. Local plugin; see the file header for the full
+      // mechanism. Must run after any plugin that rewrites MainApplication.
+      './plugins/withActivityResultPrewarm',
     ],
     extra: {
       apiBaseUrl: 'https://inner-map-production.up.railway.app',
