@@ -28,7 +28,10 @@ import { api, API_BASE_URL } from '../services/api';
 import { markSignInChoiceMade } from '../services/onboarding';
 
 import { colors } from '../constants/theme';
-import { getOnboardingState, OnboardingState } from '../services/onboarding';
+import {
+  getOnboardingState, OnboardingState,
+  isTermsSyncPending, clearTermsSyncPending,
+} from '../services/onboarding';
 import { registerForPushNotifications } from '../services/push';
 import { NOTIFICATIONS_ENABLED } from '../constants/features';
 import {
@@ -417,16 +420,28 @@ function RootLayout() {
     // app reaches the main tabs regardless.
     (async () => {
       try {
-        // Phase 2b — bootstrap-on-launch. Fire-and-forget so it never
-        // blocks routing. An existing anonymous user with a stored UUID but
-        // no tokens trades the UUID for a token pair (sub = same UUID, all
-        // data preserved). No-op once tokens exist, or on a brand-new
-        // install with no UUID yet, or on any failure (stays on X-User-Id
-        // dual-accept). Runs regardless of onboarding state — fully
-        // onboarded testers need to migrate to tokens too.
-        api.bootstrapTokens()
-          .then((r) => console.log('[boot] bootstrapTokens →', r))
-          .catch((e) => console.warn('[boot] bootstrapTokens threw:', (e as Error)?.message));
+        // Phase 2b — bootstrap-on-launch. An existing anonymous user with a
+        // stored UUID but no tokens trades the UUID for a token pair (sub =
+        // same UUID, all data preserved). No-op once tokens exist, on a
+        // brand-new install with no UUID yet, or on any failure (stays on
+        // X-User-Id dual-accept).
+        //
+        // DEFERRED (2026-07-30) — it used to fire HERE, concurrently with the
+        // onboarding read, and that was the main cause of the 5s multiGet
+        // timeouts. bootstrapTokens fans out to up to 4 SecureStore reads
+        // (EncryptedSharedPreferences + AndroidKeyStore master-key retrieval on
+        // first open) AND up to 4 AsyncStorage reads, each with an 8000ms
+        // timeout — i.e. LONGER than the multiGet's own 5000ms, so a stalled
+        // leg could not clear itself before the read it was blocking gave up.
+        // On Android AsyncStorage runs one serial executor, so those reads sat
+        // directly in front of the four onboarding keys.
+        //
+        // This is the "deferred bootstrap" half of the pairing that
+        // plugins/withActivityResultPrewarm.js prescribes in its header
+        // ("pair with the boot-I/O drain ... so the pre-warm thread gets disk
+        // time"). It was never implemented until now. Moved below the boot
+        // gate so routing — and the SharedPreferences pre-warm — get the disk
+        // first. Still fire-and-forget; nothing awaits it.
 
         console.log('[boot] step 1/3 — reading onboarding flags');
         // If AsyncStorage hangs, fall through at 3s. Fallback "everything
@@ -500,6 +515,50 @@ function RootLayout() {
           }
         }
         console.log('[boot] boot sequence complete');
+
+        // ---- DEFERRED WORK (2026-07-30) --------------------------------
+        // Everything below runs AFTER routing is decided, so it competes with
+        // nothing on the critical path. Both are fire-and-forget.
+
+        // 1. Token bootstrap (moved from the top of this effect — see the note
+        //    there for why it was the main source of the multiGet stall).
+        api.bootstrapTokens()
+          .then((r) => console.log('[boot] bootstrapTokens →', r))
+          .catch((e) => console.warn('[boot] bootstrapTokens threw:', (e as Error)?.message));
+
+        // 2. TERMS RECONCILIATION. The local flag is a UI gate; the SERVER row
+        //    is the audit trail, and until now nothing ever compared them —
+        //    GET /api/terms had zero callers. Two divergences to heal, both
+        //    only ever in the direction of RECORDING an acceptance that
+        //    already happened; this never grants or revokes access, and never
+        //    marks anyone as having accepted who did not:
+        //      a. sync pending — the accept POST failed (offline). Retry it.
+        //      b. local says accepted, server does not know — an older client
+        //         wrote the flag before the POST existed or before it landed.
+        //    A null from getTerms means "unknown" (transport failure) and is
+        //    deliberately NOT treated as "not accepted".
+        (async () => {
+          try {
+            const [pending, local] = await Promise.all([
+              isTermsSyncPending(),
+              getOnboardingState().then((s) => s.termsAccepted).catch(() => false),
+            ]);
+            if (!pending && !local) return;              // nothing to reconcile
+            const server = await api.getTerms();
+            if (server === null) return;                 // unknown — try again next launch
+            if (server.termsAccepted) {
+              if (pending) await clearTermsSyncPending();
+              return;
+            }
+            if (local || pending) {
+              const ok = await api.acceptTerms();
+              console.log(`[terms] reconcile → server had no record, re-POSTed: ${ok ? 'ok' : 'failed'}`);
+              if (ok) await clearTermsSyncPending();
+            }
+          } catch (e) {
+            console.warn('[terms] reconcile threw:', (e as Error)?.message);
+          }
+        })();
       } catch (e) {
         console.error('[boot] boot sequence threw — proceeding to main app anyway:', (e as Error)?.message, (e as Error)?.stack);
       }

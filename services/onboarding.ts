@@ -111,17 +111,72 @@ async function setBool(key: string, v: boolean): Promise<void> {
 }
 
 export async function getOnboardingState(): Promise<OnboardingState> {
-  const [a, b, c, d] = await Promise.all([
-    getBool(KEYS.hasSeenIntro),
-    getBool(KEYS.termsAccepted),
-    getBool(KEYS.intakeComplete),
-    getBool(KEYS.signInChoiceMade),
-  ]);
-  return { hasSeenIntro: a, termsAccepted: b, intakeComplete: c, signInChoiceMade: d };
+  // Boot I/O drain (July 2026 ANR mitigation): ONE multiGet instead of four
+  // separate getItem round-trips through AsyncStorage's serial executor. Fewer
+  // concurrent reads at cold start = less disk contention = the SharedPreferences
+  // pre-warm thread (see plugins/withActivityResultPrewarm.js) finishes sooner.
+  // Semantics preserved EXACTLY from the old per-key getBool path:
+  //   - timeout @5000ms → default ALL true (break the onboarding/sign-in loop;
+  //     each screen still writes its own flag, so next launch self-corrects),
+  //   - structural throw → default all false (redirect guard prevents a loop;
+  //     user lands on /onboarding once and proceeds manually).
+  const keys = [KEYS.hasSeenIntro, KEYS.termsAccepted, KEYS.intakeComplete, KEYS.signInChoiceMade];
+  try {
+    let timedOut = false;
+    const pairs = await Promise.race<readonly [string, string | null][] | null>([
+      AsyncStorage.multiGet(keys),
+      new Promise<null>((resolve) =>
+        setTimeout(() => {
+          timedOut = true;
+          console.warn(
+            '[onboarding] AsyncStorage.multiGet timed out @5000ms — defaulting to TRUE to break onboarding loop',
+          );
+          resolve(null);
+        }, 5000),
+      ),
+    ]);
+    if (timedOut || !pairs) {
+      // ⚠️ termsAccepted stays FALSE here, deliberately, while the other three
+      // default true (founder ruling 2026-07-30). The other three exist to
+      // break onboarding/sign-in loops, and defaulting them true is the right
+      // failure direction. Terms is a LEGAL gate: it must fail toward showing
+      // the screen again. The cost of a false negative is one extra terms
+      // screen on a slow boot; the cost of a false positive is a user inside
+      // the app who never accepted. Nothing writes the flag on this path, so
+      // no one is falsely RECORDED as accepting either.
+      return { hasSeenIntro: true, termsAccepted: false, intakeComplete: true, signInChoiceMade: true };
+    }
+    const map = new Map<string, string | null>(pairs);
+    const on = (k: string) => map.get(k) === '1';
+    return {
+      hasSeenIntro:     on(KEYS.hasSeenIntro),
+      termsAccepted:    on(KEYS.termsAccepted),
+      intakeComplete:   on(KEYS.intakeComplete),
+      signInChoiceMade: on(KEYS.signInChoiceMade),
+    };
+  } catch (e) {
+    console.warn('[onboarding] getOnboardingState multiGet threw:', (e as Error)?.message);
+    return { hasSeenIntro: false, termsAccepted: false, intakeComplete: false, signInChoiceMade: false };
+  }
 }
 
 export const markIntroSeen          = () => setBool(KEYS.hasSeenIntro, true);
 export const markTermsAccepted      = () => setBool(KEYS.termsAccepted, true);
+
+// ---- terms server-sync bookkeeping (2026-07-30) ----------------------------
+// The local flag is a UI gate; the SERVER row is the audit trail. When the
+// accept POST fails (offline is the obvious case) we still let the user
+// through — re-showing terms every launch until they reconnect would be
+// punitive — but we mark the sync PENDING so the boot reconciliation retries.
+// Without this, an offline acceptance diverged permanently: local true,
+// server never told, and nothing ever checked.
+const TERMS_SYNC_PENDING = 'onboarding.termsSyncPending';
+export const markTermsSyncPending  = () => setBool(TERMS_SYNC_PENDING, true);
+export const clearTermsSyncPending = () => setBool(TERMS_SYNC_PENDING, false);
+export async function isTermsSyncPending(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(TERMS_SYNC_PENDING)) === '1'; }
+  catch { return false; }
+}
 export const markIntakeComplete     = () => setBool(KEYS.intakeComplete, true);
 export const markPrivacyNoticeSeen  = () => setBool(KEYS.privacyNoticeSeen, true);
 // Build 11 — set when the user has either signed in OR explicitly

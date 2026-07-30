@@ -981,6 +981,25 @@ export const api = {
     } catch { return false; }
   },
 
+  /** GET /api/terms — the SERVER's record of acceptance. This is the audit
+   *  trail; the local AsyncStorage flag is only a UI gate. Used by the boot
+   *  reconciliation so a client that accepted while offline (or was let
+   *  through by the boot fallback) converges instead of diverging silently.
+   *  Returns null on any transport failure — callers must treat null as
+   *  "unknown", never as "not accepted". */
+  async getTerms(): Promise<{ termsAccepted: boolean; termsAcceptedAt: string | null } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/terms', { label: 'terms-get', headers });
+      if (!res.ok) return null;
+      const j = await res.json();
+      return {
+        termsAccepted: !!j?.termsAccepted,
+        termsAcceptedAt: typeof j?.termsAcceptedAt === 'string' ? j.termsAcceptedAt : null,
+      };
+    } catch { return null; }
+  },
+
   /** POST /api/session-summary — returns the structured 3-part summary
    *  used by the native end-of-session screen. The server also persists
    *  it onto the session row so the Journal tab can render the preview

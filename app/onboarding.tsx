@@ -24,7 +24,7 @@ import { colors, fonts, radii, spacing } from '../constants/theme';
 import { PARTNER_ENABLED } from '../constants/features';
 import {
   markIntroSeen, markTermsAccepted, markIntakeComplete,
-  markPrivacyNoticeSeen, hasSeenPrivacyNotice,
+  markPrivacyNoticeSeen, hasSeenPrivacyNotice, markTermsSyncPending,
 } from '../services/onboarding';
 import { api } from '../services/api';
 import { GuideSlide } from '../components/guide/GuideSlide';
@@ -160,8 +160,18 @@ export default function OnboardingScreen() {
         ) : (
           <TermsScreen
             onAccept={async () => {
+              // SERVER FIRST, then the local gate (2026-07-30). The server row
+              // is the audit trail; writing the local flag first meant an
+              // offline acceptance diverged permanently — local said yes, the
+              // server was never told, and nothing ever reconciled. The result
+              // is no longer discarded: a failed POST marks the sync pending so
+              // the boot reconciliation retries it.
+              const synced = await api.acceptTerms();
+              if (!synced) {
+                console.warn('[terms] accept POST failed — marking sync pending for boot retry');
+                await markTermsSyncPending();
+              }
               await markTermsAccepted();
-              try { await api.acceptTerms(); } catch {}
               await finishAsInvitee();
             }}
           />
@@ -205,7 +215,19 @@ export default function OnboardingScreen() {
           }}
         />
       ) : phase === 'terms' ? (
-        <TermsScreen onAccept={async () => { await markTermsAccepted(); await api.acceptTerms(); setPhase('intake'); }} />
+        <TermsScreen
+          onAccept={async () => {
+            // Same contract as the invitee path above: server first, result
+            // honoured, local gate last, pending marker on failure.
+            const synced = await api.acceptTerms();
+            if (!synced) {
+              console.warn('[terms] accept POST failed — marking sync pending for boot retry');
+              await markTermsSyncPending();
+            }
+            await markTermsAccepted();
+            setPhase('intake');
+          }}
+        />
       ) : phase === 'intake' ? (
         <IntakeFlow onDone={() => setPhase('experience')} />
       ) : phase === 'experience' ? (
