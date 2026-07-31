@@ -95,6 +95,12 @@ export function PartnerContributionInput({
   // ~one nav-bar short on Samsung One UI, so paddingBottom adds insets.bottom
   // below (matching main chat); iOS uses the raw height. (Partner is gated off
   // for v1 — device-test when PARTNER_ENABLED is flipped on.)
+  // With the keyboard CLOSED the lift is 0, so the wrapper has to carry the
+  // nav-bar / home-indicator clearance itself — otherwise the compose row sits
+  // behind the Android nav bar. When it's open that lift already spans the
+  // strip (plus the Android shortfall added above), so the inset is not counted
+  // a second time on that branch. The compose row's own breathing room is
+  // styles.expanded's paddingVertical, which is unaffected either way.
   const kbHeight = useKeyboardInset();
   const insets = useSafeAreaInsets();
 
@@ -253,7 +259,9 @@ export function PartnerContributionInput({
 
   if (!expanded) {
     return (
-      <View style={styles.collapsed}>
+      // Terminal in-flow child of a zero-inset root, so the collapsed pill owns
+      // its own nav-bar clearance — same rule as the expanded branch below.
+      <View style={[styles.collapsed, { paddingBottom: spacing.sm + insets.bottom }]}>
         <Pressable
           onPress={() => {
             Haptics.selectionAsync().catch(() => {});
@@ -272,7 +280,7 @@ export function PartnerContributionInput({
   }
 
   return (
-    <View style={[styles.expandedWrap, { paddingBottom: kbHeight + (kbHeight > 0 && Platform.OS === 'android' ? insets.bottom : 0) }]}>
+    <View style={[styles.expandedWrap, { paddingBottom: kbHeight > 0 ? kbHeight + (Platform.OS === 'android' ? insets.bottom : 0) : insets.bottom }]}>
       <View style={styles.expanded}>
         <View style={styles.inputRow}>
           <TextInput

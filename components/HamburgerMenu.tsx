@@ -14,7 +14,7 @@ import {
   Modal, View, Text, Pressable, ScrollView, StyleSheet,
   Linking, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
@@ -367,10 +367,17 @@ function ExperienceLevelRow() {
 function ExperienceLevelPicker({
   visible, current, onClose,
 }: { visible: boolean; current: ExperienceLevel; onClose: () => void }) {
+  // The sheet is anchored at bottom:0, so it sits UNDER the gesture bar /
+  // 3-button nav bar. The inset goes on the sheet container (not on the
+  // ScrollView's contentContainer) so it ADDS to the scroll body's own
+  // paddingBottom: 24 rather than replacing it — the 4th option ("in a hard
+  // place") keeps its full 24px of breathing room above the nav strip on
+  // every device. Same idiom as SpectrumDetailModal / PartFolderModal.
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.pickerBackdrop} onPress={onClose} />
-      <View style={styles.pickerSheet}>
+      <View style={[styles.pickerSheet, { paddingBottom: insets.bottom }]}>
         <View style={styles.pickerHandle} />
         <View style={styles.pickerHeader}>
           <Text style={styles.pickerTitle}>Where are you in your journey?</Text>
@@ -547,7 +554,8 @@ const styles = StyleSheet.create({
   },
 
   // Experience-level picker — bottom sheet, matches the spectrum / part-
-  // folder modal grammar.
+  // folder modal grammar. NOTE: paddingBottom is applied at runtime from
+  // insets.bottom (see ExperienceLevelPicker) — don't add a static one here.
   pickerBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
   pickerSheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,

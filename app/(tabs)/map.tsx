@@ -73,6 +73,11 @@ export default function MapScreen() {
     }, []),
   );
 
+  // The root SafeAreaView opts out of insets entirely (edges={[]}) so the
+  // background paints edge-to-edge. The terminal in-flow child — the
+  // ProgressStrip — has to clear the Android nav bar on its own.
+  const insets = useSafeAreaInsets();
+
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [mapData, setMapData] = useState<any | null>(null);
   const [activePart, setActivePart] = useState<NodeKey | null>(null);
@@ -734,6 +739,10 @@ export default function MapScreen() {
       <MapVoiceBar
         sessionId={sessionIdRef.current}
         onBarTop={setMicBarTopW}
+        // The mic row is absolute against this zero-inset root, and the
+        // ProgressStrip below it grows by insets.bottom — so the bar has to
+        // ride up by the same amount to keep its 9px clearance.
+        bottomInset={insets.bottom}
         onDetectedPart={(part) => {
           // Narrowing the string to NodeKey — guarded by the known part list so a
           // future server-side category doesn't crash the canvas.
@@ -753,6 +762,7 @@ export default function MapScreen() {
         blendedSelfLedScore={blendedSelfLedScore}
         spectrumEarned={spectrumEarned}
         clinicalPatterns={clinicalPatterns}
+        bottomInset={insets.bottom}
       />
 
       <IntegrationPanel
@@ -928,14 +938,21 @@ const styles = StyleSheet.create({
   // through to the canvas; only the explicit Pressable below catches
   // taps for the CTA.
   // Bottom-anchored CTA-only overlay (build-13 layout fix). The
-  // MapVoiceBar mic row anchors at bottom: 50, with the mic + label
-  // stack rising to roughly bottom: 140. paddingBottom: 200 leaves
-  // a comfortable 60px gap between the START BUILDING button and
-  // the top of the mic stack on standard 19.5:9 / 20:9 Android
-  // displays — verified clear on a 1080×2400 emulator and on iPhone
-  // 15 Pro. pointerEvents="box-none" on the parent View still lets
-  // taps fall through to the canvas everywhere except on the
-  // explicit Pressable.
+  // MapVoiceBar mic row anchors at bottom: 50 + insets.bottom, with the
+  // mic + label stack rising to roughly bottom: 140 + insets.bottom —
+  // both measured from the RAW screen bottom. paddingBottom: 200 leaves
+  // a comfortable gap between the START BUILDING button and the top of
+  // the mic stack on standard 19.5:9 / 20:9 Android displays — verified
+  // clear on a 1080×2400 emulator and on iPhone 15 Pro.
+  // NOTE — this value deliberately does NOT take a safe-area term. The
+  // overlay is absolutely positioned inside canvasWrap, an in-flow flex:1
+  // child that already shrinks by insets.bottom when the ProgressStrip
+  // grows. Its bottom edge and the mic stack therefore both rise by
+  // exactly insets.bottom, so the gap is already inset-invariant; adding
+  // the inset here again would over-correct and push the CTA up by an
+  // extra insets.bottom on nav-bar devices.
+  // pointerEvents="box-none" on the parent View still lets taps fall
+  // through to the canvas everywhere except on the explicit Pressable.
   mapEmptyOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

@@ -30,6 +30,7 @@ import { journal, JournalEntry, JournalKind } from '../../services/journal';
 import { JournalEntryModal } from '../../components/journal/JournalEntryModal';
 
 export default function JournalScreen() {
+  const insets = useSafeAreaInsets();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [composeKind, setComposeKind] = useState<JournalKind | null>(null);
   const [viewing, setViewing] = useState<JournalEntry | null>(null);
@@ -73,7 +74,7 @@ export default function JournalScreen() {
     <SafeAreaView style={styles.root} edges={[]}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: spacing.xxl + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
         {/* ===== HEADER ===== */}

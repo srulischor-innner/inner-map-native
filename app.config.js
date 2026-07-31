@@ -105,6 +105,32 @@ const base = {
       // a new artifact for Android Internal Testing to pick up the
       // softwareKeyboardLayoutMode change below.
       versionCode: 4,
+      // ANDROID WINDOW BACKGROUND — the white nav-bar band fix (July 2026).
+      //
+      // Under edgeToEdgeEnabled the OS draws NO real navigation-bar
+      // background: on API 35+ gesture nav is fully transparent (both
+      // Window#setNavigationBarColor and R.attr#navigationBarColor are
+      // deprecated AND disabled for gesture nav), and 3-button nav is only an
+      // 80%-alpha scrim that "matches the window background by default".
+      // So the bar's apparent color IS android:windowBackground.
+      //
+      // @expo/prebuild-config's withAndroidRootViewBackgroundColor reads
+      // `config.android?.backgroundColor || config.backgroundColor`, writes
+      // <color name="activityBackground"> and points AppTheme's
+      // android:windowBackground at it. We previously set NEITHER key, so
+      // android:windowBackground was never written and fell through to
+      // Theme.AppCompat.DayNight's default — which resolves LIGHT (white).
+      // That white was the band under the nav bar.
+      //
+      // Scoped under `android` deliberately, NOT top-level: the top-level key
+      // would also feed withIosRootViewBackgroundColor and write
+      // RCTRootViewBackgroundColor into Info.plist. This is an Android fix;
+      // iOS stays byte-identical.
+      //
+      // Requires expo-system-ui to be installed (it is) and a NEW native
+      // build — this is a generated res/values resource, not something an OTA
+      // update can ship.
+      backgroundColor: '#0a0a0f',
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
         backgroundColor: '#0a0a0f',
@@ -174,6 +200,16 @@ const base = {
       favicon: './assets/favicon.png',
     },
     plugins: [
+      // expo-system-ui (July 2026) — makes `userInterfaceStyle: 'dark'` above
+      // actually bind on Android and applies android.backgroundColor to
+      // android:windowBackground. Its Activity lifecycle listener calls
+      // AppCompatDelegate.MODE_NIGHT_YES at onCreate from a generated string
+      // resource, before any JS runs, so the OS stops picking the LIGHT nav-bar
+      // scrim + light icons. Strictly this line is redundant — prebuild-config's
+      // createLegacyPlugin auto-applies the package's own app.plugin.js once it
+      // is autolinked — but it matches the official docs and createRunOncePlugin
+      // dedupes, so listing it explicitly is free.
+      'expo-system-ui',
       'expo-router',
       'expo-secure-store',
       'expo-font',

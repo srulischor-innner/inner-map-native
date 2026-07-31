@@ -18,7 +18,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -48,6 +48,11 @@ type SectionId = 'welcome' | 'map' | 'healing' | 'using';
 // onboarding experience without uninstalling.
 const HAS_SEEN_WELCOME_KEY = 'hasSeenWelcome';
 
+// Zero-inset baseline for the floating Ask bubble: 80 clears the section
+// footer (dots + BEGIN CTA). The render adds insets.bottom on top, so the
+// clearance survives the footer's own nav-bar padding.
+const ASK_BASELINE = 80;
+
 export default function GuideScreen() {
   // Welcome lands first — it's the orientation framework. Users often only
   // start to grok the framing on the second or third pass after they've
@@ -56,6 +61,10 @@ export default function GuideScreen() {
   // Ask modal — opened by the floating chat bubble. Available from any
   // pill so users never have to leave their slide to ask a question.
   const [askOpen, setAskOpen] = useState(false);
+  // The section footers below grow by insets.bottom; the floating Ask
+  // bubble rides the same offset so its clearance above them is the
+  // same on every device.
+  const insets = useSafeAreaInsets();
 
   // __DEV__-only "replay onboarding" affordance. Long-press the Welcome
   // pill in a dev build to clear hasSeenWelcome + the per-screen
@@ -150,9 +159,10 @@ export default function GuideScreen() {
 
       {/* Floating Ask bubble — available from every pill. The amber
           italic "Ask" label sits permanently above the button so the
-          affordance is always self-explanatory. Bottom: 80 clears the
-          tab bar + the slide-section dot indicators. */}
-      <View style={styles.askWrap} pointerEvents="box-none">
+          affordance is always self-explanatory. 80 clears the section
+          footer (dots + BEGIN CTA); + insets.bottom keeps that same
+          clearance now that the footer is nav-bar-padded. */}
+      <View style={[styles.askWrap, { bottom: ASK_BASELINE + insets.bottom }]} pointerEvents="box-none">
         <Text style={styles.askLabel}>Ask</Text>
         <Pressable
           onPress={() => {
@@ -193,6 +203,10 @@ function SlideSection({
   const [index, setIndex] = useState(0);
   const listRef = useRef<FlatList>(null);
   const router = useRouter();
+  // The foot is the terminal in-flow child of a SafeAreaView with
+  // edges={[]}, so nothing else pads it away from the system nav bar.
+  // We add insets.bottom to the foot's own paddingBottom below.
+  const insets = useSafeAreaInsets();
 
   const onScroll = useCallback(
     (e: any) => {
@@ -249,7 +263,12 @@ function SlideSection({
         getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
         initialNumToRender={2}
       />
-      <View style={styles.foot}>
+      {/* paddingBottom is the style's own spacing.sm plus the system
+          nav-bar inset — the longhand overrides only the bottom half of
+          `foot`'s paddingVertical, so the top gap is untouched. Without
+          it the dots and the BEGIN CTA sit inside the Android nav strip
+          and the button's lower hit area is unreachable. */}
+      <View style={[styles.foot, { paddingBottom: spacing.sm + insets.bottom }]}>
         <GuideDots count={slides.length} active={index} onTap={goToSlide} />
         {atLast ? (
           <Pressable onPress={beginMap} style={styles.beginBtn} accessibilityLabel="Begin your map">
@@ -266,10 +285,11 @@ function SlideSection({
 // ====================================================================================
 function UsingSection() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   return (
     <ScrollView
       style={styles.sectionRoot}
-      contentContainerStyle={styles.usingContent}
+      contentContainerStyle={[styles.usingContent, { paddingBottom: spacing.xxl + insets.bottom }]}
       showsVerticalScrollIndicator={false}
     >
       <Text style={styles.usingH2}>The {PARTNER_ENABLED ? 'seven' : 'six'} ways to use Inner Map</Text>
@@ -337,11 +357,14 @@ const styles = StyleSheet.create({
 
   // Floating Ask container — bottom-right, always visible. Holds a
   // permanent italic "Ask" label above the circular button so the
-  // affordance is self-explanatory at a glance. bottom: 80 clears
-  // both the tab bar and the per-section dot indicators on slides.
+  // affordance is self-explanatory at a glance. There is no bottom tab
+  // bar in this app (app/(tabs)/_layout.tsx hides it), so the 80 here
+  // clears the section footer — the dot indicators plus the BEGIN
+  // YOUR MAP CTA. No `bottom` here — the call site supplies
+  // ASK_BASELINE + insets.bottom inline, matching the inset the footer
+  // itself now carries, and would override anything declared here.
   askWrap: {
     position: 'absolute',
-    bottom: 80,
     right: 20,
     alignItems: 'center',
     zIndex: 100,

@@ -94,6 +94,12 @@ const SLIDE_CANCEL_DY = -60;      // upward swipe past this distance cancels
 // being discarded anyway, no point keeping the user waiting.
 const STOP_GRACE_MS = 250;
 const POST_STOP_FLUSH_MS = 150;
+// Zero-inset baselines for the two absolutely-positioned rows. Both anchor to
+// the Map root's raw screen bottom, so each render adds bottomInset on top.
+// 50 leaves 9px above the collapsed ProgressStrip (40px header + 1px borderTop);
+// the toast rides 90px above the bar.
+const BAR_BASELINE = 50;
+const TOAST_BASELINE = 140;
 const SELF_LABEL = 'SELF';
 const SELF_LIKE_LABEL = 'SELF-LIKE';
 
@@ -141,9 +147,15 @@ type Props = {
    *  geometry so the bottom orbs never render under the mics — measured
    *  per-device, no aspect-ratio special-casing. */
   onBarTop?: (windowY: number) => void;
+  /** Safe-area bottom inset from the screen. This bar is absolutely
+   *  positioned against the Map tab's zero-inset root — i.e. the RAW screen
+   *  bottom — while the ProgressStrip below it grows by exactly this inset.
+   *  Adding it to our own offsets keeps the original 9px mic-to-strip
+   *  clearance identical on every device. */
+  bottomInset?: number;
 };
 
-export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop }: Props) {
+export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, bottomInset = 0 }: Props) {
   const [state, setState] = useState<VoiceState>('idle');
   const [modal, setModal] = useState<ModalKind>(null);
   const [explainerSeen, setExplainerSeen] = useState<boolean | undefined>(undefined);
@@ -784,7 +796,9 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop }:
       />
       <View
         ref={barRef}
-        style={styles.bar}
+        // ADD the inset to the tuned 50 — the ProgressStrip underneath is
+        // 41 + inset tall, so the bar has to ride up by the same amount.
+        style={[styles.bar, { bottom: BAR_BASELINE + bottomInset }]}
         pointerEvents="box-none"
         onLayout={() => {
           // Report the bar's top in window coords for the Map tab's
@@ -923,9 +937,12 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop }:
               establish your belief." Audio (the LLM's gentle nudge)
               is already playing underneath.
             • no_part_detected: "Couldn’t identify a single part —
-              try again with one specific situation." */}
+              try again with one specific situation."
+          It rides the same baseline as styles.bar (both are absolute
+          children of the Map tab's zero-inset root), so it takes the
+          same bottomInset offset. */}
       {fallbackToast ? (
-        <View style={styles.toastWrap} pointerEvents="none">
+        <View style={[styles.toastWrap, { bottom: TOAST_BASELINE + bottomInset }]} pointerEvents="none">
           <View style={styles.toast}>
             <Text style={styles.toastText}>
               {fallbackToast.kind === 'missing_belief'
@@ -1028,9 +1045,11 @@ const styles = StyleSheet.create({
   // Bottom bar — sits ABOVE the ProgressStrip footer. Two columns of
   // equal width with the mics centered. No background — sits over
   // the map's deep-navy directly.
+  // No `bottom` here on purpose: the render supplies BAR_BASELINE + bottomInset
+  // inline, which would override anything declared here and leave it dead.
   bar: {
     position: 'absolute',
-    left: 0, right: 0, bottom: 50,
+    left: 0, right: 0,
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'flex-end',
@@ -1100,10 +1119,11 @@ const styles = StyleSheet.create({
   // Fallback toast — pinned just above the mic bar. Self-aligned
   // wrap with absolute positioning so it overlays without affecting
   // mic-row layout. Pointer-events disabled so taps pass through.
+  // No `bottom` here: the render supplies TOAST_BASELINE + bottomInset
+  // inline so the toast tracks the mic bar exactly.
   toastWrap: {
     position: 'absolute',
     left: 0, right: 0,
-    bottom: 140,
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
   },

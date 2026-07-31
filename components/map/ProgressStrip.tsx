@@ -22,6 +22,7 @@ export function ProgressStrip({
   blendedSelfLedScore,
   spectrumEarned,
   clinicalPatterns,
+  bottomInset = 0,
 }: {
   outsideInScore?: number | null;
   fragmentedScore?: number | null;
@@ -31,6 +32,9 @@ export function ProgressStrip({
   // We render the dot ONLY when earned — honesty of confidence.
   spectrumEarned?: { outsideIn?: boolean; fragmented?: boolean; blendedSelfLed?: boolean } | null;
   clinicalPatterns?: any;
+  // Safe-area bottom inset from the screen. This strip is the last in-flow
+  // child of a zero-inset root, so it owns clearing the Android nav bar.
+  bottomInset?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [detailFor, setDetailFor] = useState<SpectrumKey | null>(null);
@@ -56,7 +60,15 @@ export function ProgressStrip({
   };
 
   return (
-    <View style={[styles.root, expanded && styles.rootExpanded]}>
+    <View
+      style={[
+        styles.root,
+        // ADD the inset to the design's own bottom padding — never substitute.
+        // Expanded, the last SpectrumBar caption keeps its spacing.md breathing
+        // room AND the whole strip clears the nav bar (16 + 48 = 64 on 3-button).
+        { paddingBottom: bottomInset + (expanded ? spacing.md : 0) },
+      ]}
+    >
       <Pressable
         onPress={() => { Haptics.selectionAsync().catch(() => {}); setExpanded((e) => !e); }}
         style={styles.header}
@@ -143,9 +155,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     paddingHorizontal: spacing.md,
   },
-  rootExpanded: {
-    paddingBottom: spacing.md,
-  },
+  // No rootExpanded rule: the expanded state's only difference was
+  // paddingBottom, which now lives inline above so it can fold in the
+  // safe-area inset. A rule here would be dead — the inline object is last
+  // in the style array and always wins.
   header: {
     height: 40,
     flexDirection: 'row',

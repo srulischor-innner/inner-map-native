@@ -584,12 +584,15 @@ function NoRelationshipView({
   // nav-bar short on Samsung One UI, so paddingBottom adds insets.bottom below
   // (matching main chat); iOS uses the raw height. (Partner is gated off for
   // v1 — device-test this surface when PARTNER_ENABLED is flipped on.)
+  // With the keyboard CLOSED the lift is 0, so the scroll content carries the
+  // nav-bar clearance itself; when it's open the lift above already spans that
+  // strip, so the content drops the inset rather than counting it twice.
   const kbHeight = useKeyboardInset();
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.kav, { paddingBottom: kbHeight + (kbHeight > 0 && Platform.OS === 'android' ? insets.bottom : 0) }]}>
     <ScrollView
-      contentContainerStyle={styles.scrollContent}
+      contentContainerStyle={[styles.scrollContent, { paddingBottom: spacing.xxl + (kbHeight > 0 ? 0 : insets.bottom) }]}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
@@ -681,8 +684,12 @@ function PendingNoPartnerView({
   // large + tappable; a long-press on the displayed code copies via
   // the OS selection menu without needing expo-clipboard.
   const code = rel.inviteCode || '';
+  const insets = useSafeAreaInsets();
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      contentContainerStyle={[styles.scrollContent, { paddingBottom: spacing.xxl + insets.bottom }]}
+      showsVerticalScrollIndicator={false}
+    >
       <Text style={styles.h1}>Waiting for your partner</Text>
       <Text style={styles.lede}>
         Send them this code. Once they enter it in their app, you'll be paired.
@@ -726,8 +733,12 @@ function PendingIntrosView({
   const partner = rel.partnerName || 'Your partner';
   const waitingOnMe = !rel.myIntroDone;
   const waitingOnThem = rel.myIntroDone && !rel.partnerIntroDone;
+  const insets = useSafeAreaInsets();
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      contentContainerStyle={[styles.scrollContent, { paddingBottom: spacing.xxl + insets.bottom }]}
+      showsVerticalScrollIndicator={false}
+    >
       <Text style={styles.h1}>Almost there</Text>
       <Text style={styles.lede}>
         You and {partner} are paired. Both of you need to read a short intro before the
