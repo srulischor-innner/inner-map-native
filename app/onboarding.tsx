@@ -46,8 +46,9 @@ import {
   openLegalDoc,
 } from '../utils/legalDocs';
 import {
-  ExperienceLevel, LEVEL_OPTIONS, setExperienceLevel,
+  ExperienceLevel, LEVEL_OPTIONS, setExperienceLevel, setChoseHardPlace,
 } from '../services/experienceLevel';
+import { SupportResourcesScreen } from '../components/safety/SupportResourcesScreen';
 
 // Onboarding phases (full self-explorer flow):
 //   welcome → privacy → terms → intake → experience → (resources?|notTherapy)
@@ -232,17 +233,32 @@ export default function OnboardingScreen() {
         <IntakeFlow onDone={() => setPhase('experience')} />
       ) : phase === 'experience' ? (
         <ExperienceLevelStep
-          onPick={async (lvl, isHard) => {
-            // The 4th option ("I'm in a hard place right now") sets level
-            // to 'curious' so the AI uses the most-scaffolded voice, AND
-            // routes to the resources screen before the not-therapy moment.
-            await setExperienceLevel(isHard ? 'curious' : lvl);
+          onPick={(lvl, isHard) => {
+            // ADVANCE FIRST, PERSIST AFTER. CONTINUE must never be gated on a
+            // storage write: AsyncStorage stalls are an observed failure here
+            // (see the 3s boot-read timeout in app/_layout.tsx), and an awaited
+            // write would freeze this step with no feedback. The 4th option
+            // ("I'm in a hard place right now") routes to the resources screen
+            // before the not-therapy moment; every other option goes straight
+            // on. Same phases, same order, in the same tick as the tap.
             if (isHard) setPhase('resources');
             else setPhase('notTherapy');
+            // The 4th option sets level to 'curious' so the AI uses the
+            // most-scaffolded voice. Both helpers update their in-memory copy
+            // and notify listeners synchronously, so the level sent on the next
+            // /api/chat request is correct regardless of when the disk write
+            // lands; only the write is deferred, and both already swallow their
+            // own storage errors.
+            setExperienceLevel(isHard ? 'curious' : lvl).catch(() => {});
+            // Local-only marker (never sent to the server) so the Settings
+            // picker and the Settings EXPERIENCE LEVEL row can later show THIS
+            // option instead of the 'curious' label the level actually stores.
+            // Invisible here: the flow above is unchanged.
+            setChoseHardPlace(isHard).catch(() => {});
           }}
         />
       ) : phase === 'resources' ? (
-        <ResourcesScreen onContinue={() => setPhase('notTherapy')} />
+        <SupportResourcesScreen onContinue={() => setPhase('notTherapy')} />
       ) : (
         <NotTherapyScreen onContinue={finishAndEnterApp} />
       )}
@@ -757,60 +773,13 @@ function ExperienceLevelStep({
 // ============================================================================
 // 5. RESOURCES — shown only when the user picked "I'm in a hard place".
 // Real-world support pointers; does NOT block them from using the app.
+//
+// The screen itself now lives in components/safety/SupportResourcesScreen —
+// moved out verbatim (copy, styles and CTA label unchanged) so that Settings
+// can reach the SAME screen via /support-resources instead of restating the
+// copy. Onboarding renders it exactly where it always did, with the same
+// continue behaviour; only the file it lives in changed.
 // ============================================================================
-function ResourcesScreen({ onContinue }: { onContinue: () => void }) {
-  return (
-    <ScrollView contentContainerStyle={styles.expStepRoot} showsVerticalScrollIndicator={false}>
-      <Text style={styles.expStepTitle}>You're not alone</Text>
-      <Text style={styles.expStepBody}>
-        Inner Map can be a thoughtful companion, but it's not a substitute for a
-        real person who knows you. If something is heavy, please also reach out
-        to one of these — even briefly:
-      </Text>
-
-      <View style={styles.resCard}>
-        <Text style={styles.resCardLabel}>IF YOU ARE IN IMMEDIATE CRISIS</Text>
-        <Text style={styles.resCardText}>
-          988 — Suicide & Crisis Lifeline (call or text, US/Canada).
-          Available 24/7. You don't have to be in crisis to call.
-        </Text>
-        <Text style={styles.resCardText}>
-          116 123 — Samaritans (UK & Ireland, free 24/7).
-        </Text>
-        <Text style={styles.resCardText}>
-          For other countries: findahelpline.com lists local options worldwide.
-        </Text>
-      </View>
-
-      <View style={styles.resCard}>
-        <Text style={styles.resCardLabel}>IF YOU CAN GET TO A THERAPIST</Text>
-        <Text style={styles.resCardText}>
-          A real therapist who knows you over time is the single most useful
-          resource for the kind of work this app touches. Inner Map can help
-          you go deeper in those sessions — it isn't a replacement.
-        </Text>
-        <Text style={styles.resCardText}>
-          openpathcollective.org and inclusivetherapists.com both list
-          sliding-scale therapists if cost is a concern.
-        </Text>
-      </View>
-
-      <View style={styles.resCard}>
-        <Text style={styles.resCardLabel}>RIGHT NOW</Text>
-        <Text style={styles.resCardText}>
-          One person you trust, even if the relationship is imperfect. A walk
-          outside. A few slow breaths. None of that "fixes" anything — but
-          they all bring you back to your own body, which is where the work
-          actually happens.
-        </Text>
-      </View>
-
-      <Pressable onPress={onContinue} style={styles.expContinueBtn}>
-        <Text style={styles.expContinueText}>I'M READY — ENTER INNER MAP</Text>
-      </Pressable>
-    </ScrollView>
-  );
-}
 
 // ============================================================================
 // 6. NOT-THERAPY — final moment before entering the app. A single quiet
@@ -954,8 +923,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.md, maxWidth: 320,
   },
 
-  // Experience-level step + resources screen — shared style block since
-  // they have the same vertical rhythm and option-card visual language.
+  // Experience-level step. (The resources screen shared this block until it
+  // was extracted to components/safety/SupportResourcesScreen, which carries
+  // its own copy of the five values it used so both render identically.)
   expStepRoot: {
     padding: spacing.lg,
     paddingBottom: spacing.xxl,
@@ -1004,22 +974,8 @@ const styles = StyleSheet.create({
     color: colors.amber, fontFamily: fonts.sansBold,
     fontSize: 12, letterSpacing: 2,
   },
-  resCard: {
-    backgroundColor: colors.backgroundCard,
-    borderLeftColor: colors.amber, borderLeftWidth: 2,
-    borderColor: colors.border, borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  resCardLabel: {
-    color: colors.amber, fontFamily: fonts.sansBold,
-    fontSize: 11, letterSpacing: 2, marginBottom: spacing.sm,
-  },
-  resCardText: {
-    color: colors.cream, fontFamily: fonts.sans,
-    fontSize: 14, lineHeight: 22, marginBottom: 8,
-  },
+  // (resCard / resCardLabel / resCardText moved with the resources screen to
+  // components/safety/SupportResourcesScreen — nothing here used them.)
 
   // Not-therapy moment — vertically centered, generous breathing room,
   // single warm paragraph. Uses the shared beginBtn for the CTA so the

@@ -42,6 +42,7 @@ const ASYNC_KEYS_TO_CLEAR = [
   'innerMapRefreshExpiresAt',
   'hasSeenWelcome',
   'experienceLevel.v1',
+  'experienceLevel.hardPlace.v1',  // local-only "in a hard place" UI marker
   'faceIdEnabled',
   'push.expoToken',
   'journal.entries',          // legacy AsyncStorage journal — PR 2a stranded it

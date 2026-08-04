@@ -58,6 +58,66 @@ export function useExperienceLevel(): ExperienceLevel {
   return v;
 }
 
+// ---------------------------------------------------------------------------
+// "In a hard place" marker — a LOCAL UI flag, deliberately NOT a level.
+// ---------------------------------------------------------------------------
+// The 4th picker option ("I'm in a hard place right now") is not a storable
+// ExperienceLevel: it maps to 'curious' so the AI uses the most-scaffolded
+// voice, and it routes the user to the support-resources screen. 'hard' must
+// never reach the wire — services/api.ts types the request field as the three
+// real levels and the SERVER selects the prompt from it, so an unmapped value
+// would hit prompt selection for a user who just said they are struggling.
+//
+// This flag records only the FACT of the choice, in its own AsyncStorage key,
+// so the picker can draw a checkmark next to what the user actually tapped
+// (they used to reopen the sheet and see "I'm new to this kind of work"
+// highlighted instead). It is read by the UI and by nothing else — no getter
+// here feeds any request body.
+//
+// Mutual exclusivity: every pick in the picker calls setChoseHardPlace() with
+// whether THAT option was the hard one, so choosing any other option clears
+// the flag and the sheet can never show two selected rows.
+const HARD_PLACE_KEY = 'experienceLevel.hardPlace.v1';
+
+let hardPlace = false;
+let hardPlaceInitialized = false;
+const hardPlaceListeners = new Set<(v: boolean) => void>();
+
+export async function loadChoseHardPlace(): Promise<boolean> {
+  if (hardPlaceInitialized) return hardPlace;
+  try {
+    hardPlace = (await AsyncStorage.getItem(HARD_PLACE_KEY)) === '1';
+  } catch {}
+  hardPlaceInitialized = true;
+  for (const l of hardPlaceListeners) l(hardPlace);
+  return hardPlace;
+}
+
+export function getChoseHardPlace(): boolean { return hardPlace; }
+
+export async function setChoseHardPlace(next: boolean): Promise<void> {
+  hardPlace = next;
+  hardPlaceInitialized = true;
+  for (const l of hardPlaceListeners) l(next);
+  try {
+    if (next) await AsyncStorage.setItem(HARD_PLACE_KEY, '1');
+    else await AsyncStorage.removeItem(HARD_PLACE_KEY);
+  } catch {}
+}
+
+/** React hook — mirrors useExperienceLevel's shape. */
+export function useChoseHardPlace(): boolean {
+  const [v, setV] = useState<boolean>(hardPlace);
+  useEffect(() => {
+    hardPlaceListeners.add(setV);
+    if (!hardPlaceInitialized) {
+      loadChoseHardPlace().then((h) => setV(h));
+    }
+    return () => { hardPlaceListeners.delete(setV); };
+  }, []);
+  return v;
+}
+
 // ---------- copy used in onboarding + settings ----------
 export const LEVEL_OPTIONS: Array<{
   level: ExperienceLevel | 'hard';

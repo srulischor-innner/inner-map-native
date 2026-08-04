@@ -2,9 +2,12 @@
 //
 // A simple list, modeled after the existing About / Privacy rows in the
 // hamburger so the visual language is consistent. Sections:
+//   - "If you need help now" pointer row → the crisis section of
+//     /privacy ("Privacy, Data & Safety")
 //   - EXPERIENCE LEVEL with a Change link that re-opens the level picker
-//   - PRIVACY POLICY (in-app, /privacy)
-//   - YOUR DATA — anonymous device ID for support, copyable
+//   - YOUR PLAN — membership / restore / manage subscription (iOS only)
+//   - ACCOUNT — linked sign-in options
+//   - PRIVACY — App Lock, share-journal-with-AI, inbox notifications
 //   - CONTACT — mailto link to support
 //   - VERSION — dim line at the bottom
 //
@@ -12,38 +15,41 @@
 // the hamburger because they're commonly toggled and benefit from being
 // one tap away. This screen is for the less-frequent, more meaningful
 // settings + transparency rows.
+//
+// NOT here any more, and deliberately so: the crisis resources card, the
+// long privacy/data explainer, and the data controls (export / your ID).
+// They moved to app/privacy.tsx — "Privacy, Data & Safety" — so there is
+// ONE place that explains the data story and ONE place that acts on it.
+// Settings keeps a single pointer row to the crisis section (Apple Mental
+// Health & Wellness review wants a discoverable crisis surface; one row,
+// no duplicated content).
+//
+// The ONE exception to that move: ACCOUNT keeps a "Delete account" row.
+// It is an entry point only — /account/delete still owns the whole
+// confirmation flow and the copy that explains it — but App Store
+// guideline 5.1.1(v) requires account deletion to be discoverable, and
+// reviewers (and users) look for it in Settings, under Account. See the
+// row itself for why it is not the duplicate that was removed.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, ScrollView, StyleSheet, Linking, Alert, Switch,
-  ActivityIndicator, Platform,
+  ActivityIndicator, Platform, Modal,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 
-// expo-file-system v19 ships a new class-based API (Paths/File/Directory).
-// The legacy URI-based namespace at 'expo-file-system/legacy' is still
-// shipped alongside it; we use that here because (a) the export-share-
-// sheet flow only needs to write one short JSON file and (b) the
-// imperative writeAsStringAsync API is a closer match to what we want
-// than constructing a File instance.
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
-
 import { colors, fonts, radii, spacing } from '../constants/theme';
-import {
-  PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, openLegalDoc as openLegalDocLive,
-} from '../utils/legalDocs';
 import { getUserId, setUserId as overrideUserId, clearUserId } from '../services/user';
 import { resetOnboarding } from '../services/onboarding';
 import { AuthButtonRow } from '../components/auth/AuthButtonRow';
-import { CrisisResourcesCard } from '../components/safety/CrisisResourcesCard';
 import {
   useExperienceLevel, loadExperienceLevel, setExperienceLevel,
-  LEVEL_LABELS, ExperienceLevel,
+  useChoseHardPlace, loadChoseHardPlace, setChoseHardPlace,
+  LEVEL_LABELS, LEVEL_OPTIONS, ExperienceLevel,
 } from '../services/experienceLevel';
 import {
   biometricsAvailable, isLockEnabled, setLockEnabled,
@@ -57,9 +63,26 @@ import * as Sentry from '@sentry/react-native';
 
 const SUPPORT_EMAIL = 'support@my-inner-map.com';
 
+/** What the EXPERIENCE LEVEL row reads when the user picked "I'm in a hard
+ *  place right now".
+ *
+ *  Sourced from the SAME LEVEL_OPTIONS entry the picker renders, never
+ *  restated, so the row and the sheet cannot word the choice differently. That
+ *  option stores the level 'curious', so LEVEL_LABELS would render "New to
+ *  inner work" over it — the app answering someone who just said something is
+ *  heavy by telling them what they said was something else.
+ *
+ *  `undefined` if the entry is ever removed; the row falls back to the stored
+ *  level's label rather than rendering a blank title. */
+const HARD_PLACE_TITLE = LEVEL_OPTIONS.find((o) => o.level === 'hard')?.title;
+
 export default function SettingsScreen() {
   const router = useRouter();
   const level = useExperienceLevel();
+  // Read alongside the level because the EXPERIENCE LEVEL row below has to
+  // reflect the "hard place" choice, which is not a storable level — the same
+  // flag the picker draws its selected row from.
+  const choseHard = useChoseHardPlace();
   const [userId, setUserId] = useState<string>('');
   // App Lock toggle visibility is gated on biometric capability — if the
   // device has no Face ID / Touch ID the toggle is hidden entirely so we
@@ -72,10 +95,20 @@ export default function SettingsScreen() {
   // Inbox notification opt-in (the ONLY notification type). Local mirror of the
   // opt-in state; the server-side gate is token presence. Off by default.
   const [notifyOn, setNotifyOn] = useState<boolean>(false);
+  // Experience-level sheet (see ExperienceLevelPicker below).
+  const [levelPickerOpen, setLevelPickerOpen] = useState<boolean>(false);
+  // Set by the picker when the user taps "I'm in a hard place right now".
+  // The navigation to the resources screen is deferred until the sheet has
+  // actually closed — see the effect below.
+  const resourcesPendingRef = useRef<boolean>(false);
 
   useEffect(() => {
     loadExperienceLevel().catch(() => {});
-    getUserId().then(setUserId).catch(() => {});
+    loadChoseHardPlace().catch(() => {});
+    // userId is consumed ONLY by the dev-only "Override device ID" row, as
+    // the prefilled value of its Alert.prompt. Gated so production builds
+    // don't run a SecureStore read and a setState for a row they never render.
+    if (__DEV__) getUserId().then(setUserId).catch(() => {});
     getJournalShareDefault().then(setJournalShareOn).catch(() => {});
     getInboxPushOptIn().then(setNotifyOn).catch(() => {});
     (async () => {
@@ -84,6 +117,35 @@ export default function SettingsScreen() {
       if (ok) setLockOn(await isLockEnabled());
     })();
   }, []);
+
+  // Deferred hand-off from the level sheet to the resources screen.
+  //
+  // Ordering matters on a support-seeking path: the picker sets the ref and
+  // closes the sheet, and the push is deferred so that the visible={false}
+  // commit is flushed before we navigate — pushing from inside the same render
+  // pass leaves the sheet sitting over the destination on iOS.
+  //
+  // setTimeout(0), NOT InteractionManager.runAfterInteractions. The Modal's
+  // dismissal is a NATIVE animation: it registers no interaction handle, so
+  // runAfterInteractions never "waited out" anything — it fired on the next
+  // batch, same as this does. What it DID add was starvation: a single
+  // JS-driven looping Animated anywhere in the mounted tree keeps an
+  // interaction handle open indefinitely and the callback would simply never
+  // run, restoring the exact silence this path exists to end. Every
+  // Animated.loop in the app happens to use useNativeDriver today; a timer
+  // does not depend on that staying true.
+  //
+  // The ref is cleared before the push so a double-tap (or a re-render of this
+  // effect) can never queue the screen twice.
+  useEffect(() => {
+    if (levelPickerOpen || !resourcesPendingRef.current) return;
+    const t = setTimeout(() => {
+      if (!resourcesPendingRef.current) return;
+      resourcesPendingRef.current = false;
+      router.push('/support-resources' as any);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [levelPickerOpen, router]);
 
   async function toggleLock(next: boolean) {
     Haptics.selectionAsync().catch(() => {});
@@ -118,20 +180,19 @@ export default function SettingsScreen() {
 
   function changeLevel() {
     Haptics.selectionAsync().catch(() => {});
-    // Inline picker — three quick options, one cancel. Avoids a full
-    // re-run of onboarding, which would also force the user back through
-    // welcome / terms / intake.
-    Alert.alert(
-      'Experience level',
-      'How the AI calibrates its voice for you.',
-      [
-        { text: LEVEL_LABELS.curious,     onPress: () => setExperienceLevel('curious' as ExperienceLevel) },
-        { text: LEVEL_LABELS.familiar,    onPress: () => setExperienceLevel('familiar' as ExperienceLevel) },
-        { text: LEVEL_LABELS.experienced, onPress: () => setExperienceLevel('experienced' as ExperienceLevel) },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-      { cancelable: true },
-    );
+    // Opens the bottom sheet below. Avoids a full re-run of onboarding,
+    // which would also force the user back through welcome / terms / intake.
+    //
+    // This WAS an Alert.alert with four buttons (three levels + Cancel).
+    // React Native's Android implementation does buttons.slice(0, 3)
+    // (Libraries/Alert/Alert.js, RN 0.81.5) and silently discards the rest,
+    // so Android users got a dialog with no Cancel button and three long
+    // labels ellipsized into native buttons. The Alert also had no room for
+    // the option subtitles on either platform, and no room at all for the
+    // fourth LEVEL_OPTIONS entry ("I'm in a hard place right now") — which
+    // made this the one post-onboarding surface where a struggling user
+    // could not say so. The sheet restores all three.
+    setLevelPickerOpen(true);
   }
 
   return (
@@ -154,35 +215,48 @@ export default function SettingsScreen() {
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
       >
-        {/* ===== CRISIS RESOURCES =====
-            Pinned at the very top of Settings — first thing the user
-            sees on opening. Apple Mental Health & Wellness review
-            specifically looks for a discoverable crisis-resources
-            surface in apps that touch emotional content. Compact by
-            design (per spec: must fit on iPhone SE without scrolling)
-            with subtle elevation (faint amber border + tinted
-            background) so the eye lands on it without alarm. The
-            phone numbers + URL all open via expo's Linking module —
-            tel: and sms: handle their respective system apps, https:
-            opens the default browser. */}
-        <CrisisResourcesSection />
+        {/* ===== IF YOU NEED HELP NOW =====
+            The crisis card itself lives at the TOP of /privacy
+            ("Privacy, Data & Safety") so a distressed user never has to
+            scroll past a data-collection table to reach a phone number.
+            This row is the discoverable pointer to it — Apple Mental
+            Health & Wellness review looks for a crisis surface that is
+            findable, not for the content to exist twice.
 
-        {/* ===== PRIVACY & DATA =====
-            Second from the top. The longer companion to the
-            first-launch privacy notice — what we store, what we
-            never do, the AI provider note, and the user's three
-            data rights (export, delete, email privacy@). Section
-            content is canonical wording from the PR spec; future
-            edits should land here as the single source rather than
-            drifting between this screen and the first-launch notice
-            in app/onboarding.tsx. */}
-        <PrivacyDataSection />
+            Pinned first, above billing and account rows, because
+            position IS the discoverability. Styled as an ordinary row
+            on purpose: calm and available, not an alarm. */}
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            router.push('/privacy?focus=crisis' as any);
+          }}
+          style={styles.linkRow}
+          accessibilityLabel="If you need help now — crisis resources"
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>If you need help now</Text>
+            <Text style={styles.rowSub}>
+              Crisis lines and text services you can reach right now.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
+        </Pressable>
 
         {/* ===== EXPERIENCE LEVEL ===== */}
         <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>EXPERIENCE LEVEL</Text>
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.rowTitle}>{LEVEL_LABELS[level] || 'Not set'}</Text>
+            {/* The hard-place choice wins over the stored level, exactly as it
+                does inside the picker. Without this the row read "New to inner
+                work" straight after the user tapped "I'm in a hard place right
+                now" — the surface one level up contradicting the choice the
+                sheet had just acknowledged. The subtitle stays true either way:
+                this row IS what the voice is calibrated from, and the hard-place
+                option calibrates it to the most-scaffolded voice. */}
+            <Text style={styles.rowTitle}>
+              {(choseHard && HARD_PLACE_TITLE) || LEVEL_LABELS[level] || 'Not set'}
+            </Text>
             <Text style={styles.rowSub}>How the AI calibrates its voice for you.</Text>
           </View>
           <Pressable onPress={changeLevel} hitSlop={10} style={styles.linkBtn}>
@@ -250,28 +324,19 @@ export default function SettingsScreen() {
             ios_backgroundColor="#3A3340"
           />
         </View>
-        <Pressable onPress={() => router.push('/privacy')} style={styles.linkRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowTitle}>Privacy policy</Text>
-            <Text style={styles.rowSub}>How your data is stored and used.</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
-        </Pressable>
+        {/* The "Privacy policy" row is gone: the side menu's
+            "Privacy, Data & Safety" entry is the single route to
+            /privacy now, and that screen carries the crisis card, the
+            summary, and the data controls together. */}
 
-        {/* ===== YOUR DATA ===== */}
-        <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>YOUR DATA</Text>
-        <View style={styles.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowTitle}>Your ID</Text>
-            <Text style={styles.rowSub}>
-              Anonymous device identifier — long-press to copy and share with
-              support if you need help.
-            </Text>
-            <Text style={styles.idText} selectable>
-              {userId || '…'}
-            </Text>
-          </View>
-        </View>
+        {/* ===== DEVELOPER =====
+            Dev-only tools. The label lives inside the __DEV__ gate with
+            the rows it heads, so production never renders a section
+            heading with nothing under it. (These sat under the old YOUR
+            DATA label, which moved to /privacy with the data controls.) */}
+        {__DEV__ ? (
+          <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>DEVELOPER</Text>
+        ) : null}
 
         {/* Dev-only identity recovery — handles the case where a SecureStore
             stall caused the boot path to mint a fresh UUID and orphan the
@@ -367,11 +432,13 @@ export default function SettingsScreen() {
           </Pressable>
         ) : null}
 
-        {/* ACCOUNT & DATA section removed — Export My Data and Delete
-            My Account now live exclusively in PRIVACY & DATA above
-            (single source of truth, eliminates the two-paths-to-same-
-            destructive-action confusion). The shared useAccountExport
-            hook is the implementation underneath. */}
+        {/* Export My Data and Your ID now live exclusively on /privacy
+            ("Privacy, Data & Safety"), together with the summary that
+            explains what the data is. Single source of truth — do not
+            re-add them here. Account deletion is reachable from both
+            surfaces on purpose: /privacy explains it, and ACCOUNT above
+            carries the entry point App Store review expects to find in
+            Settings. Neither one performs the deletion. */}
 
         {/* ===== CONTACT ===== */}
         <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>CONTACT</Text>
@@ -391,7 +458,137 @@ export default function SettingsScreen() {
 
         <Text style={styles.version}>Inner Map · v{version}</Text>
       </ScrollView>
+
+      <ExperienceLevelPicker
+        visible={levelPickerOpen}
+        current={level}
+        onClose={() => setLevelPickerOpen(false)}
+        onRequestResources={() => { resourcesPendingRef.current = true; }}
+      />
     </SafeAreaView>
+  );
+}
+
+// =============================================================================
+// ExperienceLevelPicker — bottom sheet, ported back from the hamburger menu
+// (components/HamburgerMenu.tsx at d9d2427) when that copy was deleted and
+// Settings became the only post-onboarding route to this control.
+//
+// Renders all four LEVEL_OPTIONS with title AND subtitle. Matches the
+// spectrum / part-folder modal grammar.
+//
+// The 4th option ("I'm in a hard place right now"), founder ruling 2026-08-04:
+//
+//   1. It still stores 'curious' — the most-scaffolded voice — and 'hard' is
+//      still never persisted as a level or sent to the server.
+//   2. It now ROUTES to the same resources screen onboarding shows
+//      (/support-resources → components/safety/SupportResourcesScreen). The
+//      previous behaviour ("the user already saw it once") failed anyone who
+//      picked another option during onboarding and only later ended up in a
+//      hard place — the subtitle promises real-person resources and none
+//      arrived. The push is handed to the parent so it happens AFTER this
+//      sheet is dismissed.
+//   3. It IS now drawn as selected, off the separate local choseHardPlace
+//      flag rather than off the stored level. When that flag is set, 'curious'
+//      must NOT also render as current or two rows would look selected.
+// =============================================================================
+function ExperienceLevelPicker({
+  visible, current, onClose, onRequestResources,
+}: {
+  visible: boolean;
+  current: ExperienceLevel;
+  onClose: () => void;
+  /** Called (before onClose) when the user picks "I'm in a hard place right
+   *  now". The parent owns the navigation so it can wait for this Modal to
+   *  finish dismissing first. */
+  onRequestResources: () => void;
+}) {
+  const choseHard = useChoseHardPlace();
+  // One pick per opening. Without this, a fast double-tap runs the async
+  // handler twice and can queue the resources screen twice.
+  const pickedRef = useRef<boolean>(false);
+  useEffect(() => { if (visible) pickedRef.current = false; }, [visible]);
+  // The sheet is anchored at bottom:0, so it sits UNDER the gesture bar /
+  // 3-button nav bar. The inset goes on the sheet container (not on the
+  // ScrollView's contentContainer) so it ADDS to the scroll body's own
+  // paddingBottom: 24 rather than replacing it — the 4th option ("in a hard
+  // place") keeps its full 24px of breathing room above the nav strip on
+  // every device.
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={styles.pickerBackdrop} onPress={onClose} />
+      <View style={[styles.pickerSheet, { paddingBottom: insets.bottom }]}>
+        <View style={styles.pickerHandle} />
+        <View style={styles.pickerHeader}>
+          <Text style={styles.pickerTitle}>Where are you in your journey?</Text>
+          <Pressable onPress={onClose} style={{ padding: 6 }} hitSlop={10} accessibilityLabel="Close">
+            <Ionicons name="close" size={22} color={colors.creamFaint} />
+          </Pressable>
+        </View>
+        <Text style={styles.pickerBody}>
+          You can change this anytime — the new setting applies to your next reply.
+        </Text>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
+          {LEVEL_OPTIONS.map((opt) => {
+            const isHard = opt.level === 'hard';
+            // Selected state: the hard option draws off the local flag, and
+            // the three real levels only draw as current when that flag is
+            // clear — otherwise 'curious' (what "hard" stores) would light up
+            // alongside it.
+            const isCurrent = isHard ? choseHard : (!choseHard && opt.level === current);
+            return (
+              <Pressable
+                key={opt.level}
+                onPress={() => {
+                  if (pickedRef.current) return;
+                  pickedRef.current = true;
+                  Haptics.selectionAsync().catch(() => {});
+                  // "Hard place" stores 'curious' — the wire payload is
+                  // identical to picking the first option — and records the
+                  // real choice in the separate local flag. Passing isHard on
+                  // every branch means any other pick CLEARS the flag, so the
+                  // sheet can never show two selected rows.
+                  const nextLevel: ExperienceLevel =
+                    isHard ? 'curious' : (opt.level as ExperienceLevel);
+                  // CLOSE FIRST, PERSIST AFTER — deliberate ordering.
+                  //
+                  // Ask for the resources screen BEFORE closing: the parent
+                  // reads the request when the sheet's visible flag flips.
+                  if (isHard) onRequestResources();
+                  onClose();
+                  // The two writes are fire-and-forget. Awaiting them gated the
+                  // close on two AsyncStorage round trips, and an AsyncStorage
+                  // stall is an OBSERVED failure in this app — app/_layout.tsx
+                  // races the boot read against a 3s timeout for exactly that
+                  // reason. A stall here left the sheet sitting open with
+                  // pickedRef already latched, so every further tap was a
+                  // no-op: silence, on the path built to end silence.
+                  //
+                  // Nothing downstream reads these synchronously, and nothing
+                  // visible is lost by deferring them: both helpers update their
+                  // in-memory copy and notify listeners SYNCHRONOUSLY, before
+                  // touching AsyncStorage — so the selected row here, the
+                  // EXPERIENCE LEVEL row behind the sheet, and the level sent on
+                  // the next /api/chat request are all already correct. Only the
+                  // disk write is deferred. Both helpers also swallow their own
+                  // storage errors; the .catch is belt and braces so a future
+                  // change there can never surface as an unhandled rejection.
+                  setExperienceLevel(nextLevel).catch(() => {});
+                  setChoseHardPlace(isHard).catch(() => {});
+                }}
+                style={[styles.pickerOption, isCurrent && styles.pickerOptionSelected]}
+              >
+                <Text style={[styles.pickerOptionTitle, isCurrent && { color: colors.amber }]}>
+                  {opt.title}
+                </Text>
+                <Text style={styles.pickerOptionSubtitle}>{opt.subtitle}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </Modal>
   );
 }
 
@@ -452,13 +649,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     marginTop: 2,
-  },
-  idText: {
-    color: colors.creamFaint,
-    fontFamily: 'Courier',
-    fontSize: 11,
-    marginTop: 6,
-    letterSpacing: 0.3,
   },
   linkBtn: {
     paddingHorizontal: 14,
@@ -541,6 +731,45 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
 
+  // Experience-level picker — bottom sheet, ported back from the deleted
+  // hamburger copy. NOTE: paddingBottom is applied at runtime from
+  // insets.bottom (see ExperienceLevelPicker) — don't add a static one here.
+  pickerBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+  pickerSheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    maxHeight: '80%',
+    backgroundColor: colors.backgroundCard,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingTop: 8,
+  },
+  pickerHandle: {
+    alignSelf: 'center',
+    width: 42, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    marginBottom: 8,
+  },
+  pickerHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 24, paddingBottom: 8,
+  },
+  pickerTitle: { color: colors.amber, fontSize: 18, fontWeight: '600', flex: 1, marginRight: 8 },
+  pickerBody: {
+    color: colors.creamDim, fontSize: 13, lineHeight: 19,
+    paddingHorizontal: 24, paddingBottom: 16,
+  },
+  pickerOption: {
+    backgroundColor: colors.background,
+    borderColor: colors.border, borderWidth: 1, borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+  },
+  pickerOptionSelected: {
+    borderColor: colors.amber,
+    backgroundColor: 'rgba(230,180,122,0.08)',
+  },
+  pickerOptionTitle: { color: colors.cream, fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  pickerOptionSubtitle: { color: colors.creamDim, fontSize: 12, lineHeight: 17 },
+
   version: {
     color: colors.creamFaint,
     fontFamily: fonts.sans,
@@ -549,258 +778,12 @@ const styles = StyleSheet.create({
     marginTop: spacing.xxl,
     letterSpacing: 0.4,
   },
-  // (Former accountRow* styles for the now-removed AccountDataRows
-  // component dropped. PrivacyDataSection uses its own privacyActionBtn
-  // styling for Export / Delete actions.)
-
-  // ===== Crisis Resources card =====
-  // Single elevated card at the very top of Settings. Subtle amber
-  // border + faint amber wash to draw the eye without alarming the
-  // user (no red, no exclamation marks). Vertical spacing kept tight
-  // so the whole card fits in the first viewport on iPhone SE.
-  crisisCard: {
-    backgroundColor: 'rgba(230, 180, 122, 0.06)',
-    borderColor: 'rgba(230, 180, 122, 0.45)',
-    borderWidth: 0.75,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  crisisTitle: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 12,
-    letterSpacing: 2,
-    marginBottom: 6,
-  },
-  crisisLede: {
-    color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 13,
-    lineHeight: 19,
-    marginBottom: spacing.sm,
-  },
-  crisisLocaleLabel: {
-    color: colors.amberDim,
-    fontFamily: fonts.sansBold,
-    fontSize: 10,
-    letterSpacing: 1.4,
-    marginBottom: 4,
-  },
-  crisisLocaleLabelTop: { marginTop: spacing.sm },
-  crisisRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 4,
-  },
-  crisisBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.amber,
-    backgroundColor: 'rgba(230, 180, 122, 0.08)',
-  },
-  crisisBtnText: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 12,
-    letterSpacing: 0.6,
-  },
-  crisisSub: {
-    color: colors.creamDim,
-    fontFamily: fonts.sans,
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 2,
-  },
-  crisisBody: {
-    color: colors.creamDim,
-    fontFamily: fonts.sans,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-
-  // ===== Privacy & Data block =====
-  // Grouped sub-cards under one section label. Each sub-block is a
-  // bordered card (matches the card visual language of the existing
-  // Settings rows) holding one heading + one body.
-  privacyBlock: {
-    backgroundColor: colors.backgroundCard,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-  },
-  privacyH3: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 11,
-    letterSpacing: 1.6,
-    marginBottom: 6,
-  },
-  privacyBody: {
-    color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  privacyBodyBold: {
-    color: colors.cream,
-    fontFamily: fonts.sansBold,
-    fontSize: 13,
-    lineHeight: 20,
-    marginBottom: 2,
-  },
-  privacyBodyBoldTop: { marginTop: spacing.sm },
-  privacyBullet: {
-    color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 13,
-    lineHeight: 22,
-  },
-  privacyActionBtn: {
-    marginTop: spacing.sm,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(230, 180, 122, 0.45)',
-    backgroundColor: 'rgba(230, 180, 122, 0.05)',
-  },
-  privacyActionBtnDim: { opacity: 0.5 },
-  privacyActionBtnText: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 11,
-    letterSpacing: 0.8,
-  },
-  privacyActionBtnDestructive: {
-    borderColor: 'rgba(220, 90, 90, 0.45)',
-    backgroundColor: 'rgba(220, 90, 90, 0.05)',
-  },
-  privacyActionBtnTextDestructive: {
-    color: '#E68080',
-  },
-  // "Bottom line" closing card — uses a slightly amber wash to land
-  // as the section's closing beat, not as another data block.
-  privacyBottomLine: {
-    backgroundColor: 'rgba(230, 180, 122, 0.04)',
-    borderColor: 'rgba(230, 180, 122, 0.25)',
-  },
+  // (Former accountRow* / crisis* / privacy* styles dropped with the
+  // components they dressed — the crisis card, the privacy explainer and
+  // the data controls all live on /privacy now, which owns its own
+  // styling.)
 });
 
-// =============================================================================
-// useAccountExport — shared helper for the Settings → PRIVACY & DATA
-// "Export My Data" row. Originally split out so two call sites could
-// share the implementation; the second site (the old ACCOUNT & DATA
-// section) was retired, so this is now the sole consumer — but the
-// hook is kept as a clean integration point in case the export is
-// surfaced from another screen later. useState-wrapped so the caller's
-// button can dim itself while the export is in flight.
-// =============================================================================
-function useAccountExport() {
-  const [exporting, setExporting] = useState(false);
-  const run = useCallback(async () => {
-    if (exporting) return;
-    Haptics.selectionAsync().catch(() => {});
-    setExporting(true);
-    try {
-      const result = await api.exportAccount();
-      if (!result.ok) {
-        if (result.error === 'rate-limit-exceeded') {
-          Alert.alert(
-            'Export limit reached',
-            result.message || "You've hit the daily export limit. Please try again later.",
-          );
-        } else {
-          Alert.alert(
-            "Couldn't export",
-            result.message || 'Something went wrong. Please try again.',
-          );
-        }
-        return;
-      }
-      // Write the JSON body to a temp file so the share sheet has a
-      // proper file URI (sharing a raw string opens up paste, not save).
-      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
-      if (!cacheDir) {
-        Alert.alert("Couldn't export", 'No cache directory available.');
-        return;
-      }
-      const uri = cacheDir + result.suggestedFilename;
-      await FileSystem.writeAsStringAsync(uri, result.body, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-      const canShare = await Sharing.isAvailableAsync();
-      if (!canShare) {
-        Alert.alert(
-          'Share unavailable',
-          "Sharing isn't available on this device. The export file is at:\n" + uri,
-        );
-        return;
-      }
-      await Sharing.shareAsync(uri, {
-        mimeType: 'application/json',
-        dialogTitle: 'Save your Inner Map data',
-        UTI: 'public.json',
-      });
-    } catch (e) {
-      console.warn('[settings/export] threw:', (e as Error)?.message);
-      Alert.alert("Couldn't export", (e as Error)?.message || 'Unknown error');
-    } finally {
-      setExporting(false);
-    }
-  }, [exporting]);
-  return { exporting, run };
-}
-
-// =============================================================================
-// (AccountDataRows component removed — its Export + Delete pills are
-// now exclusively rendered by PrivacyDataSection below, which has the
-// fuller framing + the email-privacy@ button alongside. The shared
-// useAccountExport hook is the underlying export implementation.)
-// =============================================================================
-
-// =============================================================================
-// CrisisResourcesSection — pinned at the very top of Settings.
-//
-// Compact by design — fits within the first iPhone SE-height viewport
-// without scrolling. Warm (amber tint, not red-flag styling) but
-// visibly elevated so the eye lands on it within a second of opening
-// Settings. The phone-number + URL buttons defer to system apps via
-// expo Linking (already imported as `Linking` for the existing email
-// row). tel: → dialer; sms: → Messages; https: → default browser.
-// =============================================================================
-// Now a thin wrapper around the SHARED CrisisResourcesCard (inline variant)
-// so the Settings resource list is single-sourced with the Map Voice / in-
-// chat surfacing. Previously this was a separate inline copy that had
-// DRIFTED — it omitted the Domestic Violence + Eating Disorders numbers the
-// shared card carries. One source of truth now.
-function CrisisResourcesSection() {
-  return <CrisisResourcesCard />;
-}
-
-// =============================================================================
-// PrivacyDataSection — the longer, in-Settings version of the
-// first-launch privacy notice. Comprehensive: what we store, what we
-// never do, the AI provider note, and the user's three data rights
-// (export, delete, email privacy@).
-//
-// Export wires through to the same useAccountExport hook the
-// existing ACCOUNT & DATA section uses. Delete pushes to the existing
-// /account/delete screen (built in PR 2b). Email opens the user's
-// default mail client with a bare mailto: link — no subject or body
-// pre-filled, per spec.
-//
-// TODO(post-launch): when the hosted privacy policy URL is live,
-// add a "Read full privacy policy" link below the YOUR RIGHTS block
-// here. The existing in-app /privacy screen (linked elsewhere in
-// Settings) carries the detailed policy in the meantime.
-// =============================================================================
 // =============================================================================
 // Account section (Build 11). Three states based on /api/auth/identities:
 //
@@ -816,6 +799,8 @@ function CrisisResourcesSection() {
 // slate. The user's server-side data is preserved (the auth_identities
 // row → user_id mapping doesn't change), so signing back in restores
 // it on the next launch.
+//
+// Below both states, in every state: the "Delete account" row (see there).
 // =============================================================================
 type Identity = {
   id: string;
@@ -870,6 +855,15 @@ function AccountSection() {
     );
   }, [identities, refresh]);
 
+  // Entry point ONLY. app/account/delete.tsx owns the irreversible-action
+  // confirmation — nothing is pre-confirmed, warned about or short-circuited
+  // here. Same push (and same haptic) app/privacy.tsx uses for its
+  // "DELETE MY ACCOUNT" control, so the two entrances land identically.
+  const handleDelete = useCallback(() => {
+    Haptics.selectionAsync().catch(() => {});
+    router.push('/account/delete' as any);
+  }, [router]);
+
   const handleSignOut = useCallback(() => {
     Alert.alert(
       'Sign out?',
@@ -893,6 +887,38 @@ function AccountSection() {
     );
   }, [router]);
 
+  // Account deletion's entry point.
+  //
+  // NOT the duplicate that was removed in today's IA pass — that one was a
+  // second "Privacy policy" row pointing where the side menu already points,
+  // i.e. two doors to the same explanation. This is a differently-purposed
+  // row: App Store guideline 5.1.1(v) requires deletion to be DISCOVERABLE,
+  // and both users and reviewers look for it in Settings under Account, not
+  // inside a privacy explainer. Please don't de-duplicate it away.
+  //
+  // Deliberately an ordinary row: findable, not shouty. The destructive
+  // styling and the confirmation both live on /account/delete, where the
+  // destructive action actually happens.
+  //
+  // Rendered in EVERY state of this section, loading included — a slow or
+  // failed identities call must not be able to hide the deletion path.
+  const deleteRow = (
+    <Pressable
+      onPress={handleDelete}
+      style={[styles.linkRow, { marginTop: spacing.md }]}
+      accessibilityRole="button"
+      accessibilityLabel="Delete account"
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowTitle}>Delete account</Text>
+        <Text style={styles.rowSub}>
+          Permanently delete your account and your data.
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
+    </Pressable>
+  );
+
   if (loading) {
     return (
       <>
@@ -900,6 +926,7 @@ function AccountSection() {
         <View style={styles.row}>
           <Text style={styles.rowSub}>Loading…</Text>
         </View>
+        {deleteRow}
       </>
     );
   }
@@ -992,151 +1019,7 @@ function AccountSection() {
           </Pressable>
         </>
       )}
-    </>
-  );
-}
-
-function PrivacyDataSection() {
-  const router = useRouter();
-  const { exporting, run: handleExport } = useAccountExport();
-  const handleDelete = () => {
-    Haptics.selectionAsync().catch(() => {});
-    router.push('/account/delete' as any);
-  };
-  const handleEmailPrivacy = () => {
-    Haptics.selectionAsync().catch(() => {});
-    // Bare mailto per spec — no subject/body pre-filled.
-    Linking.openURL('mailto:privacy@my-inner-map.com').catch((e) =>
-      console.warn('[settings/privacy] mailto threw:', (e as Error)?.message),
-    );
-  };
-  // Canonical, legally-binding documents (hosted). This section is a
-  // plain-language summary; these open the full live versions via the shared
-  // helper (utils/legalDocs) so the open mechanism is consistent app-wide.
-  const openLegalDoc = (url: string) => {
-    Haptics.selectionAsync().catch(() => {});
-    openLegalDocLive(url);
-  };
-
-  return (
-    <>
-      <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>PRIVACY &amp; DATA</Text>
-
-      <View style={styles.privacyBlock}>
-        <Text style={styles.privacyH3}>THE FULL DOCUMENTS</Text>
-        <Text style={styles.privacyBody}>
-          The notes below are a plain-language summary. The full,
-          legally-binding documents live on the web:
-        </Text>
-        <Pressable
-          onPress={() => openLegalDoc(PRIVACY_POLICY_URL)}
-          style={styles.privacyActionBtn}
-          accessibilityLabel="Read the full Privacy Policy"
-        >
-          <Text style={styles.privacyActionBtnText}>READ THE FULL PRIVACY POLICY ↗</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => openLegalDoc(TERMS_OF_SERVICE_URL)}
-          style={[styles.privacyActionBtn, { marginTop: spacing.sm }]}
-          accessibilityLabel="Read the full Terms of Service"
-        >
-          <Text style={styles.privacyActionBtnText}>READ THE FULL TERMS OF SERVICE ↗</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.privacyBlock}>
-        <Text style={styles.privacyH3}>WHAT WE STORE</Text>
-        <Text style={styles.privacyBodyBold}>On your device only</Text>
-        <Text style={styles.privacyBody}>
-          Private journal entries. Entries you mark private are encrypted
-          with a key only your phone has — we genuinely can't read them.
-          (Entries you share with the AI are stored securely on our
-          servers, like your conversations.)
-        </Text>
-        <Text style={[styles.privacyBodyBold, styles.privacyBodyBoldTop]}>On our server</Text>
-        <Text style={styles.privacyBody}>
-          Your account, your conversations, your map (parts and patterns),
-          and any journal entries you choose to share.
-          This is how Inner Map remembers context across sessions and how the
-          AI can respond with continuity.
-        </Text>
-      </View>
-
-      <View style={styles.privacyBlock}>
-        <Text style={styles.privacyH3}>WHAT WE NEVER DO</Text>
-        <Text style={styles.privacyBullet}>•  Sell your data</Text>
-        <Text style={styles.privacyBullet}>•  Run ads</Text>
-        <Text style={styles.privacyBullet}>•  Share with third parties for marketing</Text>
-        <Text style={styles.privacyBullet}>•  Train AI models on your conversations</Text>
-      </View>
-
-      <View style={styles.privacyBlock}>
-        <Text style={styles.privacyH3}>ABOUT THE AI</Text>
-        <Text style={styles.privacyBody}>
-          Inner Map uses Anthropic (for chat), OpenAI (for voice notes and
-          the app's memory), and Cartesia + ElevenLabs (for live voice).
-          These providers process your conversations or audio to generate
-          replies — that's how the app works. Per their paid API agreements,
-          they don't retain your data or use it to train their models.
-        </Text>
-        <Text style={[styles.privacyBody, { marginTop: spacing.sm }]}>
-          We do not use your conversations to train any model either. Your
-          inner work is not training data.
-        </Text>
-      </View>
-
-      <View style={styles.privacyBlock}>
-        <Text style={styles.privacyH3}>YOUR RIGHTS</Text>
-
-        <Text style={styles.privacyBodyBold}>Export your data</Text>
-        <Text style={styles.privacyBody}>
-          Download a copy of your data as a JSON file, anytime.
-        </Text>
-        <Pressable
-          onPress={handleExport}
-          disabled={exporting}
-          style={[styles.privacyActionBtn, exporting && styles.privacyActionBtnDim]}
-          accessibilityLabel="Export my data"
-        >
-          <Text style={styles.privacyActionBtnText}>
-            {exporting ? 'EXPORTING…' : 'EXPORT MY DATA'}
-          </Text>
-        </Pressable>
-
-        <Text style={[styles.privacyBodyBold, styles.privacyBodyBoldTop]}>Delete your account</Text>
-        <Text style={styles.privacyBody}>
-          Remove everything from our servers in one tap. Not soft-deleted —
-          actually deleted.
-        </Text>
-        <Pressable
-          onPress={handleDelete}
-          style={[styles.privacyActionBtn, styles.privacyActionBtnDestructive]}
-          accessibilityLabel="Delete my account"
-        >
-          <Text style={[styles.privacyActionBtnText, styles.privacyActionBtnTextDestructive]}>
-            DELETE MY ACCOUNT
-          </Text>
-        </Pressable>
-
-        <Text style={[styles.privacyBodyBold, styles.privacyBodyBoldTop]}>Reach out</Text>
-        <Text style={styles.privacyBody}>
-          Email privacy@my-inner-map.com for questions or data requests.
-        </Text>
-        <Pressable
-          onPress={handleEmailPrivacy}
-          style={styles.privacyActionBtn}
-          accessibilityLabel="Email privacy@my-inner-map.com"
-        >
-          <Text style={styles.privacyActionBtnText}>EMAIL PRIVACY@MY-INNER-MAP.COM</Text>
-        </Pressable>
-      </View>
-
-      <View style={[styles.privacyBlock, styles.privacyBottomLine]}>
-        <Text style={styles.privacyH3}>THE BOTTOM LINE</Text>
-        <Text style={styles.privacyBody}>
-          Inner work is private work. We built Inner Map to treat it that way.
-        </Text>
-      </View>
+      {deleteRow}
     </>
   );
 }

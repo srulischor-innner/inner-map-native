@@ -5,27 +5,28 @@
 //   2. Recent Sessions — last 8 sessions from /api/sessions, each with date,
 //      AI-generated title, most-active-part colored dot. Tap opens the
 //      shared SessionDetailModal.
-//   3. Settings — experience level
-//   4. About / Feedback / Privacy links
-//   5. Reset onboarding (long-press) + version number
+//   3. About / Feedback / Settings / Privacy, Data & Safety links
+//   4. Reset onboarding (long-press) + version number
+//
+// The experience-level row and its picker used to live here too. They were
+// drift: Settings has always owned that control, and its copy explains what
+// the setting DOES ("How the AI calibrates its voice for you") where this
+// one only showed the current value. One control, one place — the Settings
+// link below is the route to it.
 
 import React, { useEffect, useState } from 'react';
 import {
   Modal, View, Text, Pressable, ScrollView, StyleSheet,
   Linking, Alert,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 
-import { colors, radii, spacing } from '../constants/theme';
+import { colors, spacing } from '../constants/theme';
 import { api, RelationshipSession } from '../services/api';
-import {
-  useExperienceLevel, setExperienceLevel,
-  LEVEL_OPTIONS, LEVEL_LABELS, ExperienceLevel,
-} from '../services/experienceLevel';
 import { resetOnboarding } from '../services/onboarding';
 import { subscribeInbox, refreshInboxStatus } from '../services/messagesInbox';
 import { PART_COLOR } from '../utils/markers';
@@ -190,11 +191,6 @@ export function HamburgerMenu({
 
         <View style={styles.divider} />
 
-        {/* ===== SETTINGS ===== */}
-        <SectionLabel>SETTINGS</SectionLabel>
-        <ExperienceLevelRow />
-
-
         {/* ===== LINKS ===== */}
         <SectionLabel>ABOUT</SectionLabel>
         <LinkRow
@@ -221,8 +217,13 @@ export function HamburgerMenu({
           onPress={() => go('/settings')}
           icon="settings-outline"
         />
+        {/* The sub-line is load-bearing, not decoration: "Safety" sitting
+            next to "Privacy" and "Data" reads as DATA safety. The second
+            line is what tells a user in distress that help lives behind
+            this row. Do not drop it to tidy the menu. */}
         <LinkRow
-          label="Privacy policy"
+          label="Privacy, Data & Safety"
+          sub="Your data, your controls, and where to get help right now."
           onPress={() => go('/privacy')}
           icon="shield-checkmark-outline"
         />
@@ -342,94 +343,34 @@ function formatShortDate(iso?: string): string {
   return `${months[mi]} ${parseInt(d, 10)}`;
 }
 
-// ---------- experience-level row + picker ----------
-function ExperienceLevelRow() {
-  const level = useExperienceLevel();
-  const [picking, setPicking] = useState(false);
-  return (
-    <>
-      <Pressable onPress={() => setPicking(true)} style={styles.row}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.rowLabel}>Your experience level</Text>
-          <Text style={styles.rowSub}>{LEVEL_LABELS[level]}</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={16} color={colors.creamFaint} />
-      </Pressable>
-      <ExperienceLevelPicker
-        visible={picking}
-        current={level}
-        onClose={() => setPicking(false)}
-      />
-    </>
-  );
-}
-
-function ExperienceLevelPicker({
-  visible, current, onClose,
-}: { visible: boolean; current: ExperienceLevel; onClose: () => void }) {
-  // The sheet is anchored at bottom:0, so it sits UNDER the gesture bar /
-  // 3-button nav bar. The inset goes on the sheet container (not on the
-  // ScrollView's contentContainer) so it ADDS to the scroll body's own
-  // paddingBottom: 24 rather than replacing it — the 4th option ("in a hard
-  // place") keeps its full 24px of breathing room above the nav strip on
-  // every device. Same idiom as SpectrumDetailModal / PartFolderModal.
-  const insets = useSafeAreaInsets();
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.pickerBackdrop} onPress={onClose} />
-      <View style={[styles.pickerSheet, { paddingBottom: insets.bottom }]}>
-        <View style={styles.pickerHandle} />
-        <View style={styles.pickerHeader}>
-          <Text style={styles.pickerTitle}>Where are you in your journey?</Text>
-          <Pressable onPress={onClose} style={{ padding: 6 }} hitSlop={10}>
-            <Ionicons name="close" size={22} color={colors.creamFaint} />
-          </Pressable>
-        </View>
-        <Text style={styles.pickerBody}>
-          You can change this anytime — the new setting applies to your next reply.
-        </Text>
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
-          {LEVEL_OPTIONS.map((opt) => {
-            const isHard = opt.level === 'hard';
-            const isCurrent = !isHard && opt.level === current;
-            return (
-              <Pressable
-                key={opt.level}
-                onPress={async () => {
-                  Haptics.selectionAsync().catch(() => {});
-                  // The 4th option ("hard place") sets level to curious;
-                  // doesn't re-trigger the resources screen from settings —
-                  // the user already saw it once if they picked it then.
-                  await setExperienceLevel(isHard ? 'curious' : (opt.level as ExperienceLevel));
-                  onClose();
-                }}
-                style={[styles.pickerOption, isCurrent && styles.pickerOptionSelected]}
-              >
-                <Text style={[styles.pickerOptionTitle, isCurrent && { color: colors.amber }]}>
-                  {opt.title}
-                </Text>
-                <Text style={styles.pickerOptionSubtitle}>{opt.subtitle}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-    </Modal>
-  );
-}
-
 // ---------- reusable bits ----------
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return <Text style={styles.sectionLabel}>{children}</Text>;
 }
+/** One menu row. `sub` is optional — when present the label and sub-line
+ *  stack inside the flex:1 column, so the sub-line WRAPS rather than
+ *  pushing the badge and chevron off the row. (Before the sub-line existed
+ *  the label sat bare next to a flex:1 spacer; the column replaces that
+ *  spacer and behaves identically when `sub` is absent.) */
 function LinkRow({
-  label, onPress, icon, badge,
-}: { label: string; onPress: () => void; icon: keyof typeof Ionicons.glyphMap; badge?: number }) {
+  label, sub, onPress, icon, badge,
+}: {
+  label: string;
+  sub?: string;
+  onPress: () => void;
+  icon: keyof typeof Ionicons.glyphMap;
+  badge?: number;
+}) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.linkRow, pressed && { opacity: 0.6 }]}>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.linkRow, pressed && { opacity: 0.6 }]}
+    >
       <Ionicons name={icon} size={18} color={colors.amber} style={{ marginRight: 12 }} />
-      <Text style={styles.rowLabel}>{label}</Text>
-      <View style={{ flex: 1 }} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        {sub ? <Text style={styles.rowSub}>{sub}</Text> : null}
+      </View>
       {/* Quiet unread badge — small static count, no animation. */}
       {badge && badge > 0 ? (
         <View style={styles.rowBadge}>
@@ -499,15 +440,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
 
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 0.5,
-  },
   rowLabel: { color: colors.cream, fontSize: 15 },
-  rowSub: { color: colors.creamFaint, fontSize: 12, marginTop: 2 },
+  // Optional second line on a LinkRow. Currently only "Privacy, Data &
+  // Safety" uses it — it's what disambiguates "Safety" from data safety.
+  rowSub: { color: colors.creamFaint, fontSize: 12, marginTop: 2, lineHeight: 16 },
 
   linkRow: {
     flexDirection: 'row',
@@ -553,44 +489,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // Experience-level picker — bottom sheet, matches the spectrum / part-
-  // folder modal grammar. NOTE: paddingBottom is applied at runtime from
-  // insets.bottom (see ExperienceLevelPicker) — don't add a static one here.
-  pickerBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
-  pickerSheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    maxHeight: '80%',
-    backgroundColor: colors.backgroundCard,
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingTop: 8,
-  },
-  pickerHandle: {
-    alignSelf: 'center',
-    width: 42, height: 4, borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    marginBottom: 8,
-  },
-  pickerHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 24, paddingBottom: 8,
-  },
-  pickerTitle: { color: colors.amber, fontSize: 18, fontWeight: '600', flex: 1, marginRight: 8 },
-  pickerBody: {
-    color: colors.creamDim, fontSize: 13, lineHeight: 19,
-    paddingHorizontal: 24, paddingBottom: 16,
-  },
-  pickerOption: {
-    backgroundColor: colors.background,
-    borderColor: colors.border, borderWidth: 1, borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-  },
-  pickerOptionSelected: {
-    borderColor: colors.amber,
-    backgroundColor: 'rgba(230,180,122,0.08)',
-  },
-  pickerOptionTitle: { color: colors.cream, fontSize: 14, fontWeight: '700', marginBottom: 4 },
-  pickerOptionSubtitle: { color: colors.creamDim, fontSize: 12, lineHeight: 17 },
+  // (The experience-level picker's bottom-sheet styles went with the
+  // picker itself — Settings owns that control now.)
 
   emptySessions: {
     color: colors.creamFaint,
