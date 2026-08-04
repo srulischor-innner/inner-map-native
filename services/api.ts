@@ -832,20 +832,13 @@ export const api = {
     } catch { return null; }
   },
 
-  async getReturningGreeting(): Promise<{ greeting: string | null; suggestions: string[] }> {
-    try {
-      const headers = await authHeaders();
-      const res = await apiFetch('/api/returning-greeting', { label: 'returning-greeting', headers });
-      if (!res.ok) return { greeting: null, suggestions: [] };
-      const j: any = await res.json();
-      const greeting = (j && (j.greeting || j.text)) || null;
-      const suggestions = Array.isArray(j?.suggestions)
-        ? j.suggestions.filter((s: any) => typeof s === 'string' && s.trim()).slice(0, 3)
-        : [];
-      return { greeting, suggestions };
-    } catch { return { greeting: null, suggestions: [] }; }
-  },
-
+  // NOTE: getReturningGreeting is GONE (founder decision, August 2026). The
+  // session opener is now a fixed client constant on both threads, so there is
+  // no caller for /api/returning-greeting and the route is being removed
+  // server-side. Do not re-add a client method for it: the compat rung this
+  // one carried (promote `greeting` when a server predates `exploreGreeting`)
+  // and the null-vs-empty-string distinction below it only mattered because a
+  // model-authored string was about to be rendered as an opening bubble.
   async getJourney(): Promise<any | null> {
     try {
       const headers = await authHeaders();
@@ -2463,28 +2456,42 @@ export const api = {
     }
   },
 
-  /** GET /api/first-session-status. Returns `{ completedAt: string | null }`
-   *  where completedAt is the ISO timestamp the server wrote when the
-   *  AI emitted [STARTER_MAP_COMPLETE] in the user's first session.
+  /** GET /api/first-session-status. Returns
+   *  `{ completedAt: string | null; ok: boolean }` where completedAt is the
+   *  ISO timestamp the server wrote when the AI emitted
+   *  [STARTER_MAP_COMPLETE] in the user's first session.
    *  null = first session not done yet — the chat tab shows the
    *  "Building your starter map" banner and the Map tab empty state
    *  shows the "Start building" CTA. Once set, stays set forever
-   *  (it never resets). null also returned on transport failure so
-   *  the client fails closed — better to briefly show first-session
-   *  UI for a returning user than to hide it from a new one. */
-  async getFirstSessionStatus(): Promise<{ completedAt: string | null }> {
+   *  (it never resets).
+   *
+   *  `ok` is the part that matters to callers, and the reason this method
+   *  does not simply throw on failure. It is TRUE only when the server
+   *  actually answered with a parseable body — i.e. `completedAt` is the
+   *  server's answer. It is FALSE for every failure shape (transport throw,
+   *  non-2xx, unparseable body), where `completedAt: null` is a PLACEHOLDER,
+   *  not an answer.
+   *
+   *  This method deliberately never throws: callers run it inside a
+   *  Promise.all alongside the greeting and map fetches, and a rejection
+   *  there would take those down with it. But "never throws" made the two
+   *  outcomes indistinguishable, and a caller that reads `completedAt: null`
+   *  as an answer demotes a RETURNING user to first-ever on one flaky
+   *  request — discarding their real server callback and greeting them as if
+   *  they had never been here. Check `ok` before believing `completedAt`. */
+  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean }> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/first-session-status', {
         label: 'first-session-status', method: 'GET', headers,
       });
-      if (!res.ok) return { completedAt: null };
+      if (!res.ok) return { completedAt: null, ok: false };
       const j: any = await res.json().catch(() => null);
-      if (!j || typeof j !== 'object') return { completedAt: null };
-      return { completedAt: typeof j.completedAt === 'string' ? j.completedAt : null };
+      if (!j || typeof j !== 'object') return { completedAt: null, ok: false };
+      return { completedAt: typeof j.completedAt === 'string' ? j.completedAt : null, ok: true };
     } catch (e) {
       console.warn('[first-session-status] threw:', (e as Error)?.message);
-      return { completedAt: null };
+      return { completedAt: null, ok: false };
     }
   },
 

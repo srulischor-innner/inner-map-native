@@ -1,7 +1,8 @@
 // Chat screen — the core conversation surface of Inner Map on mobile. Mirrors the web
 // app's behavior end-to-end:
-//   1. On mount, fetch the returning greeting (or show a warm first-open line) plus
-//      the current map state to decide the session phase (1-3).
+//   1. On mount, fetch the first-session status plus the current map state — to decide
+//      the session phase (1-3) and which of the TWO CONSTANT openers to place. No
+//      greeting is fetched; see "THE OPENING BUBBLE IS A CONSTANT" below.
 //   2. User sends a message → stream the response from /api/chat and reveal it word
 //      by word, pushing to both `history` (for next /api/chat body) and `messages`
 //      (the on-screen list).
@@ -26,6 +27,7 @@ import {
   Animated,
   Easing,
   Text,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -98,6 +100,58 @@ const ORIENTATION_MESSAGE =
   "quite it' or 'It's more like X' is the most useful thing you can share.\n\n" +
   "Would you like to begin?";
 
+// ===== THE OPENING BUBBLE IS A CONSTANT =====
+// Founder decision, August 2026: the dynamic session-opening greeting is
+// GONE. Not gated, not capped, not made safe — removed. Every non-first-ever
+// user gets the string below, byte-identical, on BOTH threads, every launch
+// and after every boundary.
+//
+// What this replaces: a server-generated callback off /api/returning-greeting
+// ("picking up with someone who knows you"), a "Last time we explored X"
+// template interpolating a part name, and a same-session variant for the
+// window after [STARTER_MAP_COMPLETE]. Each of those asserted something about
+// the user's history — a prior sitting, a date, a session count, a part named
+// last time — and each assertion was a fabrication risk that five rounds of
+// machinery (a length cap, structural JSON-leak guards, tense-separated refs,
+// a counted opener gate, a first-session handoff) existed only to contain.
+// With no dynamic input there is nothing to contain: no model call, no fetch,
+// no payload, no cohort that can be told about a session that did not happen.
+//
+// THE INVARIANT, and it is the whole point: the opener has exactly two
+// possible values and both are compile-time constants in this file.
+//
+//   ORIENTATION_MESSAGE — first-ever session (firstSessionPending === true)
+//   STANDARD_OPENER     — everyone else, both threads, always
+//
+// Present tense is load-bearing, not styling. Do not add "last time", "when
+// we spoke", "since you were here", a date, or a session count. Do not
+// reintroduce a fetch here: if a future opener needs to be contextual, that is
+// a product decision to be taken deliberately, and the guards that were
+// deleted alongside this change (capGreeting, capPartLabel, the opener gate)
+// would all have to come back with it. Leaving a hook for it "just in case" is
+// how the machinery grew the first time.
+//
+// This string is the one 163 Explore sessions already opened on. It is the
+// codified generic that every ladder in the old design fell through to, so it
+// is not new copy — it is the rung that was always true.
+const STANDARD_OPENER =
+  "I'm here to help you explore what's happening inside. " +
+  "What would you like to understand better about yourself today?";
+
+// THE ONLY OPENER SELECTOR IN THIS FILE. Four call sites place an opening
+// bubble — boot (Process), the Explore seed effect, the End Session reset and
+// the resume-lock break — and all four go through here, so the two threads
+// cannot disagree about who this user is, and there is exactly ONE place to
+// read to prove the opener is a constant. Its entire input is one tri-state
+// boolean. It touches no ref, no state, no payload and no clock. `undefined`
+// (status still settling) resolves to the standard opener, which is only
+// reachable from the two boundary resets — boot and the seed effect both wait
+// for the flag — and those two only happen to a user who has already been
+// through a session.
+function openerFor(firstSessionPending: boolean | undefined): string {
+  return firstSessionPending === true ? ORIENTATION_MESSAGE : STANDARD_OPENER;
+}
+
 export default function ChatScreen() {
   // Persistent session id for this app launch (a fresh one per "session" like the web app).
   const sessionIdRef = useRef<string>(uuidv4());
@@ -135,9 +189,14 @@ export default function ChatScreen() {
   // Mode for /api/chat — onboarding for brand-new users, ongoing once any core node is filled.
   const [mode, setMode] = useState<'onboarding' | 'ongoing'>('onboarding');
   const [sending, setSending] = useState(false);
-  // Contextual conversation starters returned by /api/returning-greeting —
-  // grounded in the last session so the chips land on what's actually alive.
-  const [starters, setStarters] = useState<string[]>([]);
+  // Starter chips are STATIC. They used to be the third field off the
+  // /api/returning-greeting completion ("grounded in the last session's
+  // themes"), which made them a boundary claim in chip form — three of them,
+  // rendered directly under the opening bubble. With the greeting gone the
+  // chips go with it: ConversationStarters owns FALLBACK_STARTERS, which are
+  // generic, present-tense and assert nothing, and passing no `starters` prop
+  // is what selects them. Do not add a list here — that source is one file
+  // over and a second copy is how two call sites drift.
   // Session-level audio mute/unmute. Default OFF — user opts in each session
   // by tapping the speaker icon in the chat header. When ON, every new AI
   // reply auto-plays via the streaming TTS pipeline. When the user mutes,
@@ -162,13 +221,17 @@ export default function ChatScreen() {
   const chatModeRef = useRef<ChatMode>(chatMode);
   useEffect(() => { chatModeRef.current = chatMode; }, [chatMode]);
 
-  // Most-recent-detected part name. Populated from /api/parts at
-  // boot; used by the Explore opening greeting to reference the
-  // last thing the user explored. null on first-ever-session
-  // (parts table empty for this user).
-  const mostRecentPartRef = useRef<string | null>(null);
-  // Once true, the Explore thread has been seeded with its
-  // opening greeting for this session. Reset on end-session.
+  // "The Explore thread has its opening bubble." Kept, and NOT part of the
+  // greeting machinery: it is the synchronous guard against double-seeding.
+  // setExploreMessages is async, so the length check in the seed effect can
+  // still read stale on a re-run that happens before the state commits (the
+  // firstSessionPending flip is exactly such a re-run).
+  //
+  // It is only ever set TRUE, never re-armed, because every place that empties
+  // the Explore thread REFILLS it on the same lines: both boundary resets seed
+  // both threads by hand, and the resume consumer hydrates the transcript
+  // instead of seeding. Nothing can leave this true over an empty thread, so
+  // there is no state to re-arm.
   const exploreGreetedRef = useRef<boolean>(false);
   // Resume mode-lock (conversation continuation). Set when a past session
   // is reopened via pendingSessionResume; holds the locked mode. Non-null
@@ -375,15 +438,13 @@ export default function ChatScreen() {
   // "View my starter map" CTA on the completion bubble.
   const [firstSessionPending, setFirstSessionPending] = useState<boolean | undefined>(undefined);
   const router = useRouter();
-  useEffect(() => {
-    let cancelled = false;
-    api.getFirstSessionStatus()
-      .then(({ completedAt }) => {
-        if (!cancelled) setFirstSessionPending(completedAt === null);
-      })
-      .catch(() => { if (!cancelled) setFirstSessionPending(false); });
-    return () => { cancelled = true; };
-  }, []);
+  // NOTE: there is no second effect fetching this. /api/first-session-status
+  // used to be called TWICE at boot — here, wrapped in a retry that could
+  // never fire, and again inside the boot Promise.all with no resilience at
+  // all. The un-retried copy was the one that decided whether the server's
+  // Explore callback was published or discarded, so the resilience sat on the
+  // call whose answer mattered least. Both are now the single retrying call in
+  // the boot effect below, which also owns setFirstSessionPending.
 
   // Build 11 — soft migration prompt for existing anonymous testers.
   // Probe /api/auth/identities once on mount; if empty AND the user
@@ -433,10 +494,6 @@ export default function ChatScreen() {
   // without leaving a gap or going too far.
   const insets = useSafeAreaInsets();
 
-  // ===== BOOT: returning greeting + map state =====
-  // Instead of inserting a placeholder bubble that then gets swapped (which
-  // read as a glitch), we show the typing indicator immediately and insert
-  // the greeting bubble only once — when the real text is ready.
   // Tab-level cleanup — stop any playing clip, cancel any in-flight
   // streaming-TTS queue, flip audio mode off, and reset the ambient
   // attention indicator to 'quiet' when the chat screen unmounts. None
@@ -456,25 +513,95 @@ export default function ChatScreen() {
     clearMapVoiceHistory();
   }, [sessionIdSeed]);
 
+  // ===== BOOT =====
+  // Two fetches, both of which the OPENER no longer depends on:
+  //
+  //   getFirstSessionStatus — decides ORIENTATION_MESSAGE vs STANDARD_OPENER,
+  //     and drives the "Building your starter map" banner + the CTA.
+  //   getLatestMap          — onboarding-vs-ongoing prompt routing only.
+  //
+  // The third call that used to sit here (getReturningGreeting) is gone, and
+  // with it the whole readiness apparatus: there is no async value the opener
+  // waits on any more, so there is no gate to hold, nothing to sequence, and
+  // no window in which a mode toggle can seed from a half-filled ref.
+  //
+  // WHAT IS STILL LOAD-BEARING, and it never depended on the greeting: this
+  // effect owns `typing`. setTyping(true) runs synchronously at the top;
+  // setTyping(false) sits at the BOTTOM of an async body, behind an await. A
+  // throw anywhere between the two — and everything after the await is
+  // unpoliced `any` off the wire — leaves the spinner running forever with an
+  // empty thread behind it. That is a blank-launch path with no greeting in
+  // it, so the .catch/.finally below STAYS. setTyping(false) is a
+  // set-to-constant and therefore idempotent: on a normal boot the finally is
+  // a no-op.
   useEffect(() => {
     setTyping(true);
     (async () => {
-      let greetingRes: { greeting: string | null; suggestions: string[] } = { greeting: null, suggestions: [] };
       let map: any = null;
-      // First-session status is fetched alongside the greeting + map
-      // so the opening bubble can be the orientation message (Part 3)
-      // without a second round-trip or a flash of the wrong copy.
-      let firstStatus: { completedAt: string | null } = { completedAt: null };
+      // First-session status is fetched alongside the map so the opening
+      // bubble can be the orientation message without a second round-trip or
+      // a flash of the wrong copy.
+      let firstStatus: { completedAt: string | null; ok: boolean } = { completedAt: null, ok: false };
       try {
-        [greetingRes, map, firstStatus] = await Promise.all([
-          api.getReturningGreeting(),
+        [map, firstStatus] = await Promise.all([
           api.getLatestMap(),
+          // ONE attempt, deliberately. This sits inside the Promise.all that
+          // gates the whole opening screen — setTyping(false) and the Process
+          // opener both wait on it — so anything serial in here is added
+          // directly to a blank app. The retry that used to be here (25s +
+          // 1200ms + 25s) doubled the worst case to ~51s to buy a second shot
+          // at an answer whose failure direction is the mild one (see below).
+          // As a single call it is bounded by the same 25s apiFetch timeout as
+          // the fetch beside it, so it can never be the long pole.
           api.getFirstSessionStatus(),
         ]);
       } catch (err) {
         console.warn('[chat] boot fetch failed:', (err as Error)?.message);
       }
+      // ===== "IS THIS PERSON NEW?" — AND WHAT TO DO WHEN WE CANNOT TELL =====
+      // `completedAt == null` is an ANSWER only when firstStatus.ok is true.
+      // On a failure it is a placeholder, and the two wrong answers are not
+      // symmetric:
+      //
+      //   Wrong TRUE (returning user treated as new) — an orientation they do
+      //   not need. Everything on screen is still TRUE; it is redundant and
+      //   mildly condescending, and it is repaired by the next launch.
+      //
+      //   Wrong FALSE (first-ever user treated as returning) — they are routed
+      //   past the orientation entirely, so their first-ever session opens with
+      //   no explanation of what the two modes are or what is about to happen,
+      //   and a first-ever session cannot be re-run.
+      //
+      // ON TRANSPORT FAILURE WE FAIL TOWARD FIRST-EVER. (The stakes here are
+      // lower than they were — with a constant opener, "returning" no longer
+      // unlocks a callback that could assert a session that never happened —
+      // but the orientation is still the thing a genuinely new user must not
+      // be denied, so the direction stands.)
+      //
+      // A map-content fallback was tried here — infer "returning" from the
+      // presence of parts rows when the status endpoint is unreachable — and it
+      // is DELETED, not weakened, because the predicate cannot hold:
+      // prompts/firstSession.js requires >=2 MAP_UPDATE/ADDED_TO_MAP entries
+      // BEFORE [STARTER_MAP_COMPLETE] may be emitted, so parts rows exist
+      // through the back half of EVERY first session. "Parts from a finished
+      // session" and "parts from the first session I am still inside" are the
+      // same payload. Mid-first-session relaunch + a status failure therefore
+      // read as RETURNING: the "Building your starter map" banner never
+      // renders, while the server still routes the turn through
+      // FIRST_SESSION_PROMPT (firstSessionCompletedAt is null) — so the model
+      // runs orientation with the orientation hidden. There is one authority on
+      // whether a first session has ever completed, it is this endpoint, and
+      // when it does not answer we take the mild wrong answer.
       const isFirstSession = firstStatus?.completedAt == null;
+      if (firstStatus?.ok !== true) {
+        console.warn('[chat] first-session status unresolved — showing orientation (fail-toward-first-ever)');
+      }
+      // PUBLISHED IMMEDIATELY, with nothing between it and the catch above that
+      // could throw. The Explore seed effect's one remaining guard is
+      // `firstSessionPending === undefined`, so this write is the only thing
+      // standing between a mode toggle and an empty Explore thread. Keep it
+      // here, at the top, ahead of all the map/mode derivation below.
+      setFirstSessionPending(isFirstSession);
 
       const md = map?.mapData || map || {};
       // Onboarding-vs-ongoing decision: "any core node filled" means
@@ -524,35 +651,14 @@ export default function ChatScreen() {
       );
       setMode(chosenMode);
 
-      // Pull the most-recently-detected part name out of the map
-      // payload (parts are sorted lastDetected DESC by the server).
-      // Used later by the Explore opening greeting to reference what
-      // the user explored last time.
-      try {
-        const parts = Array.isArray(map?.parts) ? map.parts : [];
-        const top = parts.find((p: any) => p && (p.name || p.category));
-        const label = top ? (String(top.name || '').trim() || String(top.category || '').trim()) : '';
-        mostRecentPartRef.current = label || null;
-        console.log(`[chat] boot — mostRecentPart=${mostRecentPartRef.current || '(none)'}`);
-      } catch (e) {
-        mostRecentPartRef.current = null;
-      }
-
-      if (greetingRes.suggestions.length > 0) setStarters(greetingRes.suggestions);
-
-      // Seed ONLY the Process thread on boot. Process is the default
-      // landing mode; the Explore thread stays empty until the user
-      // first switches to Explore (see the chatMode change effect
-      // below), at which point its own opener is injected.
-      //
-      // First-session users get the orientation message as the
-      // opening bubble on BOTH threads — whichever mode they land on
-      // or switch to, the first AI message is the orientation. After
-      // they send anything the server's FIRST_SESSION_PROMPT takes
-      // over and generates the real first-session work.
-      const finalGreeting = isFirstSession
-        ? ORIENTATION_MESSAGE
-        : ((greetingRes.greeting && greetingRes.greeting.trim()) || FALLBACK_GREETING);
+      // Seed ONLY the Process thread here. This is NOT the landing thread:
+      // chatMode initializes to 'explore' (see the useState above), so the user
+      // lands in Explore and the Explore thread is seeded by its own effect
+      // below — which, because chatMode is ALREADY 'explore' at mount, fires as
+      // soon as firstSessionPending resolves rather than on a user toggle.
+      // Process is seeded here so it is never found empty when the user does
+      // switch. The SAME two constants, chosen by the same flag, on both.
+      const finalGreeting = openerFor(isFirstSession);
       // Skip the opener if a session resume already hydrated the threads
       // (cold-start race: the resume focus-effect can land mid-boot). The
       // lock ref is set synchronously by the resume consumer.
@@ -562,7 +668,21 @@ export default function ChatScreen() {
       }
       setTyping(false);
 
-    })();
+    })()
+      .catch((err) => {
+        // Nothing above is ALLOWED to throw, but "allowed" is not "cannot" —
+        // `map` is typed `any` at the api.ts boundary and this effect owns the
+        // whole opening screen. A silent throw here costs the launch: no
+        // opener on either thread and a typing spinner that never clears.
+        console.warn('[chat] boot effect threw:', (err as Error)?.message);
+      })
+      .finally(() => {
+        // BACKSTOP for the spinner, not the happy path. This is the surviving
+        // half of the old boot-hold work and it does NOT depend on the
+        // greeting: setTyping(false) sits behind an await, so without this a
+        // throw in the sync derivation leaves the app spinning forever.
+        setTyping(false);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -605,7 +725,17 @@ export default function ChatScreen() {
   useFocusEffect(
     React.useCallback(() => {
       const resume = consumePendingSessionResume();
-      if (!resume || !resume.sessionId || !Array.isArray(resume.messages)) return;
+      // LENGTH, not just shape. SessionDetailModal.handleContinue strips markers,
+      // trims and filters empties before arming this, so a session whose stored
+      // rows were all markers/whitespace arms an EMPTY array — which is a valid
+      // array and passed this guard. What followed was the blank screen: both
+      // threads cleared below, the Explore latch set true, resumeLockedModeRef
+      // set (which suppresses boot's opener), and then nothing hydrated. Both
+      // threads empty for the whole session, escapable only by toggling mode.
+      // Bailing here leaves boot to place the constant opener as usual.
+      // EVERY COHORT GETS A BUBBLE — that is the invariant this whole revert is
+      // built on, and an empty resume payload was the one path out of it.
+      if (!resume || !resume.sessionId || !Array.isArray(resume.messages) || resume.messages.length === 0) return;
       const mode: ChatMode = resume.mode === 'process' ? 'process' : 'explore';
       // Reset BOTH threads so a boot greeting or prior content can't bleed
       // into the reopened conversation; hydrate only the resumed mode.
@@ -641,33 +771,39 @@ export default function ChatScreen() {
     }, []),
   );
 
-  // ===== EXPLORE OPENING GREETING =====
-  // Seeds the Explore thread the first time the user switches into it
-  // during this session. First-ever session (no parts detected yet) →
-  // generic opener; otherwise reference the most recently explored
-  // part by name. Only runs when chatMode flips TO explore AND the
-  // explore thread is empty AND we haven't already greeted this session.
+  // ===== EXPLORE OPENING BUBBLE =====
+  // Seeds the Explore thread once per session. Runs when chatMode IS explore AND
+  // the explore thread is empty AND we haven't already seeded this session.
+  //
+  // Explore is the DEFAULT landing mode, so on a normal launch this is not a
+  // "user switched" path: chatMode is already 'explore' at mount, the effect
+  // runs, bails on the undefined-flag guard, and re-runs to seed the moment boot
+  // publishes firstSessionPending. The toggle-into-Explore case is the same
+  // effect on a later render — it is only reachable when the user has switched
+  // to Process and back before the flag ever landed.
+  //
+  // TWO CONSTANTS, ONE FLAG. There is no ladder here any more — no server
+  // callback, no recent-part template, no same-session variant, no generic
+  // last resort. Explore and Process place the SAME string for the same
+  // cohort, chosen by the same `firstSessionPending`, so the two threads
+  // cannot disagree about who this user is.
+  //
+  // The old readiness gate (bootGreetingReady) is gone with the fetch it
+  // sequenced. The `firstSessionPending === undefined` guard below is what is
+  // left of the wait, and it is a different thing: it stops a fast toggle from
+  // showing a returning-user opener to someone who turns out to be first-ever.
+  // Returning early WITHOUT latching means the effect re-runs and seeds once
+  // the status lands.
   useEffect(() => {
     if (chatMode !== 'explore') return;
     if (exploreGreetedRef.current) return;
     if (exploreMessages.length > 0) return;
-    // Wait for the first-session status to resolve before seeding —
-    // a first-session user must get the orientation message, not the
-    // regular explore opener. Returning early WITHOUT flipping
-    // exploreGreetedRef means the effect re-runs (and seeds) once
-    // firstSessionPending lands.
     if (firstSessionPending === undefined) return;
     exploreGreetedRef.current = true;
-    const recent = mostRecentPartRef.current;
-    // First-session users get the orientation message (Part 3) —
-    // overrides both the "last time we explored…" and the generic
-    // first-ever opener.
-    const opener = firstSessionPending === true
-      ? ORIENTATION_MESSAGE
-      : recent
-        ? `Last time we explored ${recent}. What would you like to understand better today?`
-        : "I'm here to help you explore what's happening inside. What would you like to understand better about yourself today?";
-    console.log(`[chat] seeding Explore thread — ${firstSessionPending ? 'first-session orientation' : recent ? 'subsequent' : 'first'} opener`);
+    const opener = openerFor(firstSessionPending);
+    console.log(
+      `[chat] seeding Explore thread — ${firstSessionPending === true ? 'first-session orientation' : 'standard'} opener`,
+    );
     const id = uuidv4();
     setExploreMessages((prev) => [...prev, { id, role: 'assistant', text: opener }]);
     exploreHistoryRef.current.push({ role: 'assistant', content: opener });
@@ -763,25 +899,22 @@ export default function ChatScreen() {
     if (resumeLockedModeRef.current && nextMode !== resumeLockedModeRef.current) {
       resumeLockedModeRef.current = null;
       sessionIdRef.current = uuidv4();
-      // Reset both threads (mirror the end-session reset) so neither the
-      // reopened transcript nor a stale opener can save under the new id.
-      processHistoryRef.current = [];
-      exploreHistoryRef.current = [];
-      setProcessMessages([]);
-      setExploreMessages([]);
       hasEngagedRef.current = false;     // fresh conversation → greeting rests at top
-      exploreGreetedRef.current = false; // re-arm the Explore opener
-      // Seed the Process opener so the fresh conversation isn't blank
-      // (Explore self-seeds via its opener effect when switched into).
-      (async () => {
-        let greeting = FALLBACK_GREETING;
-        try {
-          const next = await api.getReturningGreeting();
-          if (next?.greeting && next.greeting.trim()) greeting = next.greeting.trim();
-        } catch {}
-        addAssistantMessageToProcess(greeting);
-        processHistoryRef.current.push({ role: 'assistant', content: greeting });
-      })();
+      // Fully SYNCHRONOUS now, and both threads seeded here rather than one
+      // here and one from the effect. This used to run through the opener
+      // gate: shut it, publish the thread clears, await a returning-greeting
+      // refresh, reopen — and the gate existed because that await always
+      // yielded, letting the seed effect run and latch onto stale refs. There
+      // is no fetch left to sequence. Mirrors the End Session reset exactly;
+      // see the longer note there for why the Explore thread is filled on this
+      // line instead of being left to its effect.
+      const greeting = openerFor(firstSessionPending);
+      exploreGreetedRef.current = true; // seeded on this line, not by the effect
+      setProcessMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
+      setExploreMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
+      processHistoryRef.current = [{ role: 'assistant', content: greeting }];
+      exploreHistoryRef.current = [{ role: 'assistant', content: greeting }];
+      scrollToBottom();
     }
     chatModeRef.current = nextMode;
     setChatMode(nextMode);
@@ -1021,6 +1154,16 @@ export default function ChatScreen() {
         const starterMapDone = !stopped && hasStarterMapComplete(finalRaw);
         updateBubble(target, false, starterMapDone ? { starterMapComplete: true } : undefined);
         if (starterMapDone) {
+          // A BARE FLIP, again. This used to route through completeFirstSession
+          // — a one-shot handoff that shut the opener gate, published the flip
+          // inside it and refetched the map for a same-session part label. All
+          // of that existed because the Explore opener read two boot-captured
+          // refs that were null for a first-ever user, so the flip alone would
+          // have latched them onto the generic constant. There are no refs now:
+          // the opener is a constant either way, and the only thing this flip
+          // changes is which of the two constants a LATER Explore seed picks,
+          // plus the banner and the CTA. Nothing to sequence, nothing to
+          // refresh, no echo of the marker that can fabricate a boundary.
           setFirstSessionPending(false);
           console.log('[first-session] STARTER_MAP_COMPLETE — banner cleared, CTA on');
         }
@@ -1573,7 +1716,7 @@ export default function ChatScreen() {
                 switching modes shows the chips again on the new thread until
                 the user has spoken there too. */}
             {activeMessages.length > 0 && activeHistoryRef.current.every((m) => m.role !== 'user') ? (
-              <ConversationStarters onPick={handleSend} starters={starters} />
+              <ConversationStarters onPick={handleSend} />
             ) : null}
           </ScrollView>
         </Animated.View>
@@ -1749,7 +1892,6 @@ export default function ChatScreen() {
               // Session ended — clear the chat-active pulse on the Map
               // tab icon. Next user send re-arms it.
               setChatSessionActive(false);
-              setChatMode('explore');          // new session starts in active map-building mode
               setLivePart(null); setLiveConfidence(null);
               if (livePartTimerRef.current) { clearTimeout(livePartTimerRef.current); livePartTimerRef.current = null; }
               gatheredNoticedRef.current = false; // re-arm gathering for the next session
@@ -1757,20 +1899,42 @@ export default function ChatScreen() {
               // parked NOTICED items that the next sweep will bundle.
               refreshInboxStatus(true).catch(() => {});
               clearMapVoiceHistory();           // start map voice fresh next session
-              // Reset BOTH threads — both arrays + both refs cleared.
-              processHistoryRef.current = [];
-              exploreHistoryRef.current = [];
-              setProcessMessages([]);
-              setExploreMessages([]);
               hasEngagedRef.current = false;     // fresh conversation → greeting rests at top
-              exploreGreetedRef.current = false; // re-arm Explore opener for next session
               resumeLockedModeRef.current = null; // ending clears any resume mode-lock
               sessionIdRef.current = uuidv4();
-              const next = await api.getReturningGreeting();
-              const greeting = (next.greeting && next.greeting.trim()) || FALLBACK_GREETING;
-              if (next.suggestions.length) setStarters(next.suggestions);
-              addAssistantMessageToProcess(greeting);
-              processHistoryRef.current.push({ role: 'assistant', content: greeting });
+              // THE genuine session boundary in this app, and the site where the
+              // stale-callback bug was worst: the old sequence published the
+              // mode flip and the thread clears, then AWAITED a fresh
+              // /api/returning-greeting. The await always yielded, the seed
+              // effect ran inside it and latched onto the BOOT-TIME callback,
+              // and the line after the await wrote the fresh one into a ref
+              // nothing read again. A user ended a session about their father,
+              // tapped Continue, and Explore opened by calling back to the
+              // session BEFORE it. The opener gate was built to close that.
+              // There is nothing left to close: no fetch, no await, no yield,
+              // no ref.
+              //
+              // BOTH THREADS ARE SEEDED HERE, BY HAND. This used to clear the
+              // Explore thread and let its seed effect refill it — which worked
+              // only by accident. The effect deps are [chatMode,
+              // firstSessionPending], and the gate hold count used to be a third
+              // one: it flipped 0→1→0 across every boundary, and THAT is what
+              // re-ran the effect. Delete the gate and a session that ENDED in
+              // Explore re-sets chatMode to the value it already had, nothing in
+              // the deps changes, and the effect never fires: an empty Explore
+              // thread for the whole next session. Seeding both threads directly
+              // needs no dep churn to be correct, and it is what the invariant
+              // says anyway — the same constant, on both threads, for this
+              // cohort. Keep it synchronous: an await between the reset and
+              // these assignments is the exact shape the gate existed to police.
+              const greeting = openerFor(firstSessionPending);
+              exploreGreetedRef.current = true; // seeded on this line, not by the effect
+              setChatMode('explore');   // new session starts in active map-building mode
+              setProcessMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
+              setExploreMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
+              processHistoryRef.current = [{ role: 'assistant', content: greeting }];
+              exploreHistoryRef.current = [{ role: 'assistant', content: greeting }];
+              scrollToBottom();
               // Reveal messages again behind the dismissing summary modal.
               Animated.timing(messagesOpacity, {
                 toValue: 1, duration: 500, useNativeDriver: true,

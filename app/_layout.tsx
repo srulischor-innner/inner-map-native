@@ -1,9 +1,13 @@
 // Root layout — wraps the app in a Stack with a boot-time onboarding gate.
 //
 // HARDENED against every cause of "stuck on splash" we've hit so far:
-//   1. The Stack is ALWAYS rendered so Expo Router has a live navigator.
-//      We no longer gate Stack mount on `ready` — that used to drop the
-//      router.replace('/onboarding') call before the navigator existed.
+//   1. The Stack is gated ONLY by the lock/font splash, and the boot
+//      redirect waits for that gate to clear before it navigates. The
+//      original bug here was gating Stack mount on `ready` while firing
+//      router.replace('/onboarding') anyway — expo-router THROWS on a
+//      replace with no navigator mounted, so the redirect was dropped.
+//      Any future early return added to this component re-opens that hole
+//      unless it is also reflected in `stackMounted` below.
 //   2. getOnboardingState() is raced against a 3s timeout. Even if
 //      AsyncStorage hangs, we proceed to a sensible default (assume
 //      onboarded so the user lands on the main tabs).
@@ -38,7 +42,6 @@ import {
   ensureDefaultPreference, authenticate as authenticateBiometric, isLockEnabled,
 } from '../services/biometrics';
 import { LockScreen } from '../components/LockScreen';
-import { LandingScreen } from '../components/LandingScreen';
 
 // =============================================================================
 // SENTRY — crash + error reporting (June 2026). Initialized as early as
@@ -229,10 +232,12 @@ function RootLayout() {
   //     check completes with a failure (locked && !isCheckingBiometrics).
   const [locked, setLocked] = useState(true);
   const [isCheckingBiometrics, setIsCheckingBiometrics] = useState(true);
-  // True until the LandingScreen completes its 1500ms hold. Shown after
-  // biometrics pass on every cold open so the user lands on a calm
-  // arrival moment instead of jumping straight into the chat tab.
-  const [showLanding, setShowLanding] = useState(true);
+  // Boot routing decision, held until there is a navigator to route WITH.
+  // The boot effect DECIDES (reads the onboarding flags); the effect further
+  // down DELIVERS, and only once the Stack is actually mounted. Keeping the
+  // decision in state rather than firing it inline is the whole fix for the
+  // dropped-redirect bug described on that effect.
+  const [pendingRoute, setPendingRoute] = useState<'/sign-in' | '/onboarding' | null>(null);
   // Force-pass for the font-load gate. If useFonts hasn't resolved
   // within 2.5s — which happens in some preview/standalone builds
   // where asset bundling races with first render — we proceed with
@@ -480,28 +485,15 @@ function RootLayout() {
         const complete = state.hasSeenIntro && state.termsAccepted && state.intakeComplete;
         console.log(`[boot] step 2/3 — needsSignIn=${needsSignIn} complete=${complete}`);
 
+        // DECIDE ONLY. Do not navigate from here — see the delivery effect
+        // below for why an inline router.replace() at this point is thrown
+        // away rather than honored.
         if (needsSignIn && !hasRedirectedToOnboarding) {
-          hasRedirectedToOnboarding = true;
-          setTimeout(() => {
-            try {
-              console.log('[boot] → replace(/sign-in)');
-              router.replace('/sign-in');
-            } catch (e) {
-              console.warn('[boot] router.replace(/sign-in) threw:', (e as Error)?.message);
-            }
-          }, 0);
+          console.log('[boot] → queue replace(/sign-in)');
+          setPendingRoute('/sign-in');
         } else if (!complete && !hasRedirectedToOnboarding) {
-          hasRedirectedToOnboarding = true;
-          // Defer by one tick so the Stack's layoutEffects have wired up the
-          // route registry before we try to replace.
-          setTimeout(() => {
-            try {
-              console.log('[boot] → replace(/onboarding)');
-              router.replace('/onboarding');
-            } catch (e) {
-              console.warn('[boot] router.replace threw:', (e as Error)?.message);
-            }
-          }, 0);
+          console.log('[boot] → queue replace(/onboarding)');
+          setPendingRoute('/onboarding');
         } else if (!complete) {
           console.log('[boot] flags incomplete but already redirected this session — not re-redirecting');
         } else {
@@ -652,6 +644,59 @@ function RootLayout() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Hoisted above the render gate because the redirect-delivery effect below
+  // needs it too: it is one of the three conditions that decide whether the
+  // Stack — and therefore a navigator — is on screen this render.
+  const fontsReady = fontsLoaded || fontTimeoutElapsed;
+
+  // =========================================================================
+  // BOOT REDIRECT — DELIVERY. Gated on the Stack actually being mounted.
+  //
+  // WHY THIS EXISTS (bug, not polish). expo-router's router.replace() is not
+  // queued when there is no navigator: linkTo() calls assertIsReady(), which
+  // reads navigationRef.isReady() — implemented in React Navigation as
+  // "has a navigator registered a focus listener yet" — and THROWS if not.
+  // Every early return in this component (the lock/font splash, and until
+  // now the landing screen) renders a bare View, so during those returns no
+  // navigator exists and any replace() thrown from the boot effect died in
+  // its catch block. The old code set hasRedirectedToOnboarding to true
+  // BEFORE firing, so the throw was never retried: the user simply stayed on
+  // the tabs. With a ~3.9s landing hold in front of the Stack and the flag
+  // read capped at 3s, the boot decision ALWAYS landed inside that window —
+  // so the onboarding/sign-in redirect was dead on every cold start that
+  // needed it, from 58fddbf until now.
+  //
+  // `stackMounted` mirrors the render gate below exactly. When it flips true,
+  // this effect runs AFTER that commit — and React fires child effects before
+  // parent effects, so the Stack's navigator has already registered its focus
+  // listener by the time we get here. The setTimeout(0) is a one-tick defer
+  // for the route registry, NOT a stand-in for the readiness signal; the
+  // signal is stackMounted.
+  //
+  // hasRedirectedToOnboarding is now set on SUCCESS rather than on intent, so
+  // a replace that somehow still throws leaves pendingRoute set and gets
+  // another attempt on the next render instead of silently stranding the user.
+  // =========================================================================
+  const stackMounted = !isCheckingBiometrics && !locked && fontsReady;
+  useEffect(() => {
+    if (!pendingRoute || !stackMounted) return;
+    const t = setTimeout(() => {
+      try {
+        console.log(`[boot] → replace(${pendingRoute})`);
+        router.replace(pendingRoute);
+        hasRedirectedToOnboarding = true;
+        setPendingRoute(null);
+      } catch (e) {
+        console.warn(
+          `[boot] router.replace(${pendingRoute}) threw — retrying on next render:`,
+          (e as Error)?.message,
+        );
+      }
+    }, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRoute, stackMounted]);
+
   // INVARIANT: render NOTHING but the dark splash + triangle while
   // ANY of these are true:
   //   - isCheckingBiometrics — the cold-start auth check hasn't
@@ -667,7 +712,6 @@ function RootLayout() {
   // renders once the initial check has completed. During the
   // first-prompt window we show the bare dark triangle so Face ID
   // appears OVER nothing-but-icon.
-  const fontsReady = fontsLoaded || fontTimeoutElapsed;
   if (isCheckingBiometrics || locked || !fontsReady) {
     const showLockScreen = locked && !isCheckingBiometrics && fontsReady;
     return (
@@ -689,23 +733,28 @@ function RootLayout() {
     );
   }
 
-  // After biometrics, before the tabs — show the LandingScreen for ~1500ms.
-  // This is the arrival moment + a free window for the returning-greeting
-  // fetch on the chat tab to complete in the background.
-  if (showLanding) {
-    return (
-      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0a0a0f' }}>
-        <SafeAreaProvider>
-          <StatusBar style="light" />
-          <LandingScreen onReady={() => setShowLanding(false)} />
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    );
-  }
+  // The ~3.9s LandingScreen hold that used to sit HERE is GONE (founder call,
+  // 2026-08-03). It was introduced to buy a background window for the chat
+  // tab's returning-greeting fetch; that endpoint is deleted, and the premise
+  // was never true anyway — this branch returned INSTEAD of the Stack, so the
+  // tabs were not mounted and nothing was loading behind it. Every other
+  // candidate consumer was traced and none is real: fonts have their own gate
+  // above, the terms reconciliation is fire-and-forget with no UI, token
+  // bootstrap is additive with an X-User-Id fallback, and the chat tab's
+  // first-session status fetch cannot start until the tabs mount, which the
+  // hold delayed rather than covered. Its only real effect was to keep the
+  // navigator unmounted across the entire boot-routing window — see the
+  // delivery effect above.
+  //
+  // Nothing replaces it: the splash branch above already owns every frame from
+  // process start until biometrics/fonts resolve, and it shares this exact
+  // background (#0a0a0f) and icon, so the handoff is a same-color cut, not a
+  // blank or a flash.
 
-  // Stack is ALWAYS rendered — no spinner gate. A user who needs onboarding
-  // will flash the tabs for <100ms before the replace takes effect; acceptable
-  // vs. the risk of hanging on a spinner forever.
+  // Stack renders as soon as the splash gate clears — no spinner gate of its
+  // own. A user who needs onboarding will flash the tabs for <100ms before the
+  // replace takes effect; acceptable vs. the risk of hanging on a spinner
+  // forever.
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
       <SafeAreaProvider>

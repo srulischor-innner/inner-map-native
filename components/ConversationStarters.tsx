@@ -1,6 +1,16 @@
-// Conversation starter chips shown below the opening greeting when there's
-// no user-turn yet. Starters come from /api/returning-greeting (contextual
-// to last session) with a generic fallback for first-time users.
+// Conversation starter chips shown below the opening bubble when there's
+// no user-turn yet.
+//
+// FALLBACK_STARTERS is now the ONLY source for the main Chat tab: the chips
+// used to be the third field off /api/returning-greeting's model completion,
+// "grounded in the last session's themes", which made them a boundary claim
+// in chip form. That greeting is gone and so is the chip plumbing — the Chat
+// tab passes no `starters` prop, which selects the list below. These three
+// are deliberately present-tense and assert nothing about a prior sitting.
+//
+// The `starters` prop survives for RelationshipChat, whose RELATIONSHIP_STARTERS
+// is its own hardcoded constant list. It is not a hook for model output; do
+// not wire a fetch to it.
 //
 // Layout: vertical stack so every suggestion is visible at a glance —
 // horizontal scroll hid later options behind a gesture users didn't know

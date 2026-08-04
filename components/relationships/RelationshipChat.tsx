@@ -50,7 +50,10 @@ import { RelationshipSessionSummaryModal } from './RelationshipSessionSummaryMod
 
 // Opening AI message rendered when the partner chat history is empty
 // — gives the user a starting point so they're not staring at a blank
-// surface. Parallel to the main Chat tab's returning-greeting opener.
+// surface. Parallel to the main Chat tab's opener, which is likewise a
+// compile-time constant in app/(tabs)/index.tsx (STANDARD_OPENER /
+// ORIENTATION_MESSAGE) — nothing off the wire, nothing interpolated
+// from history, on this surface or that one.
 // Built with a {{partner}} placeholder so the same string handles
 // "your partner" and a named partner uniformly at render time.
 const OPENING_TEMPLATE =
