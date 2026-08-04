@@ -57,7 +57,11 @@ const base = {
     name: 'Inner Map',
     slug: 'inner-map',
     scheme: 'innermap',
-    version: '1.1.0',
+    // STORE VERSION. EAS remote versioning (eas.json appVersionSource:"remote"
+    // + autoIncrement) manages the BUILD number only — this string is never
+    // touched by it and must be bumped by hand. 1.1.0 -> 1.2.0 for the release
+    // carrying payments, the belief map element and the greeting revert.
+    version: '1.2.0',
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'dark',
