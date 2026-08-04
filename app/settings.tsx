@@ -13,13 +13,14 @@
 // one tap away. This screen is for the less-frequent, more meaningful
 // settings + transparency rows.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, ScrollView, StyleSheet, Linking, Alert, Switch,
+  ActivityIndicator, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 
@@ -50,6 +51,8 @@ import {
 import { getJournalShareDefault, setJournalShareDefault } from '../services/journal';
 import { getInboxPushOptIn, enableInboxPush, disableInboxPush } from '../services/push';
 import { api } from '../services/api';
+import type { BillingStatus } from '../services/api';
+import { restore as restorePurchases } from '../services/purchases';
 import * as Sentry from '@sentry/react-native';
 
 const SUPPORT_EMAIL = 'support@my-inner-map.com';
@@ -186,6 +189,9 @@ export default function SettingsScreen() {
             <Text style={styles.linkText}>CHANGE</Text>
           </Pressable>
         </View>
+
+        {/* ===== YOUR PLAN ===== */}
+        <YourPlanSection />
 
         {/* ===== ACCOUNT (Build 11) ===== */}
         <AccountSection />
@@ -1131,6 +1137,333 @@ function PrivacyDataSection() {
           Inner work is private work. We built Inner Map to treat it that way.
         </Text>
       </View>
+    </>
+  );
+}
+
+// =============================================================================
+// YourPlanSection — the purchase entry point. iOS ONLY: the entire section,
+// label included, is absent on Android until Play billing exists (see the gate
+// in the component body).
+//
+// Three rows:
+//   1. Membership        → /paywall, EXCEPT for an entitled user (active or
+//                          trialing), who is routed to Apple's subscription
+//                          management instead — we do not offer a subscription
+//                          to someone who already has one. Same helper as row
+//                          3; entitlement unknown falls through to the paywall.
+//                          Subtitle is LIVE, derived from the
+//                          SERVER's billing status (api.getBillingStatus),
+//                          which is the authority on entitlement — never the
+//                          client-side RevenueCat read. No subtitle at all
+//                          when that read fails; see planSubtitle.
+//   2. Restore purchases → RevenueCat restorePurchases(). Alerts on every
+//                          outcome, and always stops spinning — but only while
+//                          still mounted; the call can outlive the screen.
+//   3. Manage subscription → Apple's subscription management page.
+//
+// Row 3 exists because the paywall's disclosure line says "Cancel anytime in
+// Settings…". Users read that as THIS Settings screen and come looking here.
+// Without this row that sentence is a dead end.
+//
+// COPY RULE: capabilities only, never volume. No message counts, no "N left",
+// no "unlimited" — the server enforces a spend cap that no fixed number can
+// honestly describe, so any quantity here would be a claim we can't back.
+// =============================================================================
+
+// Apple's canonical subscription-management destination. The itms-apps scheme
+// jumps straight into the App Store app; the https form is the same
+// Apple-hosted page and is used as the fallback when the scheme is
+// unavailable (e.g. Simulator, where no App Store app is installed).
+const APPLE_SUBSCRIPTIONS_URL = 'itms-apps://apps.apple.com/account/subscriptions';
+const APPLE_SUBSCRIPTIONS_URL_WEB = 'https://apps.apple.com/account/subscriptions';
+
+/** The ONE way this app sends a user to subscription management.
+ *
+ *  Lifted out of the Manage row's handler when the Membership row started
+ *  needing it too (an entitled user is routed to management instead of the
+ *  paywall — see handleMembership). Two rows, one mechanism: the scheme, the
+ *  web fallback, and the "we couldn't open it" copy cannot drift between them.
+ *  Module-level and state-free on purpose, so it is not tangled in hook order. */
+async function openAppleSubscriptions(): Promise<void> {
+  try {
+    await Linking.openURL(APPLE_SUBSCRIPTIONS_URL);
+  } catch {
+    // No App Store app (Simulator) — fall back to the web page, and if even
+    // that fails, say so rather than silently doing nothing.
+    try {
+      await Linking.openURL(APPLE_SUBSCRIPTIONS_URL_WEB);
+    } catch (e) {
+      console.warn('[settings/manage-sub] threw:', (e as Error)?.message);
+      Alert.alert(
+        "Couldn't open the App Store",
+        'Open the Settings app on your device, tap your name, then Subscriptions.',
+      );
+    }
+  }
+}
+
+/** "August 12" — or null when the timestamp is missing or unparseable, so
+ *  every caller has to decide what to render without a date. */
+function formatPlanDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+}
+
+/** Map the server's billing state to one line of user-facing copy, or null
+ *  when there is nothing we can honestly say.
+ *
+ *  `null` status means UNKNOWN — getBillingStatus returns null on ANY failure
+ *  (transport, non-OK, malformed body), which is a different state from "the
+ *  server told us there is no subscription". Collapsing the two showed an
+ *  ACTIVE subscriber on a flaky connection the line "Not subscribed." directly
+ *  above a row that pushes a paywall. So: no subtitle at all when we could not
+ *  ask. The row still has its title and chevron and reads fine bare — absence
+ *  is the honest rendering, and inventing a second claim ("status
+ *  unavailable") would just be a different assertion. */
+function planSubtitle(status: BillingStatus | null): string | null {
+  if (!status) return null;
+  switch (status.state) {
+    case 'trialing': {
+      const d = formatPlanDate(status.trialEnd);
+      return d ? `Free trial — ends ${d}.` : 'Free trial.';
+    }
+    // `active_capped` is still an ACTIVE membership server-side — the period's
+    // spend pool is used up, which the chat surface communicates in context.
+    // Describing it here would require a volume claim, so it reads as active.
+    case 'active':
+    case 'active_capped': {
+      const d = formatPlanDate(status.periodEnd);
+      // willRenew false = the user already cancelled; it runs out, it does not
+      // renew. Saying "renews" to someone who just cancelled is wrong, and
+      // this row is exactly where a cancelling user lands.
+      const verb = status.willRenew ? 'renews' : 'ends';
+      return d ? `Active — ${verb} ${d}.` : 'Active.';
+    }
+    case 'grace':
+      return 'Payment issue — renewal pending.';
+    case 'frozen':
+      return 'Paused.';
+    case 'none':
+      return 'Not subscribed.';
+    default:
+      // A successful read of a state this build doesn't know about (a server
+      // that shipped ahead of the app). Unrecognized is not "not subscribed" —
+      // same reasoning as the null case above: say nothing.
+      return null;
+  }
+}
+
+function YourPlanSection() {
+  const router = useRouter();
+  const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [restoring, setRestoring] = useState(false);
+
+  // Unmount guard. The status read can outlive this screen (the user backs out
+  // of Settings while the GET is open), and refreshStatus is shared by three
+  // call sites, so the guard lives with the fetch rather than in any one
+  // caller's effect cleanup.
+  // Re-armed on mount (not just cleared on unmount) so a remount — Fast
+  // Refresh, or a future StrictMode double-invoke — can't leave it latched
+  // false and silently swallow every later setState.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // One-flight coalescing. refreshStatus now fires from mount, from every
+  // focus, and from the Restore handler — a call that arrives while a request
+  // is still open JOINS that request instead of racing a duplicate GET whose
+  // response could land out of order and overwrite the newer answer.
+  const inFlightRef = useRef<Promise<void> | null>(null);
+
+  const refreshStatus = useCallback((): Promise<void> => {
+    if (inFlightRef.current) return inFlightRef.current;
+    const p = (async () => {
+      try {
+        // getBillingStatus never throws — it returns null on any failure — but
+        // the try/finally guarantees the "Loading…" line always resolves.
+        const next = await api.getBillingStatus();
+        if (mountedRef.current) setStatus(next);
+      } finally {
+        if (mountedRef.current) setLoadingStatus(false);
+      }
+    })();
+    inFlightRef.current = p;
+    // Release the slot however p settles. An async IIFE always returns a
+    // promise, so this handler can never run before the assignment above; the
+    // two-arg form means a rejection can't surface as an unhandled rejection
+    // from this bookkeeping chain (p itself still rejects to its callers).
+    p.then(
+      () => { inFlightRef.current = null; },
+      () => { inFlightRef.current = null; },
+    );
+    return p;
+  }, []);
+
+  // LOAD-TIME read — defensive baseline for the case where this screen is
+  // mounted without gaining focus.
+  useEffect(() => { refreshStatus(); }, [refreshStatus]);
+
+  // FOCUS re-read. /paywall is router.push'ed ON TOP of Settings (see
+  // handleMembership below) and its success paths just call router.back(), so
+  // Settings never unmounts and a mount-only read left the Membership subtitle
+  // reading "Not subscribed." after a completed purchase or restore. Worse,
+  // the local Restore button DID call refreshStatus, so restoring from here
+  // updated the row and restoring from the paywall didn't — an inconsistency
+  // that reads as a broken purchase rather than a stale label. The server is
+  // the authority on entitlement, so re-read it every time we come back.
+  useFocusEffect(
+    useCallback(() => { refreshStatus(); }, [refreshStatus]),
+  );
+
+  // Server-confirmed entitlement. `status` is null while loading AND on any
+  // failed read (getBillingStatus returns null on transport/non-OK/malformed),
+  // so this is false unless the server affirmatively said yes — the same
+  // pessimism planSubtitle applies to the copy, applied to the routing.
+  const entitled = !!status?.entitlementActive;
+
+  const handleMembership = useCallback(() => {
+    // ROUTE BY STATE. An active or trialing member must not be handed a
+    // Subscribe CTA for the subscription they already hold — StoreKit catches
+    // it with its own "already subscribed" sheet, but that is a seam, not a
+    // destination. Settings already knows the state (the subtitle on this very
+    // row reads "Active — renews …"), so it routes to management instead,
+    // through the SAME helper the Manage subscription row below uses.
+    //
+    // When entitlement is unknown — read still in flight, or it failed — this
+    // falls through to the paywall. That is the deliberate direction: a
+    // billing outage must never lock a non-subscriber out of subscribing, and
+    // the paywall carries its own entitlement guard for the subscriber case.
+    if (entitled) {
+      Haptics.selectionAsync().catch(() => {});
+      openAppleSubscriptions();
+      return;
+    }
+    Haptics.selectionAsync().catch(() => {});
+    router.push('/paywall' as any);
+  }, [entitled, router]);
+
+  const handleRestore = useCallback(async () => {
+    if (restoring) return;
+    Haptics.selectionAsync().catch(() => {});
+    setRestoring(true);
+    try {
+      const result = await restorePurchases();
+      // The RevenueCat round trip takes seconds on a cold SDK or a bad
+      // network, which is long enough for the user to back out of Settings.
+      // Without this bail the alert lands on top of whatever screen they went
+      // to, and setRestoring warns on an unmounted component. Same guard the
+      // paywall's restore handler already uses (app/paywall.tsx).
+      if (!mountedRef.current) return;
+      if (!result.ok) {
+        Alert.alert(
+          "Couldn't restore",
+          result.message || 'Something went wrong. Please try again.',
+        );
+        return;
+      }
+      if (result.hasEntitlement) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        Alert.alert(
+          'Membership restored',
+          'Your membership is active on this device again.',
+        );
+        // The server is the authority — re-read it so the Membership row
+        // reflects the restored state without needing a screen reload.
+        await refreshStatus();
+      } else {
+        Alert.alert(
+          'Nothing to restore',
+          "We didn't find a membership on this Apple Account. If you subscribed with a different Apple Account, sign in to that one and try again.",
+        );
+      }
+    } catch (e) {
+      // Defensive: restore() catches internally, but an unexpected throw must
+      // still surface and must still clear the spinner.
+      console.warn('[settings/restore] threw:', (e as Error)?.message);
+      // Log unconditionally, alert only while we're still on screen.
+      if (!mountedRef.current) return;
+      Alert.alert("Couldn't restore", (e as Error)?.message || 'Unknown error');
+    } finally {
+      if (mountedRef.current) setRestoring(false);
+    }
+  }, [restoring, refreshStatus]);
+
+  const handleManage = useCallback(async () => {
+    Haptics.selectionAsync().catch(() => {});
+    await openAppleSubscriptions();
+  }, []);
+
+  const isIOS = Platform.OS === 'ios';
+
+  // WHOLE-SECTION iOS GATE. configurePurchases() returns early on non-iOS
+  // without marking itself configured (services/purchases.ts), so every
+  // purchase path returns null/failure on Android: Membership opens a paywall
+  // that can never load an offering, and Restore always ends in "Couldn't
+  // restore." Hiding row 3 alone left the two rows that fail in the user's
+  // face. Returning null here (after all hooks, so hook order is stable) drops
+  // the amber YOUR PLAN label with the rows — no empty header.
+  //
+  // REMOVE THIS GATE when the Play Store billing key lands and
+  // configurePurchases() configures on Android; then restore the per-row
+  // `isIOS` check on Manage subscription, which is Apple-specific for good.
+  if (!isIOS) return null;
+
+  // Nothing to say is better than saying the wrong thing: null subtitle =
+  // the status read failed, so we render the row bare (see planSubtitle).
+  const subtitle = loadingStatus ? 'Loading…' : planSubtitle(status);
+
+  return (
+    <>
+      <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>YOUR PLAN</Text>
+
+      <Pressable
+        onPress={handleMembership}
+        style={[styles.linkRow, { marginBottom: spacing.sm }]}
+        accessibilityLabel={entitled ? 'Membership — manage subscription' : 'Membership'}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Membership</Text>
+          {subtitle ? <Text style={styles.rowSub}>{subtitle}</Text> : null}
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
+      </Pressable>
+
+      <Pressable
+        onPress={handleRestore}
+        disabled={restoring}
+        style={[styles.linkRow, { marginBottom: spacing.sm }]}
+        accessibilityLabel="Restore purchases"
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Restore purchases</Text>
+          <Text style={styles.rowSub}>
+            Already subscribed on another device? Bring it over.
+          </Text>
+        </View>
+        {restoring ? (
+          <ActivityIndicator size="small" color={colors.creamFaint} style={{ width: 18 }} />
+        ) : (
+          <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
+        )}
+      </Pressable>
+
+      <Pressable
+        onPress={handleManage}
+        style={styles.linkRow}
+        accessibilityLabel="Manage subscription"
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Manage subscription</Text>
+          <Text style={styles.rowSub}>Change or cancel in your Apple Account.</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
+      </Pressable>
     </>
   );
 }

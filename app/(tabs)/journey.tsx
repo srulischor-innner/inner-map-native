@@ -5,18 +5,21 @@
 // Data source: /api/journey (server aggregates from SQLite). Every section
 // still has a warm empty state so the page is useful from session one.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, View, Text, Pressable, RefreshControl, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 
 import { colors, fonts, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
+import type { BillingStatus } from '../../services/api';
 import { getUserId } from '../../services/user';
 import { EnergiesBar, Energy } from '../../components/journey/EnergiesBar';
 import { SpectrumBar } from '../../components/journey/SpectrumBar';
 import { PathTimeline, PathItem } from '../../components/journey/PathTimeline';
 import { SessionDetailModal } from '../../components/session/SessionDetailModal';
 import { StatCards } from '../../components/journey/StatCards';
+import { UsageStrip } from '../../components/journey/UsageStrip';
 import { MapDepth } from '../../components/journey/MapDepth';
 import { PartPhrases, LanguagePatterns } from '../../components/journey/PartPhrases';
 
@@ -41,42 +44,96 @@ type JourneyData = {
 };
 
 export default function JourneyScreen() {
+  const insets = useSafeAreaInsets();
   const [data, setData] = useState<JourneyData | null>(null);
   // "Your map" reads the parts table (same source as the Map tab + /api/parts),
   // NOT the legacy session mapData blob — that blob is now {partFindings:[...]}
   // and MapDepth's old flat-key reads counted zero → "Not yet visible" on a
   // full map. Repointed to parts[] (June 2026 fix).
   const [parts, setParts] = useState<any[]>([]);
+  // Feeds the ambient UsageStrip below the stat cards. null = unknown (not yet
+  // loaded, or the status read failed) — the strip renders nothing for null.
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   // 'idle' before first response, 'loaded' after response (even null), 'error'
   // after a thrown / failed fetch. Drives the empty + error overlays below.
   const [loadStatus, setLoadStatus] = useState<'idle' | 'loaded' | 'error'>('idle');
 
-  const load = useCallback(async () => {
-    try {
-      const userId = await getUserId();
-      console.log('[journey] fetching /api/journey for userId=', userId.slice(0, 8));
-      const [res, ps] = await Promise.all([api.getJourney(), api.getParts()]);
-      console.log(
-        '[journey] response: sessions=', res?.sessions?.length ?? 0,
-        'totalMessages=', res?.totalMessages,
-        'firstMapDate=', res?.firstMapDate,
-        'parts=', Array.isArray(ps) ? ps.length : 0,
-      );
-      if (res) setData(res as JourneyData);
-      if (Array.isArray(ps)) setParts(ps);
-      setLoadStatus('loaded');
-    } catch (e) {
-      console.warn('[journey] load failed:', (e as Error)?.message);
-      setLoadStatus('error');
-    }
+  // Unmount guard. This tab's fetch can outlive the screen, and load() is
+  // shared by mount, focus, pull-to-refresh and the retry button, so the guard
+  // lives with the fetch rather than in any one caller's cleanup.
+  // Re-armed on mount (not just cleared on unmount) so a remount — Fast
+  // Refresh, or a future StrictMode double-invoke — can't leave it latched
+  // false and silently swallow every later setState.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
   }, []);
+
+  // One-flight coalescing. A focus event that lands while a RefreshControl
+  // fetch is still open JOINS that fetch instead of starting a second one —
+  // otherwise two responses race and the older one can overwrite the newer.
+  const inFlightRef = useRef<Promise<void> | null>(null);
+
+  const load = useCallback((): Promise<void> => {
+    if (inFlightRef.current) return inFlightRef.current;
+    const p = (async () => {
+      try {
+        const userId = await getUserId();
+        console.log('[journey] fetching /api/journey for userId=', userId.slice(0, 8));
+        // Billing status rides along with the existing load/refresh cycle — no
+        // second polling loop. getBillingStatus() swallows its own failures and
+        // resolves null, so it can never fail the journey fetch.
+        const [res, ps, bill] = await Promise.all([
+          api.getJourney(),
+          api.getParts(),
+          api.getBillingStatus(),
+        ]);
+        console.log(
+          '[journey] response: sessions=', res?.sessions?.length ?? 0,
+          'totalMessages=', res?.totalMessages,
+          'firstMapDate=', res?.firstMapDate,
+          'parts=', Array.isArray(ps) ? ps.length : 0,
+        );
+        // Bail before any setState if the screen went away mid-flight.
+        if (!mountedRef.current) return;
+        if (res) setData(res as JourneyData);
+        if (Array.isArray(ps)) setParts(ps);
+        setBilling(bill);
+        setLoadStatus('loaded');
+      } catch (e) {
+        console.warn('[journey] load failed:', (e as Error)?.message);
+        if (mountedRef.current) setLoadStatus('error');
+      }
+    })();
+    inFlightRef.current = p;
+    // Release the slot however p settles. An async IIFE always returns a
+    // promise, so this handler can never run before the assignment above.
+    p.then(
+      () => { inFlightRef.current = null; },
+      () => { inFlightRef.current = null; },
+    );
+    return p;
+  }, []);
+
+  // LOAD-TIME read — defensive baseline for the case where this tab is
+  // mounted without gaining focus.
   useEffect(() => { load(); }, [load]);
+
+  // FOCUS re-read. A top-up completes on a screen PUSHED over this tab, so
+  // Journey never unmounts and the UsageStrip below kept rendering the
+  // pre-top-up billing state after the user came back. Re-reading on focus
+  // rides the existing load() cycle — same single request set, no second
+  // polling loop — and coalesces with any in-flight pull-to-refresh.
+  useFocusEffect(
+    useCallback(() => { load(); }, [load]),
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    try { await load(); } finally { setRefreshing(false); }
+    try { await load(); } finally { if (mountedRef.current) setRefreshing(false); }
   };
 
   // Show the layout (with zero-state stat cards) even before any data
@@ -103,7 +160,7 @@ export default function JourneyScreen() {
   return (
     <SafeAreaView style={styles.root} edges={[]}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: spacing.xxl + insets.bottom }]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.amber} />
         }
@@ -121,6 +178,14 @@ export default function JourneyScreen() {
           totalMessages={data?.totalMessages || 0}
           firstSessionDate={data?.firstSessionDate || null}
         />
+
+        {/* Ambient usage state — silent below 80% of the period's pool. It must
+            read as attached to the stats block, so it pulls itself back up
+            through StatCards' own marginBottom (spacing.xl) to sit spacing.sm
+            under the cards, then restores that spacing.xl beneath itself. The
+            offset lives on the strip (not on a wrapper) so a null render leaves
+            the layout byte-identical to before. */}
+        <UsageStrip status={billing} style={styles.usageStrip} />
 
         <Section title="Your map">
           <MapDepth parts={parts} />
@@ -210,6 +275,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
     letterSpacing: 0.2,
+  },
+
+  // Usage strip — collapses StatCards' 32pt bottom gap to 8pt so the strip
+  // reads as part of the stats block, then re-opens the 32pt before "Your map".
+  usageStrip: {
+    marginTop: -(spacing.xl - spacing.sm),
+    marginBottom: spacing.xl,
   },
 
   // Section — amber uppercase header in DM Sans SemiBold, subtle divider.

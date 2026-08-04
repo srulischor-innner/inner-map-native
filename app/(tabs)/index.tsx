@@ -37,6 +37,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { useRouter, useFocusEffect } from 'expo-router';
 
 import { api, ChatMessage } from '../../services/api';
+import type { BudgetRefusal } from '../../services/api';
+import { getTopUpProduct, purchase } from '../../services/purchases';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete, holdBackBoundary } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState, useAttentionState } from '../../utils/attentionState';
 import { refreshInboxStatus } from '../../services/messagesInbox';
@@ -76,18 +78,17 @@ import { ChatInput } from '../../components/ChatInput';
 import { ConversationStarters } from '../../components/ConversationStarters';
 import { EndSessionButton } from '../../components/EndSessionButton';
 import { CrisisResourcesCard } from '../../components/safety/CrisisResourcesCard';
+import { BudgetRefusalSheet } from '../../components/billing/BudgetRefusalSheet';
 import { WarmRadialBackground } from '../../components/WarmRadialBackground';
-
-// Default friendly greeting if the /api/returning-greeting endpoint doesn't respond.
-const FALLBACK_GREETING = "Something went quiet on my end — but I'm here. What's on your mind?";
 
 // First-session orientation message (polish round 4, Part 3). Shown
 // as the opening AI bubble for users whose firstSessionCompletedAt is
-// still null — replaces the old hardcoded "I'm here to help you
-// explore…" welcome. Once the user sends their first message the
-// server's FIRST_SESSION_PROMPT takes over and the AI's generated
-// replies continue the first-session work. After completion this is
-// never shown again (the returning greeting takes its place).
+// still null. Once the user sends their first message the server's
+// FIRST_SESSION_PROMPT takes over and the AI's generated replies
+// continue the first-session work. After completion this is never
+// shown again: STANDARD_OPENER below takes its place, on both threads,
+// at every launch and every boundary. Those two constants are the whole
+// opener set — see the block directly under this one.
 const ORIENTATION_MESSAGE =
   "Welcome. Quick orientation:\n\n" +
   "Two modes up top. Explore is for active inner work — naming patterns, " +
@@ -312,6 +313,50 @@ export default function ChatScreen() {
   // so if crisis content reappears after acknowledging, the gate re-fires.
   const [crisisGated, setCrisisGated] = useState(false);
   const [crisisAcking, setCrisisAcking] = useState(false);
+  // Budget cap (payments 3f). The server-authored refusal for the turn it
+  // just refused; non-null means the sheet is up. Every string rendered
+  // comes off this object verbatim — the client authors none of that copy.
+  //
+  // CRISIS PRECEDENCE. The server never sends both for one turn (crisis is
+  // decided before any budget check), but the client must not be the place
+  // that breaks the invariant either, so the two states are ordered here as
+  // well as on the server:
+  //   • onCrisis clears any refusal — a safety surface is never covered by
+  //     a billing sheet.
+  //   • onBudgetExhausted is a no-op once crisis fired for this turn
+  //     (crisisFired, captured per-turn inside runAssistantTurn) and the
+  //     sheet's `visible` is additionally gated on !crisisGated, so a stale
+  //     refusal can't surface on top of the gate.
+  const [budgetRefusal, setBudgetRefusal] = useState<BudgetRefusal | null>(null);
+  // Mirror of the state above, readable from inside the top-up handler after it
+  // has awaited a multi-second store round trip. "Not now" stays live during
+  // that wait by design, so the sheet may be gone by the time we resolve — and
+  // the captured `budgetRefusal` closure would still say otherwise.
+  const budgetRefusalRef = useRef<BudgetRefusal | null>(null);
+  useEffect(() => { budgetRefusalRef.current = budgetRefusal; }, [budgetRefusal]);
+  // Store round-trip state. TWO things, doing two different jobs:
+  //   • topUpBusyRef — the SYNCHRONOUS re-entrancy guard. setState is async,
+  //     so only a ref can block a second tap landing in the same tick.
+  //   • topUpBusy    — the RENDERED state. The ref alone changed nothing on
+  //     screen, so the button sat fully styled and fully tappable through a
+  //     multi-second cold-SDK round trip while repeat taps were swallowed in
+  //     silence. This is what puts the sheet's primary button into its
+  //     spinner/disabled state; the sheet stays up because StoreKit's own UI
+  //     is presented in front of it.
+  // Both are cleared in handleBudgetTopUp's finally, on every path.
+  const topUpBusyRef = useRef(false);
+  const [topUpBusy, setTopUpBusy] = useState(false);
+  // The sheet can be dismissed — and this screen torn down — while the
+  // purchase is still in flight, so the finally block below must not setState
+  // into an unmounted tree.
+  // Re-armed on mount (not just cleared on unmount) so a remount — Fast
+  // Refresh, or a future StrictMode double-invoke — can't leave it latched
+  // false and silently swallow every later setState.
+  const topUpMountedRef = useRef(true);
+  useEffect(() => {
+    topUpMountedRef.current = true;
+    return () => { topUpMountedRef.current = false; };
+  }, []);
   useEffect(() => {
     let dismissTimer: ReturnType<typeof setTimeout> | null = null;
     const unsub = subscribeRateLimitNotice((notice) => {
@@ -1060,6 +1105,13 @@ export default function ChatScreen() {
       // tab focus. Set to true on the first match so we don't re-
       // broadcast on every subsequent delta of the same turn.
       let addedToMapFired = false;
+      // Per-turn crisis latch. The server decides crisis BEFORE it checks the
+      // budget, so the two can't both fire for one turn — this makes that
+      // ordering true on the client too: once a crisis frame lands for this
+      // turn, a budget refusal arriving behind it (a retried transport, a
+      // JSON fallback racing the stream) is dropped rather than allowed to
+      // throw a billing sheet over the safety surface.
+      let crisisFired = false;
 
       // Build 14 — real streaming replaced the 45ms/word reveal theater.
       // The bubble renders each delta as it arrives; pacing comes from
@@ -1405,6 +1457,34 @@ export default function ChatScreen() {
               setSending(false);
               setTyping(false);
             },
+            // Budget cap — the server refused this turn before generating
+            // anything, so there is no reply to show: drop the empty
+            // streaming placeholder and open the server-authored refusal
+            // sheet. Deliberately NOT the generic send-error path — the
+            // refusal is a normal, explained state with its own action, not
+            // a failure, and it must never render as "something went wrong"
+            // with a retry pill that would just be refused again.
+            onBudgetExhausted: (refusal) => {
+              if (crisisFired) {
+                // Crisis already owns this turn (see the crisisFired latch).
+                console.log('[chat] budget refusal suppressed — crisis owns this turn');
+                return;
+              }
+              console.log('[chat] budget exhausted — showing refusal sheet');
+              abortStreamRef.current = null;
+              stopTurnRef.current = null;
+              setAttentionState('idle');
+              // Remove the empty assistant placeholder from the thread — an
+              // errorless empty bubble would otherwise sit under the user's
+              // message for the life of the session.
+              turnThread.setMessages((prev) => prev.filter((m) => m.id !== streamId));
+              turnThread.historyRef.current = turnThread.historyRef.current.filter(
+                (h) => !(h.role === 'assistant' && h.content === ''),
+              );
+              setSending(false);
+              setTyping(false);
+              setBudgetRefusal(refusal);
+            },
             onError: (err) => {
               console.warn('[chat] stream error:', err);
               abortStreamRef.current = null;
@@ -1446,11 +1526,15 @@ export default function ChatScreen() {
             // acknowledge action below the dock).
             onCrisis: () => {
               console.log('[chat] crisis_detected — entering gated state');
+              crisisFired = true;
               abortStreamRef.current = null;
               stopTurnRef.current = null;
               setAttentionState('idle');
               setSending(false);
               setTyping(false);
+              // Crisis outranks budget: tear down any refusal sheet that is
+              // (or is about to be) up so nothing covers the resources card.
+              setBudgetRefusal(null);
               setCrisisGated(true);
             },
           },
@@ -1533,6 +1617,49 @@ export default function ChatScreen() {
     setCrisisAcking(false);
     setCrisisGated(false);
   }, [crisisAcking]);
+
+  // Budget refusal → store. primaryAction.action is 'topup', so this routes
+  // to the RevenueCat purchase flow for the usage top-up. services/purchases
+  // never throws, so every outcome is a value:
+  //   • ok        → close the sheet (the server credits the pool from the
+  //                 purchase webhook; nothing is claimed here about what
+  //                 that grants — the client has no authority on that).
+  //   • cancelled → silent, sheet stays up. Backing out of StoreKit is not
+  //                 an error and must not produce a message.
+  //   • failed    → surface the store's own reason; the sheet stays up so
+  //                 the action is still reachable.
+  const handleBudgetTopUp = useCallback(async () => {
+    if (topUpBusyRef.current) return;
+    topUpBusyRef.current = true;
+    setTopUpBusy(true);
+    try {
+      const product = await getTopUpProduct();
+      // "Not now" stays tappable while this spins (deliberately — the user must
+      // always be able to leave), and a cold SDK can take seconds. So by the
+      // time we land here the sheet may be gone: alerting then would fire over
+      // whatever the user moved on to. Silence is the right outcome — they
+      // withdrew from the purchase.
+      if (!topUpMountedRef.current || !budgetRefusalRef.current) return;
+      if (!product) {
+        Alert.alert('Not available right now', 'Please try again in a moment.');
+        return;
+      }
+      const result = await purchase(product);
+      if (result.ok) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        setBudgetRefusal(null);
+        return;
+      }
+      if (result.cancelled) return;
+      if (!topUpMountedRef.current || !budgetRefusalRef.current) return;
+      Alert.alert('Purchase didn’t complete', result.message || 'Please try again in a moment.');
+    } finally {
+      // Every path lands here — ok, cancelled, failed, and throw — so the
+      // button can never be left stuck spinning with no way back.
+      topUpBusyRef.current = false;
+      if (topUpMountedRef.current) setTopUpBusy(false);
+    }
+  }, []);
 
   // Unmount cleanup: clear the chat-active pulse so a stranded "true"
   // doesn't leak past the chat tab's lifetime. Doesn't cancel an
@@ -1960,6 +2087,19 @@ export default function ChatScreen() {
           continueAfterSummaryRef.current = null;
           if (cont) await cont();
         }}
+      />
+
+      {/* Budget cap. `visible` is gated on !crisisGated as the last line of
+          the crisis-precedence defence — the per-turn latch in
+          runAssistantTurn already suppresses a late refusal, and this makes
+          a refusal that was already on screen when a gate engaged impossible
+          to leave hanging over the resources card. */}
+      <BudgetRefusalSheet
+        visible={!!budgetRefusal && !crisisGated}
+        refusal={budgetRefusal}
+        onDismiss={() => setBudgetRefusal(null)}
+        onTopUp={handleBudgetTopUp}
+        busy={topUpBusy}
       />
     </SafeAreaView>
   );

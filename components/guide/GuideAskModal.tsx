@@ -35,6 +35,9 @@ import {
 import { TypingIndicator } from '../TypingIndicator';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api, ChatMessage } from '../../services/api';
+import type { BudgetRefusal } from '../../services/api';
+import { getTopUpProduct, purchase } from '../../services/purchases';
+import { BudgetRefusalSheet } from '../billing/BudgetRefusalSheet';
 import { renderInlineMarkdown } from '../../utils/inlineMarkdown';
 
 // Per-word reveal cadence — same value as the regular Chat tab so the
@@ -80,6 +83,42 @@ export function GuideAskModal({ visible, onClose }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  // Budget cap (payments 3f). /api/guide-chat draws on the SAME measured-cost
+  // pool as the main chat and refuses with the same server-authored payload
+  // (402 JSON on this endpoint — it has no SSE frame variant). Non-null means
+  // the refusal sheet is up over this one. No crisis interaction here:
+  // guide-chat is the educational surface and has no crisis gate — the whole
+  // safety path lives on /api/chat.
+  const [budgetRefusal, setBudgetRefusal] = useState<BudgetRefusal | null>(null);
+  // Mirror of the state above, readable from inside the top-up handler after it
+  // has awaited a multi-second store round trip. "Not now" stays live during
+  // that wait by design, so the sheet may be gone by the time we resolve — and
+  // the captured `budgetRefusal` closure would still say otherwise.
+  const budgetRefusalRef = useRef<BudgetRefusal | null>(null);
+  useEffect(() => { budgetRefusalRef.current = budgetRefusal; }, [budgetRefusal]);
+  // Store round-trip state. TWO things, doing two different jobs:
+  //   • topUpBusyRef — the SYNCHRONOUS re-entrancy guard. setState is async,
+  //     so only a ref can block a second tap landing in the same tick.
+  //   • topUpBusy    — the RENDERED state. The ref alone changed nothing on
+  //     screen, so the button sat fully styled and fully tappable through a
+  //     multi-second cold-SDK round trip while repeat taps were swallowed in
+  //     silence. This is what puts the sheet's primary button into its
+  //     spinner/disabled state; the sheet stays up because StoreKit's own UI
+  //     is presented in front of it.
+  // Both are cleared in handleBudgetTopUp's finally, on every path.
+  const topUpBusyRef = useRef(false);
+  const [topUpBusy, setTopUpBusy] = useState(false);
+  // The sheet can be dismissed — and this modal torn down — while the
+  // purchase is still in flight, so the finally block below must not setState
+  // into an unmounted tree.
+  // Re-armed on mount (not just cleared on unmount) so a remount — Fast
+  // Refresh, or a future StrictMode double-invoke — can't leave it latched
+  // false and silently swallow every later setState.
+  const topUpMountedRef = useRef(true);
+  useEffect(() => {
+    topUpMountedRef.current = true;
+    return () => { topUpMountedRef.current = false; };
+  }, []);
   const [seconds, setSeconds] = useState(0);
   const scrollRef = useRef<ScrollView | null>(null);
   // STOP control (build 14). Captured streamGuide abort fn + the active
@@ -166,6 +205,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
       idRef.current = 0;
       userScrolledAwayRef.current = false; // fresh open starts at bottom
       setStreaming(false);
+      setBudgetRefusal(null);
     } else {
       // STOP-ON-CLOSE hygiene: closing the sheet (X → visible=false) aborts
       // any in-flight request and stops the reveal loop, so neither runs in
@@ -363,6 +403,19 @@ export function GuideAskModal({ visible, onClose }: Props) {
           });
         }
       },
+      // Budget cap — refused before any text was generated. Drop the empty
+      // assistant turn and open the server-authored refusal sheet. NOT the
+      // onError path: this is an explained state with its own action, and
+      // the "something went quiet, try asking again" copy would be a lie.
+      onBudgetExhausted: (refusal) => {
+        console.log('[guide-chat] budget exhausted — showing refusal sheet');
+        if (revealTimerRef.current) { clearTimeout(revealTimerRef.current); revealTimerRef.current = null; }
+        setLoading(false);
+        setStreaming(false);
+        streamAbortRef.current = null;
+        setTurns((prev) => prev.filter((t) => t.id !== assistantId));
+        setBudgetRefusal(refusal);
+      },
       onError: (err) => {
         console.warn('[guide-chat] stream error:', err);
         if (revealTimerRef.current) { clearTimeout(revealTimerRef.current); revealTimerRef.current = null; }
@@ -440,6 +493,42 @@ export function GuideAskModal({ visible, onClose }: Props) {
       setTranscribing(false);
     }
   }
+
+  // Budget refusal → store. Same contract as the chat tab's handler:
+  // services/purchases never throws, a user cancellation is silent, and the
+  // sheet stays up on anything short of a completed purchase.
+  const handleBudgetTopUp = useCallback(async () => {
+    if (topUpBusyRef.current) return;
+    topUpBusyRef.current = true;
+    setTopUpBusy(true);
+    try {
+      const product = await getTopUpProduct();
+      // "Not now" stays tappable while this spins (deliberately — the user must
+      // always be able to leave), and a cold SDK can take seconds. So by the
+      // time we land here the sheet may be gone: alerting then would fire over
+      // whatever the user moved on to. Silence is the right outcome — they
+      // withdrew from the purchase.
+      if (!topUpMountedRef.current || !budgetRefusalRef.current) return;
+      if (!product) {
+        Alert.alert('Not available right now', 'Please try again in a moment.');
+        return;
+      }
+      const result = await purchase(product);
+      if (result.ok) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        setBudgetRefusal(null);
+        return;
+      }
+      if (result.cancelled) return;
+      if (!topUpMountedRef.current || !budgetRefusalRef.current) return;
+      Alert.alert('Purchase didn’t complete', result.message || 'Please try again in a moment.');
+    } finally {
+      // Every path lands here — ok, cancelled, failed, and throw — so the
+      // button can never be left stuck spinning with no way back.
+      topUpBusyRef.current = false;
+      if (topUpMountedRef.current) setTopUpBusy(false);
+    }
+  }, []);
 
   const showStarters = turns.length === 0 && !loading;
   const canSend = input.trim().length > 0 && !loading && !recording;
@@ -616,6 +705,18 @@ export function GuideAskModal({ visible, onClose }: Props) {
             </View>
           </View>
         </Animated.View>
+
+        {/* Budget cap. Nested INSIDE this modal on purpose: a sibling modal
+            rendered from the Guide screen would be presented underneath this
+            sheet on iOS (the Ask modal is already the presented view
+            controller), so the refusal would never be seen. */}
+        <BudgetRefusalSheet
+          visible={!!budgetRefusal}
+          refusal={budgetRefusal}
+          onDismiss={() => setBudgetRefusal(null)}
+          onTopUp={handleBudgetTopUp}
+          busy={topUpBusy}
+        />
       </GestureHandlerRootView>
     </Modal>
   );

@@ -37,6 +37,8 @@ import {
   isTermsSyncPending, clearTermsSyncPending,
 } from '../services/onboarding';
 import { registerForPushNotifications } from '../services/push';
+import { configurePurchases, identifyUser } from '../services/purchases';
+import { peekUserId } from '../services/user';
 import { NOTIFICATIONS_ENABLED } from '../constants/features';
 import {
   ensureDefaultPreference, authenticate as authenticateBiometric, isLockEnabled,
@@ -293,18 +295,6 @@ function RootLayout() {
 
   // ONE-TIME cold-start auth gate. Empty deps array — runs once per
   // process. No AppState listener that fires on every focus change.
-  // RevenueCat module-registration probe — dev-client only, logs PASS/FAIL to
-  // Metro. Verdict 2026-07-30: PASS (see utils/rcSmokeTest.ts header).
-  // ⚠️ NOTE: this runs Purchases.configure() + VERBOSE logging during cold
-  // start, i.e. in the same window as the boot I/O drain the ANR plugin
-  // mitigates. It is DEV-ONLY, so it cannot affect production boot — but it
-  // does mean dev-client cold-start timings are not representative of release.
-  useEffect(() => {
-    if (__DEV__) {
-      require('../utils/rcSmokeTest').runRcSmokeTest();
-    }
-  }, []);
-
   // While this is in flight we keep `isCheckingBiometrics` true so the
   // app renders only a dark+triangle splash; nothing else is visible
   // behind / around the Face ID prompt.
@@ -643,6 +633,62 @@ function RootLayout() {
       try { linkingSub?.remove?.(); } catch {}
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // =========================================================================
+  // REVENUECAT — configure, then bind the store identity to OUR user id.
+  //
+  // Top-level effect on purpose. There are two return branches below
+  // (lock/splash, main Stack) and the SDK has to be configured in both: an
+  // entitlement read can be requested by the first screen the user lands on,
+  // whichever that is. (Was three until the landing hold was removed.)
+  //
+  // UNGATED logIn — this app has no authenticated boot phase. There is no
+  // auth context and no isSignedIn flag; every user, anonymous or
+  // provider-linked, carries a stable UUID from first launch. Waiting for a
+  // "signed in" signal that never arrives would strand anonymous purchases
+  // under a RevenueCat-minted anonymous id, and the purchase webhook would
+  // then have no user row to land on. So identify fires immediately after
+  // configure, for everyone.
+  //
+  // ORDER IS LOAD-BEARING: identifyUser() funnels through readySdk(), which
+  // returns null until configure() has actually run. Awaiting configure
+  // first is what makes the logIn a real call instead of a silent no-op.
+  //
+  // peekUserId() rather than getUserId(): peek never MINTS. On a genuine
+  // first launch the id doesn't exist yet and getUserId would create one
+  // here, ahead of the sign-in screen's migration branch (which passes the
+  // existing anonymous id to the server precisely so a fresh UUID isn't
+  // minted). A null just means "not yet" — we still configure, and skip
+  // identify.
+  //
+  // That skip is NOT the last word, and must not be: a first-launch user who
+  // reaches the store this session would otherwise transact under a
+  // RevenueCat anonymous id, which is the exact webhook-matching failure the
+  // ungated logIn exists to prevent. services/purchases.ts closes it —
+  // purchase() and restore() both bind the current id immediately before the
+  // store call (ensureIdentified), and re-bind if sign-in swapped the
+  // identity after this effect ran. So this is the EARLY binding, not the
+  // only one.
+  //
+  // Fire-and-forget, and nothing here can throw: services/purchases.ts
+  // resolves every failure to a value, and the .catch is the backstop for
+  // the peek (SecureStore/AsyncStorage). Placed after the boot effect above
+  // so its two store reads queue behind routing on Android's serial
+  // AsyncStorage executor rather than in front of it.
+  // =========================================================================
+  useEffect(() => {
+    (async () => {
+      await configurePurchases();
+      const userId = await peekUserId();
+      if (!userId) {
+        console.log('[purchases] no user id yet — configured; identity binds at first store call');
+        return;
+      }
+      await identifyUser(userId);
+    })().catch((e) =>
+      console.warn('[purchases] boot wiring threw:', (e as Error)?.message),
+    );
+  }, []);
 
   // Hoisted above the render gate because the redirect-delivery effect below
   // needs it too: it is one of the three conditions that decide whether the

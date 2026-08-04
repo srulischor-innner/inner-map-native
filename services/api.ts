@@ -357,10 +357,170 @@ export type StreamCallbacks = {
    *  screen to enter the gated state (block the composer, surface crisis
    *  resources, show the acknowledge action). tier is 1 (acute) or 2. */
   onCrisis?: (info: { tier: number | null }) => void;
+  /** Budget cap (payment build 3f) — fires when the server refused this
+   *  turn because the measured-cost pool for the period is spent. Same
+   *  opt-in shape as onRateLimit: callers that don't implement it fall
+   *  through to onError with the server's `title` so nothing regresses.
+   *
+   *  `raw` is the untouched server object (402 JSON body or SSE frame) so
+   *  a caller can re-run parseBudgetRefusal on it if it wants the
+   *  unnormalised form. */
+  onBudgetExhausted?: (refusal: BudgetRefusal, raw: unknown) => void;
 };
+
+// ============================================================================
+// BILLING / BUDGET
+//
+// Two separate server surfaces:
+//   1. GET /api/billing/status — the read-only state + budget view that the
+//      settings + paywall screens poll. Note its catch-all returns HTTP 200
+//      with `budget: null`, so `budget` is genuinely nullable and callers
+//      MUST handle that rather than assuming a 200 means a full payload.
+//   2. The refusal — emitted when a turn is blocked. It arrives in TWO
+//      transports depending on how the client asked for the reply:
+//        • non-streaming → HTTP 402 with the payload as the JSON body
+//        • streaming     → HTTP 200 text/event-stream carrying ONE frame,
+//                          `{"type":"budget_exhausted", ...payload}`
+//      parseBudgetRefusal() accepts either shape.
+// ============================================================================
+
+/** Proximity tiers for the period's measured-cost pool. Deliberately
+ *  coarse — the server never sends a remaining count, and the UI must not
+ *  synthesize one. */
+export type BudgetTier = 'ok' | 'warn80' | 'warn95' | 'exhausted';
+
+export type BillingStatus = {
+  /** trialing | active | active_capped | grace | frozen | none.
+   *  `active_capped` is derived server-side: entitled, but the pool for
+   *  this period is spent. */
+  state: string;
+  entitlementActive: boolean;
+  willRenew: boolean;
+  periodEnd: string | null;
+  trialEnd: string | null;
+  /** NULL on the server's 200 catch-all (a DB hiccup on the status read).
+   *  Treat null as "unknown", never as "exhausted". */
+  budget: {
+    spentCents: number;
+    remainingCents: number;
+    allowanceCents: number;
+    tier: BudgetTier;
+    /** ⚠️ MARKETING-FACING FIGURE ONLY — a fixed provisional number, NOT a
+     *  balance and NOT a remaining count. Real cost per turn spans ~7×, so
+     *  presenting this as "N messages" or "N left" would be a volume claim
+     *  the server cannot honour. Do not render it as a count anywhere in
+     *  the product surface. */
+    displayMessages: number;
+    periodEnd: string | null;
+  } | null;
+};
+
+const BUDGET_TIERS: BudgetTier[] = ['ok', 'warn80', 'warn95', 'exhausted'];
+function asBudgetTier(v: unknown): BudgetTier {
+  return BUDGET_TIERS.includes(v as BudgetTier) ? (v as BudgetTier) : 'ok';
+}
+
+/** GET /api/billing/status. Returns null on ANY failure (transport, non-OK,
+ *  malformed body) — callers must treat null as "unknown" and never as
+ *  "unsubscribed" or "out of budget". */
+export async function getBillingStatus(): Promise<BillingStatus | null> {
+  try {
+    const headers = await authHeaders();
+    const res = await apiFetch('/api/billing/status', {
+      label: 'billing-status', method: 'GET', headers, timeoutMs: 15000,
+    });
+    if (!res.ok) return null;
+    const j: any = await res.json().catch(() => null);
+    if (!j || typeof j !== 'object') return null;
+    const b = j.budget;
+    return {
+      state: String(j.state || 'none'),
+      entitlementActive: !!j.entitlementActive,
+      willRenew: !!j.willRenew,
+      periodEnd: typeof j.periodEnd === 'string' ? j.periodEnd : null,
+      trialEnd: typeof j.trialEnd === 'string' ? j.trialEnd : null,
+      budget: b && typeof b === 'object'
+        ? {
+            spentCents: Number(b.spentCents || 0),
+            remainingCents: Number(b.remainingCents || 0),
+            allowanceCents: Number(b.allowanceCents || 0),
+            tier: asBudgetTier(b.tier),
+            displayMessages: Number(b.displayMessages || 0),
+            periodEnd: typeof b.periodEnd === 'string' ? b.periodEnd : null,
+          }
+        : null,
+    };
+  } catch (e) {
+    console.warn('[billing-status] threw:', (e as Error)?.message);
+    return null;
+  }
+}
+
+/** The server-authored refusal. Every string is rendered VERBATIM — the
+ *  price lives on `primaryAction.label` by design, and the client must not
+ *  rewrite, shorten, or re-order this copy. `action` is 'topup' | 'dismiss'
+ *  today; kept as a plain string so a new action doesn't break parsing. */
+export type BudgetRefusal = {
+  title: string;
+  body: string;
+  reset: string;
+  primaryAction: { label: string; action: string };
+  secondaryAction: { label: string; action: string };
+  periodEnd: string | null;
+};
+
+function asAction(raw: any, fallbackLabel: string, fallbackAction: string): { label: string; action: string } {
+  if (raw && typeof raw === 'object') {
+    return {
+      label: typeof raw.label === 'string' && raw.label ? raw.label : fallbackLabel,
+      action: typeof raw.action === 'string' && raw.action ? raw.action : fallbackAction,
+    };
+  }
+  return { label: fallbackLabel, action: fallbackAction };
+}
+
+/** Normalise a budget refusal out of EITHER the 402 JSON body OR the flat
+ *  SSE frame object. Returns null when `raw` isn't a refusal at all.
+ *
+ *  Recognition is deliberately triple-keyed because the two transports tag
+ *  themselves differently: the 402 body carries `error: 'budget-exhausted'`
+ *  + `budget_exhausted: true`, while the SSE frame additionally carries
+ *  `type: 'budget_exhausted'`. Any one of the three is sufficient.
+ *
+ *  Never throws — every field is optional as far as this parser cares. */
+export function parseBudgetRefusal(raw: unknown): BudgetRefusal | null {
+  try {
+    if (!raw || typeof raw !== 'object') return null;
+    const r = raw as any;
+    const isRefusal =
+      r.error === 'budget-exhausted' ||
+      r.budget_exhausted === true ||
+      r.type === 'budget_exhausted';
+    if (!isRefusal) return null;
+    return {
+      title: typeof r.title === 'string' && r.title
+        ? r.title
+        : "You've reached this month's usage limit.",
+      body: typeof r.body === 'string' && r.body
+        ? r.body
+        : 'Your map and everything on it stays exactly as it is — nothing is lost.',
+      reset: typeof r.reset === 'string' ? r.reset : '',
+      primaryAction: asAction(r.primaryAction, 'Add usage', 'topup'),
+      secondaryAction: asAction(r.secondaryAction, 'Not now', 'dismiss'),
+      periodEnd: typeof r.periodEnd === 'string' ? r.periodEnd : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export const api = {
   baseUrl: BASE_URL,
+
+  /** GET /api/billing/status — also exported standalone as
+   *  `getBillingStatus`. Same function, reachable either way so callers
+   *  can match whichever import style the screen already uses. */
+  getBillingStatus,
 
   /** Quick health ping — useful from dev screens to confirm the tunnel works. */
   async ping(): Promise<{ ok: boolean; ms: number; status?: number; error?: string }> {
@@ -542,6 +702,21 @@ export const api = {
           else cb.onError(info?.message || `chat ${res.status}`);
           return;
         }
+        // 402 — budget cap. The server sends the refusal payload as the JSON
+        // body on this path. We must NOT flatten it to "chat 402": the whole
+        // point is that the parsed body reaches the UI so it can render the
+        // server-authored refusal (title / body / reset / priced action).
+        if (res.status === 402) {
+          const rawBody: unknown = await res.json().catch(() => null);
+          const refusal = parseBudgetRefusal(rawBody);
+          if (refusal) {
+            if (cb.onBudgetExhausted) cb.onBudgetExhausted(refusal, rawBody);
+            else cb.onError(refusal.title);
+          } else {
+            cb.onError('chat 402');
+          }
+          return;
+        }
         if (!res.ok) {
           // apiFetch already logged the body preview on non-OK; still surface the
           // status here so the error reaching the screen is specific.
@@ -557,12 +732,16 @@ export const api = {
           let fullText = '';
           let serverError: string | null = null;
           let rateLimitInfo: RateLimitInfo | null = null;
+          let budgetRaw: unknown = null;
           let crisisTier: number | null | undefined = undefined;
           for (const line of raw.split('\n')) {
             if (!line.startsWith('data: ')) continue;
             try {
               const evt = JSON.parse(line.slice(6));
-              if (evt.type === 'delta' && typeof evt.text === 'string') fullText += evt.text;
+              // Budget refusal arrives on the streaming branch as a 200 +
+              // a single flat frame, not as a 402. Keep the raw object.
+              if (evt.type === 'budget_exhausted') budgetRaw = evt;
+              else if (evt.type === 'delta' && typeof evt.text === 'string') fullText += evt.text;
               else if (evt.type === 'done') fullText = evt.text || fullText;
               else if (evt.type === 'crisis') {
                 // Crisis enforcement SSE frame — server gated this turn.
@@ -591,11 +770,33 @@ export const api = {
             else cb.onError(rateLimitInfo.message);
             return;
           }
+          // CRISIS BEFORE BUDGET — mirrors the server's own ordering invariant
+          // (the crisis gate returns ahead of the budget gate on every chat
+          // surface). The server should never emit both frames in one turn, but
+          // the client must not depend on that: if it ever does, the referral
+          // has to land and the screen has to gate. A billing sheet can never
+          // displace a crisis response. Every other transport in this file
+          // already defends this; the buffered-SSE fallback is the last one.
+          if (crisisTier !== undefined) {
+            if (fullText) {
+              cb.onDelta(fullText);
+              cb.onDone(fullText);
+            }
+            cb.onCrisis?.({ tier: crisisTier });
+            return;
+          }
+          if (budgetRaw) {
+            const refusal = parseBudgetRefusal(budgetRaw);
+            if (refusal) {
+              if (cb.onBudgetExhausted) cb.onBudgetExhausted(refusal, budgetRaw);
+              else cb.onError(refusal.title);
+              return;
+            }
+          }
           if (serverError) { cb.onError(serverError); return; }
           if (fullText) {
             cb.onDelta(fullText);
             cb.onDone(fullText);
-            if (crisisTier !== undefined) cb.onCrisis?.({ tier: crisisTier });
             return;
           }
           cb.onError('empty reply');
@@ -678,6 +879,16 @@ export const api = {
       else cb.onError(info.message || 'rate limited');
     };
 
+    // Budget refusal — same opt-in-with-fallthrough shape as emitRateLimit.
+    // `raw` is handed back untouched so the caller can re-parse if it wants.
+    const emitBudgetRefusal = (raw: unknown): boolean => {
+      const refusal = parseBudgetRefusal(raw);
+      if (!refusal) return false;
+      if (cb.onBudgetExhausted) cb.onBudgetExhausted(refusal, raw);
+      else cb.onError(refusal.title);
+      return true;
+    };
+
     const handleFrame = (evt: any) => {
       if (!evt || typeof evt !== 'object') return;
       switch (evt.type) {
@@ -722,9 +933,20 @@ export const api = {
           cb.onCrisis?.({ tier: typeof evt.crisis_tier === 'number' ? evt.crisis_tier : null });
           break;
         }
+        // Budget cap. On the streaming branch the server sets HTTP 200 and
+        // writes exactly this one frame, then ends — so without handling it
+        // here the stream would look "empty" and fall back to the JSON path,
+        // which then 402s. Terminal, like 'error'.
+        case 'budget_exhausted':
+          finished = true;
+          if (!emitBudgetRefusal(evt)) cb.onError('chat 402');
+          break;
         case 'error':
           finished = true;
           if (evt.error === 'rate-limit-exceeded') emitRateLimit(evt);
+          else if (evt.error === 'budget-exhausted') {
+            if (!emitBudgetRefusal(evt)) cb.onError('chat 402');
+          }
           else cb.onError(String(evt.error || 'unknown error'));
           break;
       }
@@ -779,6 +1001,22 @@ export const api = {
           } catch {}
         }
         if (!handled) cb.onError('chat 429');
+        return;
+      }
+      if (xhr.status === 402) {
+        // Budget cap on the streaming request itself. Never fall back — the
+        // JSON path would just 402 again. Body is JSON here (the SSE variant
+        // arrives as 200 + a budget_exhausted frame, handled in handleFrame).
+        finished = true;
+        let raw: unknown = null;
+        try { raw = JSON.parse(xhr.responseText || ''); } catch { /* not JSON */ }
+        if (!raw) {
+          for (const line of (xhr.responseText || '').split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            try { raw = JSON.parse(line.slice(6)); break; } catch { /* skip */ }
+          }
+        }
+        if (!emitBudgetRefusal(raw)) cb.onError('chat 402');
         return;
       }
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -1185,6 +1423,11 @@ export const api = {
       onChunk: (text: string) => void;
       onDone: () => void;
       onError: (err: string) => void;
+      /** Budget cap — guide-chat counts against the same measured-cost pool
+       *  as main chat and refuses with the same 402 payload. Optional: when
+       *  a caller omits it the refusal falls through to onError with the
+       *  server's title, so no call site regresses. */
+      onBudgetExhausted?: (refusal: BudgetRefusal, raw: unknown) => void;
     },
   ): Promise<() => void> {
     const headers = await authHeaders();
@@ -1230,6 +1473,18 @@ export const api = {
           consumed = txt.length;
         }
         cb.onDone();
+      } else if (xhr.status === 402) {
+        // Budget cap — preserve the parsed body instead of collapsing it
+        // into a status-plus-preview string.
+        let raw: unknown = null;
+        try { raw = JSON.parse(xhr.responseText || ''); } catch { /* not JSON */ }
+        const refusal = parseBudgetRefusal(raw);
+        if (refusal) {
+          if (cb.onBudgetExhausted) cb.onBudgetExhausted(refusal, raw);
+          else cb.onError(refusal.title);
+        } else {
+          cb.onError('guide-chat 402');
+        }
       } else {
         const preview = (xhr.responseText || '').slice(0, 200);
         cb.onError(`guide-chat ${xhr.status} ${preview}`);
