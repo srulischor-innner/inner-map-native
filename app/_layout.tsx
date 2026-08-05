@@ -552,9 +552,24 @@ function RootLayout() {
         (resp) => {
           try {
             const data = resp.notification.request.content.data || {};
-            const route = typeof data.route === 'string' ? data.route : '/';
+            const raw = typeof data.route === 'string' ? data.route.trim() : '';
+            // The real guard here is the SCHEME check, not the slash. This
+            // string comes off the wire and goes straight into router.push(),
+            // and expo-router's shouldLinkExternally() hands anything matching
+            // a scheme or '//host' to Linking.openURL — i.e. a route field
+            // could navigate the user OUT of the app to an arbitrary URL. The
+            // server only ever sends a static path, so this is defence in
+            // depth, but it costs nothing and the failure mode is bad.
+            // The leading-slash normalization is cosmetic: expo-router treats
+            // an href as relative only when it starts with '.', and
+            // getStateFromPath resolves 'messages' and '/messages' to the same
+            // state. Kept so the logged route matches the app's convention.
+            const route =
+              !raw || raw.includes(':') || raw.startsWith('//')
+                ? '/'
+                : raw.startsWith('/') ? raw : `/${raw}`;
             console.log('[boot] notification tap → route:', route);
-            router.push(route);
+            router.push(route as any);
           } catch (e) {
             console.warn('[boot] notification tap handler threw:', (e as Error)?.message);
           }
