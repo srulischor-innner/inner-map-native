@@ -364,6 +364,129 @@ export function ChatInput({
   // without accidentally triggering a recording.
   // ------------------------------------------------------------------------
 
+  // ------------------------------------------------------------------------
+  // TAKE-SCOPED STATE — ONE reset, called by EVERY exit.
+  //
+  // A "take" is one recording attempt: from the moment a hold claims it to
+  // the moment it is sent, discarded, or abandoned. Nine places end one (the
+  // two stop-path early-returns, the send, its three discards, the cancel,
+  // and five aborts inside startRecording) and each used to clear its own
+  // hand-picked SUBSET of the take state. That drift IS the bug these
+  // helpers close: the finalize early-return cleared `locked` and nothing
+  // else, so an `interrupted` latch set during teardown survived it — and
+  // because the interrupted UI routes its own send button straight back into
+  // that early-return, nothing on screen could clear the latch afterwards.
+  // ChatInput is not remounted in normal chat use (app/(tabs)/index.tsx has
+  // no key and no remount on it; only the crisis gate swaps it out), so the
+  // stuck state was terminal until the app restarted.
+  //
+  // clearTakeSignals() — everything that DESCRIBES a take: captured duration,
+  // the visible timer, the interrupted latch and its ref mirror, and the
+  // auto-resume gap note with its pending timer. These are equally wrong to
+  // carry INTO a new take, so the start path calls this one too.
+  //
+  // resetTake() — clearTakeSignals() plus the state that says a take EXISTS
+  // AT ALL. Exit only; see its warning.
+  // ------------------------------------------------------------------------
+  function clearTakeSignals() {
+    capturedMsRef.current = 0;
+    setSeconds(0);
+    interruptedRef.current = false;
+    setInterrupted(false);
+    setGapNote(null);
+    if (gapNoteTimer.current) { clearTimeout(gapNoteTimer.current); gapNoteTimer.current = null; }
+  }
+
+  /**
+   * Leave the component in the idle, no-take-in-progress state. EVERY path
+   * that ends a take calls exactly this. The uniformity is the fix, not a
+   * tidy-up: nine sites each clearing their own subset is what shipped the
+   * stuck-interrupted regression, and a tenth exit added later inherits the
+   * full reset for free.
+   *
+   * EXIT ONLY — never call this on the way INTO a take. A take that is
+   * starting has already claimed holdActiveRef synchronously (ccfe8cb's
+   * zombie-recording race guard: every post-await abort check reads it), and
+   * it may already have crossed the lock threshold under the finger — a
+   * LOCKED recording deliberately outlives the release. Clearing either one
+   * mid-start strands a running recorder with no send affordance, which is
+   * exactly the zombie ccfe8cb closed. The start path calls
+   * clearTakeSignals() and claims ownership itself.
+   */
+  function resetTake() {
+    clearTakeSignals();
+    // The one take-scoped ref whose IDLE value is `true`, not `false`.
+    // stoppingRef does not mean "a stop is running", it means "the recorder
+    // watch must not reconcile" — and between takes that is exactly right:
+    // no take exists, so nothing the native recorder reports can be an
+    // interruption of one. Setting it false here would hand the still-live
+    // poll a window to call markInterrupted() immediately AFTER this reset
+    // (the watch effect tears down a render later, not synchronously),
+    // re-creating the very latch this function exists to clear. It goes
+    // false on ENTRY, in startRecording, where it starts meaning something.
+    stoppingRef.current = true;
+    recordingRef.current = false;
+    setRecording(false);
+    setLocked(false);
+    holdActiveRef.current = false;
+    startPromiseRef.current = null;
+  }
+
+  /**
+   * Release a recorder that was PREPARED and then abandoned. Android-only in
+   * effect, but called unconditionally — a no-op on iOS costs nothing and a
+   * Platform fork here would be a second thing to keep in sync.
+   *
+   * THE LEAK: expo-audio's Android prepareRecording() throws
+   * AudioRecorderAlreadyPreparedException whenever
+   * `recorder != null || isPrepared || isRecording || isPaused`
+   * (node_modules/expo-audio/android/.../AudioRecorder.kt:74-77). The only
+   * code that clears those four is its private reset(), reachable from
+   * exactly two places: stopRecording() — which calls it in a `finally` —
+   * and sharedObjectDidRelease(). So any path that prepares and then returns
+   * without recording POISONS the recorder: every later prepareToRecordAsync()
+   * rejects, startRecording's catch swallows it, and the mic silently does
+   * nothing at all until the app is restarted.
+   *
+   * WHY stop() IS THE RELEASE CALL:
+   *   • Android — AudioModule.kt binds AsyncFunction("stop") to
+   *     stopRecording(), whose body is
+   *     `try { recorder?.stop(); ... } finally { reset() }`. On a recorder
+   *     that is prepared but never started, MediaRecorder.stop() throws
+   *     IllegalStateException — but reset() has ALREADY run in the finally
+   *     by the time that propagates, so the handle IS freed. The rejected
+   *     promise is noise about the return value, not about the release.
+   *   • iOS — AudioRecorder.swift:131-134 guards
+   *     `currentState == .recording || .paused` and returns otherwise, so
+   *     this is a genuine no-op on every abort path. iOS never needed it:
+   *     prepare() (AudioRecorder.swift:68-95) has no already-prepared throw
+   *     and re-prepares happily from .prepared. That asymmetry is the whole
+   *     reason this bug is Android-only and self-heals on iOS.
+   *
+   * NOT release()/remove(): useAudioRecorder holds this recorder in expo's
+   * useReleasingSharedObject for the component's entire lifetime. Destroying
+   * the shared object here would make every later call throw "Unable to find
+   * the native shared object" — the crash documented on the unmount effect.
+   */
+  async function releaseAbandonedRecorder(where: string) {
+    try {
+      await recorder.stop();
+      console.log(`[voice-note] released prepared recorder after ${where}`);
+    } catch (err) {
+      // NOT a swallowed failure — this rejection is EXPECTED on Android and
+      // means the release worked. stop() on a prepared-but-unstarted
+      // MediaRecorder throws only after expo's `finally { reset() }` has
+      // already freed the handle. It is logged with its site so that if the
+      // "mic does nothing" symptom ever returns, this line proves whether
+      // the release was attempted. The one case this cannot save is stop()
+      // rejecting BEFORE stopRecording() runs at all (its
+      // checkRecordingPermission() precondition, i.e. mic access revoked
+      // mid-flight) — the recorder then stays prepared, but so does the
+      // permission problem that makes recording impossible anyway.
+      console.log(`[voice-note] release after ${where} threw (expected on Android; handle is freed) — ${(err as Error)?.message ?? String(err)}`);
+    }
+  }
+
   async function startRecording() {
     // RACE GUARD (the "zombie recording" bug): everything before
     // recorder.record() awaits — the permission prompt, the audio-session
@@ -389,10 +512,12 @@ export function ChatInput({
         const perm = await AudioModule.requestRecordingPermissionsAsync();
         if (!perm.granted) {
           Alert.alert('Microphone off', 'Grant mic access in Settings to record voice notes.');
+          resetTake();
           return false;
         }
         if (!holdActiveRef.current) {
           console.log('[voice-note] hold ended during permission prompt — aborting start');
+          resetTake();
           return false;
         }
         // Authoritative playback→record handoff. ensureRecordingMode hard-
@@ -408,35 +533,48 @@ export function ChatInput({
           console.warn('[voice-note] audio session not record-ready — aborting (refusing to record silence)');
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
           Alert.alert('One sec', 'Audio is still finishing playback. Try the mic again in a moment.');
+          resetTake();
           return false;
         }
         if (!holdActiveRef.current) {
           console.log('[voice-note] hold ended during audio-session handoff — aborting start');
+          resetTake();
           return false;
         }
         await recorder.prepareToRecordAsync();
         if (!holdActiveRef.current) {
           console.log('[voice-note] hold ended during prepare — aborting start');
+          // POST-PREPARE ABORT — the recorder is prepared and will never be
+          // started. Hand it back before returning or Android is poisoned
+          // until restart (see releaseAbandonedRecorder).
+          await releaseAbandonedRecorder('hold ended during prepare');
+          resetTake();
           return false;
         }
         recorder.record();
+        // Fresh take — clear the reconciliation signals, THEN claim it. The
+        // timer is driven by the recorder watch (native durationMillis), not
+        // wall clock. Deliberately NOT resetTake(): this is an ENTRY.
+        // holdActiveRef is already claimed, and `locked` may already be set
+        // (the finger can cross the lock threshold while the awaits above are
+        // still in flight) — clearing either here would strand this recorder.
+        clearTakeSignals();
+        stoppingRef.current = false; // a take exists again; the watch may reconcile
         recordingRef.current = true;
         setRecording(true);
-        setSeconds(0);
-        // Fresh take — reset reconciliation state. The timer is driven by
-        // the recorder watch (native durationMillis), not wall clock.
-        capturedMsRef.current = 0;
-        interruptedRef.current = false;
-        stoppingRef.current = false;
-        setInterrupted(false);
-        setGapNote(null);
         startTimeRef.current = Date.now();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
         return true;
       } catch (err) {
         console.warn('[mic] startRecording failed:', (err as Error).message);
-        recordingRef.current = false;
-        setRecording(false);
+        // This catch sits BELOW prepareToRecordAsync, so it can be reached
+        // with the handle prepared: a throw from record() itself leaves
+        // Android's isPrepared true and its MediaRecorder non-null (the
+        // module's record() binding only calls through when isPrepared).
+        // Release before returning. Harmless if we never got that far — the
+        // native stop is null-safe on Android and state-guarded on iOS.
+        await releaseAbandonedRecorder('startRecording threw');
+        resetTake();
         return false;
       }
     })();
@@ -472,9 +610,12 @@ export function ChatInput({
     holdActiveRef.current = false;
     if (startPromiseRef.current) { try { await startPromiseRef.current; } catch {} }
     // If the recorder never started (a misfire, an aborted start, or a
-    // start the race guard cancelled), there's nothing to send — just make
-    // sure no locked UI is left stranded.
-    if (!recordingRef.current) { setLocked(false); return; }
+    // start the race guard cancelled), there's nothing to send. This is a
+    // take EXIT like any other, so it resets EVERYTHING, not just `locked`.
+    // Clearing only `locked` here is what made a teardown-time `interrupted`
+    // permanent: the interrupted UI's own send button lands on this exact
+    // line, so it was the one exit that could never undo the latch.
+    if (!recordingRef.current) { resetTake(); return; }
     // Suppress the recorder watch while OUR stop runs, and measure from the
     // recorder's own captured duration — never wall clock, which keeps
     // climbing across an interruption while the file does not.
@@ -485,9 +626,12 @@ export function ChatInput({
       : stopTs - startTimeRef.current; // fallback: watch never ticked (sub-500ms take)
     const heldSec = Math.max(0.1, heldMs / 1000);
     console.log(`[voice-note] finalizeAndSend — stopTimestamp=${stopTs} capturedMs=${heldMs} heldSec=${heldSec.toFixed(3)} threshold=${MIN_RECORDING_MS}ms`);
-    interruptedRef.current = false;
-    setInterrupted(false);
-    setGapNote(null);
+    // NOTE: the interrupted latch is NOT cleared here any more — resetTake()
+    // below owns it, so there is exactly one place that clears take state.
+    // Visible consequence: across the STOP_GRACE_MS window an interrupted
+    // take's pill keeps reading "Paused" instead of flipping back to a
+    // pulsing "Recording…" for 250ms. That is the honest reading; nothing is
+    // being captured (see the pulse effect's comment).
     // Skip the grace + flush for micro-taps that would be discarded anyway.
     // Otherwise we'd burn 400ms waiting on audio we're not going to send.
     const willDiscard = heldMs < MIN_RECORDING_MS;
@@ -499,10 +643,11 @@ export function ChatInput({
     if (!willDiscard) {
       await new Promise<void>((r) => setTimeout(r, STOP_GRACE_MS));
     }
-    recordingRef.current = false;
-    setRecording(false);
-    setLocked(false);
-    setSeconds(0);
+    // TAKE EXIT. One reset serves the send path AND the three exits below it
+    // (the no-uri discard, the too-short discard, and the catch) — by the
+    // time any of those is reached the component is already fully idle, so
+    // none of them can leave a partial state behind.
+    resetTake();
     try {
       await recorder.stop();
       // Belt-and-braces flush: wait POST_STOP_FLUSH_MS so iOS finalizes
@@ -550,16 +695,12 @@ export function ChatInput({
     // Same claim-then-settle as finalizeAndSend — see the race guard there.
     holdActiveRef.current = false;
     if (startPromiseRef.current) { try { await startPromiseRef.current; } catch {} }
-    if (!recordingRef.current) { setLocked(false); return; }
+    // Take EXIT — same full reset as every other one (see resetTake).
+    if (!recordingRef.current) { resetTake(); return; }
     console.log('[voice-note] cancelRecording — user discarded the take');
-    stoppingRef.current = true;
-    interruptedRef.current = false;
-    setInterrupted(false);
-    setGapNote(null);
-    recordingRef.current = false;
-    setRecording(false);
-    setLocked(false);
-    setSeconds(0);
+    // TAKE EXIT. No grace window here (the audio is being thrown away), so
+    // the reset lands immediately and also covers the catch below.
+    resetTake();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     try {
       await recorder.stop();

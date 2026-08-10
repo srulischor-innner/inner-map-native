@@ -27,7 +27,9 @@
 //   • isRecording returning true while we're showing the interrupted state
 //     → the library's own auto-resume kicked in: report the gap (wall
 //     clock minus captured), never hide it;
-//   • subscribes to recordingStatusUpdate so encode errors are heard.
+//   • subscribes to recordingStatusUpdate so encode errors are heard —
+//     suppressed, exactly like the poll, while one of the OWNER's own stop
+//     paths is running (see the guard on the subscription below).
 import { useEffect, useRef } from 'react';
 import type { AudioRecorder } from 'expo-audio';
 
@@ -58,8 +60,40 @@ export function useRecorderWatch(recorder: AudioRecorder, opts: {
 
   useEffect(() => {
     if (!opts.active) return;
+    // SAME SUPPRESSION AS THE POLL BELOW (`if (o.stoppingRef.current) return;`),
+    // for the same reason and read the same way — through cbRef, so it is
+    // always the live ref and never a stale closure.
+    //
+    // WHAT IT DISTINGUISHES: stoppingRef is raised by the owner the instant it
+    // decides to end a take, and stays raised until the next take starts. An
+    // encode error arriving while it is DOWN happened mid-take, with the user
+    // still recording — a real fault, and it still surfaces. That is the whole
+    // reason this subscription exists (the iOS truncation bug in the header).
+    // An error arriving while it is UP arrived during, or after, our own stop.
+    //
+    // WHY IT IS NEEDED AT ALL: Android's MediaRecorder fires onError/onInfo
+    // while it is being torn down, and expo-audio forwards both as
+    // recordingStatusUpdate with hasError=true (AudioRecorder.kt onError /
+    // onInfo). Those land AFTER the owner has already cleared its interrupted
+    // latch as part of stopping, so an unguarded call re-sets that latch on a
+    // component that has just left the recording UI. Unsubscribing does not
+    // close the window: `active` flips in React state, and the effect cleanup
+    // that removes this subscription runs a render later, not synchronously.
+    //
+    // WHERE IT ERRS: an error that genuinely occurs INSIDE the owner's own
+    // stop window (the release grace + stop() resolving — a few hundred ms at
+    // the very end of a take) is suppressed along with the teardown noise. The
+    // two are indistinguishable from here: both are "an error while stopping".
+    // Erring toward suppression is the right direction. By then the take is
+    // over and the file is about to be read, so a genuinely broken recording
+    // still announces itself on the stop path — a null uri, or a stop() that
+    // throws — where the owner can act on it. The opposite bias cannot be
+    // recovered from at all: it paints a "Paused" state onto a take that has
+    // already been sent, over a recorder that is gone.
     const sub = recorder.addListener('recordingStatusUpdate', (status) => {
-      if (status.hasError) cbRef.current.onEncodeError(status.error ?? null);
+      if (!status.hasError) return;
+      if (cbRef.current.stoppingRef.current) return;
+      cbRef.current.onEncodeError(status.error ?? null);
     });
     const iv = setInterval(() => {
       const o = cbRef.current;

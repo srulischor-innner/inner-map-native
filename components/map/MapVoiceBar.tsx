@@ -136,8 +136,27 @@ const SELF_INFO_BODY =
   "Self — pure presence. Speak, and the part you're blended with lights up; Self responds to it. This is what your own grounded presence sounds like — so you can begin to recognize it, and find it, in yourself.";
 const SELF_LIKE_INFO_BODY =
   "Self-like — leadership. It speaks to the part that's active, from the ground you stand on. Hear what it's like to lead your system from your own belief — so you can come to embody it yourself.";
+// SELF-LIKE MIC LOCK — title + body.
+//
+// This is a DESIGNED LOCK, not an unbuilt feature, and the copy has to say so.
+// It renders for 82 of the 88 users who have a self-like row, and the previous
+// title — "Not yet available" — reads as unfinished software: to a user, and to
+// an App Store reviewer under Guideline 2.1 (Performance: App Completeness),
+// which is about placeholder and non-functional UI. The voice is fully built;
+// it is gated on the person having a belief for it to speak from, because a
+// Self-like voice with no established ground has nothing to lead from.
+//
+// So the copy states the CONDITION, not an absence. It also stops giving
+// directions: EXPLAINER_FOOTNOTE above already carries the "tap the SELF-LIKE
+// part on your map" pointer, and repeating it here turned a warm gate into a
+// two-step instruction. Vocabulary is the app's own — "what you stand on"
+// (BeliefGround.tsx:147, PartFolderModal.tsx:464) and "separate from what your
+// parts believe" (BeliefGround / PartFolderModal placeholder), and the ground
+// metaphor is the one the map already renders (BeliefGround is literally the
+// floor the triangle stands on).
+const SELF_LIKE_DISABLED_TITLE = "Unlocks with what you stand on";
 const SELF_LIKE_DISABLED_BODY =
-  "To use this voice, first develop your Self-like belief — tap the SELF-LIKE part on your map (the diamond on the triangle, not this mic) to get started.";
+  "This voice speaks from your own ground — so it waits until there's ground to speak from. It opens once you've established what you stand on, separate from what your parts believe.";
 
 type Props = {
   sessionId: string;
@@ -1019,7 +1038,9 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
         </Pressable>
       </Modal>
 
-      {/* Self-like disabled — Phase 1 placeholder tooltip. */}
+      {/* Self-like mic lock — states the unlock condition. NOT a placeholder:
+          the voice is built, it is gated on the user having a belief. See the
+          copy constants for why the wording matters. */}
       <Modal
         visible={modal === 'selfLikeDisabled'}
         transparent
@@ -1029,7 +1050,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       >
         <Pressable style={styles.backdrop} onPress={() => setModal(null)}>
           <Pressable style={styles.card} onPress={() => {}}>
-            <Text style={styles.cardTitle}>Not yet available</Text>
+            <Text style={styles.cardTitle}>{SELF_LIKE_DISABLED_TITLE}</Text>
             <Text style={styles.cardBody}>{SELF_LIKE_DISABLED_BODY}</Text>
             <Pressable onPress={() => setModal(null)} style={styles.gotItBtn}>
               <Text style={styles.gotItText}>GOT IT</Text>
