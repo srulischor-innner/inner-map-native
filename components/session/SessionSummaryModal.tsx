@@ -24,7 +24,7 @@ import {
 import * as Haptics from 'expo-haptics';
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
-import { buildSessionExport, shareSessionText, ExportMessage } from '../../utils/sessionExport';
+import { buildSessionExport, shareSessionText, confirmSessionShare, ExportMessage } from '../../utils/sessionExport';
 
 export type SessionSummary = {
   exploredText: string;
@@ -147,8 +147,13 @@ export function SessionSummaryModal({ visible, summary, failed, messages, deepen
         {/* Share button — top right of the modal. Tapping opens the OS
             share sheet with a plain-text export of the session. */}
         <Pressable
-          onPress={() => {
+          onPress={async () => {
             Haptics.selectionAsync().catch(() => {});
+            // The confirm names what is included before anything leaves the
+            // device (founder ruling 2026-08-21k). 'Just the reflection' is a
+            // real option, not a softener.
+            const choice = await confirmSessionShare((messages || []).length > 0);
+            if (choice === 'cancel') return;
             const text = buildSessionExport({
               summary: summary ? {
                 exploredText: summary.exploredText,
@@ -156,6 +161,7 @@ export function SessionSummaryModal({ visible, summary, failed, messages, deepen
                 somethingToTryText: summary.somethingToTryText,
               } : null,
               messages: messages || [],
+              includeTranscript: choice === 'everything',
             });
             shareSessionText(text);
           }}

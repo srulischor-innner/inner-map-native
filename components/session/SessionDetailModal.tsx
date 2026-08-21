@@ -21,7 +21,7 @@ import { colors, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { parseChatMeta, stripMarkers } from '../../utils/markers';
 import { MessageBubble, ChatMsg } from '../MessageBubble';
-import { buildSessionExport, shareSessionText } from '../../utils/sessionExport';
+import { buildSessionExport, shareSessionText, confirmSessionShare } from '../../utils/sessionExport';
 import { useRouter } from 'expo-router';
 import { armPendingSessionResume } from '../../utils/pendingSessionResume';
 import type { ChatMode } from '../../utils/pendingChatMessage';
@@ -110,7 +110,7 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
             {header.title ? <Text style={styles.title} numberOfLines={2}>{header.title}</Text> : null}
           </View>
           <Pressable
-            onPress={() => {
+            onPress={async () => {
               Haptics.selectionAsync().catch(() => {});
               const raw = session?.summary;
               let structured: any = null;
@@ -118,6 +118,8 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
                 try { structured = JSON.parse(raw); } catch {}
               }
               const sessionDate = session?.date ? new Date(session.date) : new Date();
+              const choice = await confirmSessionShare((messages || []).length > 0);
+              if (choice === 'cancel') return;
               const text = buildSessionExport({
                 date: sessionDate,
                 summary: structured && structured.kind === 'structured-v1' ? {
@@ -126,6 +128,7 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
                   somethingToTryText: structured.somethingToTryText,
                 } : null,
                 messages: messages.map((m) => ({ role: m.role, text: m.text })),
+                includeTranscript: choice === 'everything',
               });
               shareSessionText(text);
             }}
