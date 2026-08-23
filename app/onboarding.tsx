@@ -754,7 +754,7 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
               'Understand myself better',
               'Work through a pattern',
               'Process something specific',
-              'Have a space between therapy sessions',
+              'Have a regular place to process things',
               'Curious about parts work',
               'Something else',
             ]}

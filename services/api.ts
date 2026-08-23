@@ -1231,6 +1231,53 @@ export const api = {
    *  The timestamp and policy version are stamped SERVER-side; the client
    *  sends neither. Returns true on success so the caller can mark the sync
    *  pending for the boot reconciliation if it failed. */
+  /** GET /api/reading — the newest reading for this user, plus the two gates.
+   *  `eligibility` says whether this map qualifies; `deliveryGate` is the
+   *  product-level hold that stays shut until one real PART_NAMED capture has
+   *  fired anywhere (server ruling 2026-08-21g). Both are read by the Map-tab
+   *  element; neither is ever inferred on device.
+   *  Old servers return 404/400 — treated as 'no reading, not eligible', so a
+   *  client that ships ahead of the server simply shows nothing. */
+  async getReading(): Promise<{
+    exists: boolean;
+    id?: string;
+    status?: 'generating' | 'ready' | 'error';
+    body?: string | null;
+    createdAt?: string;
+    eligibility?: { eligible: boolean; reason?: string | null };
+    deliveryGate?: { ready: boolean; reason?: string | null };
+  } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/reading?t=${Date.now()}`, {
+        label: 'reading-get', headers,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      console.warn('[reading] get failed:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** POST /api/reading/generate — asks the server to write one. Returns
+   *  immediately with status 'generating'; the element polls getReading().
+   *  An ineligible map is NOT an error here: the server answers 200 with
+   *  eligible:false, because the gate is a path, not a refusal. */
+  async generateReading(): Promise<{ ok?: boolean; eligible?: boolean; id?: string; status?: string } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/reading/generate', {
+        label: 'reading-generate', method: 'POST', headers,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      console.warn('[reading] generate failed:', (e as Error)?.message);
+      return null;
+    }
+  },
+
   async confirmAge18(): Promise<boolean> {
     try {
       const headers = await authHeaders();

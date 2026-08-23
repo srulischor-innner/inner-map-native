@@ -18,6 +18,8 @@ import { api } from '../../services/api';
 import { computeMapGeometry, MapGeometry } from '../../utils/mapLayout';
 import { InnerMapCanvas, NodeKey } from '../../components/map/InnerMapCanvas';
 import { BeliefGround } from '../../components/map/BeliefGround';
+import { ReadingElement } from '../../components/map/ReadingElement';
+import { ReadingModal } from '../../components/map/ReadingModal';
 import { PartFolderModal } from '../../components/map/PartFolderModal';
 import { MapVoiceBar } from '../../components/map/MapVoiceBar';
 import { ProgressStrip } from '../../components/map/ProgressStrip';
@@ -49,6 +51,12 @@ type MapLayer = {
 };
 
 export default function MapScreen() {
+  // THE READING (cycle 3). The element owns its own gating and polling; the
+  // screen only holds the opened document. Both render nothing at all when
+  // the server has no /api/reading, so an old server is silent, not broken.
+  const [readingOpen, setReadingOpen] = useState(false);
+  const [readingBody, setReadingBody] = useState<string | null>(null);
+  const [readingAt, setReadingAt] = useState<string | undefined>(undefined);
   // Mark the user's map as seen every time this tab gains focus.
   // services/mapSeen.ts handles the optimistic broadcast + the
   // mark-seen POST + the confirmation refresh; the dot in the top
@@ -636,6 +644,14 @@ export default function MapScreen() {
       {/* Persistent header — only in circle (integration) view. A single
           quiet line of italic copy that tells the user the parts are
           tappable. Hidden when the triangle view is active. */}
+      {/* The reading. Inert and explaining itself until the map qualifies
+          AND the delivery gate has opened; clickable after. Sits in the
+          header band rather than the triangle geometry so nothing about the
+          canvas layout depends on whether it is showing. */}
+      <ReadingElement
+        onOpen={(b, at) => { setReadingBody(b); setReadingAt(at); setReadingOpen(true); }}
+      />
+
       {view === 'circle' ? (
         <View pointerEvents="none">
           <Text style={styles.circleTitle}>Integrated Map</Text>
@@ -888,6 +904,12 @@ export default function MapScreen() {
         mapData={activeMapData}
         parts={parts}
         onClose={() => setFolderPart(null)}
+      />
+      <ReadingModal
+        visible={readingOpen}
+        body={readingBody}
+        createdAt={readingAt}
+        onClose={() => setReadingOpen(false)}
       />
     </SafeAreaView>
   );

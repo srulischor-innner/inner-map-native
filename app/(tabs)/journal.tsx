@@ -88,7 +88,7 @@ export default function JournalScreen() {
         <EntryCard
           label="FREE FLOW"
           title="Just write. No rules. This is yours."
-          body="A blank space. Type or speak — whatever is present. Share it with the AI to deepen your map, or keep it private."
+          body="A blank space. Type or speak — whatever is present. Share it with the AI to add to your map, or keep it private."
           onPress={() => {
             Haptics.selectionAsync().catch(() => {});
             setComposeKind('freeflow');

@@ -251,10 +251,10 @@ const FACET_LABEL: Record<string, string> = {
 function DeepenedBlock({ deepened }: { deepened: DeepenedPart[] }) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionLabel}>WHAT DEEPENED</Text>
+      <Text style={styles.sectionLabel}>WHAT WAS ADDED</Text>
       <Text style={styles.deepenedIntro}>
-        Parts you were present with grew a little fuller. Open your map to
-        see — or prune — what's new.
+        Parts you were present with have something new written down. Open
+        your map to see — or prune — what was added.
       </Text>
       {deepened.map((p) => (
         <View key={p.category + p.name} style={styles.deepenedPart}>
