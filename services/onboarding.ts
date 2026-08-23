@@ -47,6 +47,22 @@ const KEYS = {
   // epoch-ms timestamp; shownCount caps the total number of reminders.
   graceNudgeLastShownAt: 'onboarding.graceNudgeLastShownAt',
   graceNudgeShownCount:  'onboarding.graceNudgeShownCount',
+  // ---- 18+ age gate (2026-08) ----------------------------------------
+  // ageGateBlocked  — set the moment a date of birth evaluates to under 18.
+  //                   Survives backgrounding, force-quit and app updates, and
+  //                   is checked at boot BEFORE any routing, so a declined
+  //                   minor is not re-asked and cannot walk back into the
+  //                   flow. Cleared only when a corrected date passes.
+  // ageGateRetryUsed— set when the declined user takes the single correction
+  //                   offer. Once set, the block screen has no way forward.
+  //
+  // NEITHER key records the date, the age, or anything derived from either
+  // beyond "this device was declined". That is the entire on-device
+  // footprint of a declined minor, by founder ruling: they are someone we
+  // just declined to serve, and collecting their birthdate at that moment is
+  // the one thing we actively must not do.
+  ageGateBlocked:   'onboarding.ageGateBlocked',
+  ageGateRetryUsed: 'onboarding.ageGateRetryUsed',
 } as const;
 
 export type OnboardingState = {
@@ -179,6 +195,96 @@ export async function isTermsSyncPending(): Promise<boolean> {
 }
 export const markIntakeComplete     = () => setBool(KEYS.intakeComplete, true);
 export const markPrivacyNoticeSeen  = () => setBool(KEYS.privacyNoticeSeen, true);
+
+// ---- 18+ age gate (2026-08) -------------------------------------------------
+// The device-local half of the gate. The SERVER half (age18Confirmed +
+// timestamp + policy version, in user_settings) is the audit trail and is
+// written only for users who PASS.
+//
+// WHAT A DECLINED MINOR DOES AND DOES NOT LEAVE BEHIND — stated precisely,
+// because an earlier version of this comment ("no server row, no request, and
+// no analytics event of any kind") was false of the FLOW even though it was
+// true of the 'under' branch, and it is the kind of line that gets quoted into
+// a privacy assessment.
+//
+//   NO age18 row, ever. No date of birth and no age is stored, sent or logged
+//   anywhere, on any path — the date lives in component state, is reduced to a
+//   boolean, and is discarded (utils/ageGate.ts). The 'under' branch itself
+//   issues no request and fires no analytics event, and from that point on the
+//   blocked branch in app/_layout.tsx returns before token bootstrap, terms
+//   reconciliation, age reconciliation and RevenueCat identify, so a blocked
+//   device makes no boot request either.
+//
+//   NO TERMS ROW EITHER, SINCE THE 2026-08 REORDER. The gate used to be intake
+//   step 1, one phase AFTER terms, so api.acceptTerms() had already written
+//   termsAccepted + termsAcceptedAt in user_settings against this user id by
+//   the time anyone was declined. The gate is now its own onboarding phase
+//   sitting BEFORE the terms screen, and AgeGateScreen's onPass is the only
+//   writer of phase 'terms' in app/onboarding.tsx — so neither acceptTerms
+//   call site is reachable without a passing evaluation. The live Terms of
+//   Service promise to close the account and delete the data if we learn a
+//   user is under 18; the founder chose to make that clause dormant by never
+//   writing the row, rather than to fire a DELETE. Every phase upstream of the
+//   gate (welcome, privacy notice) writes device-local flags only.
+//
+//   ROWS FROM BEFORE ONBOARDING STILL DO EXIST. If the user signed in before
+//   onboarding (the sign-in screen runs first on a fresh install) an
+//   auth_identities row holds their email, a user id was minted, and boot's
+//   deferred token bootstrap may have run against it. None of that is created
+//   by the gate and nothing here removes any of it; the erasure question is
+//   with the founder and no deletion is performed from this path.
+//
+// markAgeGateBlocked is called the instant a date evaluates 'under', BEFORE
+// the block screen renders — so a force-quit at the sight of the screen still
+// leaves the device blocked. clearAgeGateBlocked exists for exactly one
+// caller: a corrected date that passes.
+export const markAgeGateBlocked   = () => setBool(KEYS.ageGateBlocked, true);
+export const clearAgeGateBlocked  = () => AsyncStorage.removeItem(KEYS.ageGateBlocked).catch(() => {});
+export const markAgeGateRetryUsed = () => setBool(KEYS.ageGateRetryUsed, true);
+
+/** Is this device blocked? Read directly rather than through
+ *  getOnboardingState because the answer must NOT participate in that call's
+ *  "default everything true on timeout" loop-breaker.
+ *
+ *  THIS FUNCTION HAS NO TIMEOUT, AND CANNOT SENSIBLY HAVE ONE. The catch below
+ *  handles a THROW. It does NOT handle a STALL — AsyncStorage hanging returns a
+ *  promise that never settles, so there is nothing to catch and no value to
+ *  return. Every caller must therefore impose its own cap AND choose its own
+ *  fallback, because the safe direction differs by call site:
+ *    - app/_layout.tsx boot gate  → cap 3000ms, fallback TRUE (unknown ⇒ do not
+ *      let the device rest in the tabs; route to /onboarding).
+ *    - the magic-link and notification handlers → same cap, same TRUE.
+ *    - app/onboarding.tsx mount   → cap 3000ms, fallback FALSE (unknown ⇒ fall
+ *      into the FLOW, never into the app, so the user meets the live gate at
+ *      the 'age' phase rather than sitting on a held blank frame — and that
+ *      phase is upstream of terms, so falling through lands nobody past it).
+ *    - app/(tabs)/_layout.tsx backstop → cap 1500ms, fallback FALSE (it sits
+ *      behind a boot gate that already failed closed).
+ *  Adding a bare `await isAgeGateBlocked()` anywhere new re-opens the bypass
+ *  this shape exists to prevent. */
+export async function isAgeGateBlocked(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(KEYS.ageGateBlocked)) === '1'; }
+  catch { return false; }
+}
+
+/** Has the single correction offer already been taken on this device? */
+export async function isAgeGateRetryUsed(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(KEYS.ageGateRetryUsed)) === '1'; }
+  catch { return false; }
+}
+
+// ---- age-confirmation server-sync bookkeeping ------------------------------
+// Same contract as termsSyncPending directly above: the attestation POST is
+// the audit trail, and an offline signup must not silently lose it. We let the
+// user through (they ARE 18; refusing them over a dropped packet is punitive)
+// and mark the sync pending so the boot reconciliation re-POSTs it.
+const AGE_SYNC_PENDING = 'onboarding.age18SyncPending';
+export const markAgeSyncPending  = () => setBool(AGE_SYNC_PENDING, true);
+export const clearAgeSyncPending = () => setBool(AGE_SYNC_PENDING, false);
+export async function isAgeSyncPending(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(AGE_SYNC_PENDING)) === '1'; }
+  catch { return false; }
+}
 // Build 11 — set when the user has either signed in OR explicitly
 // chosen anonymous on the new sign-in screen. Boot gate uses this
 // to decide whether to route brand-new installs to /sign-in.
@@ -273,5 +379,11 @@ export async function resetOnboarding(): Promise<void> {
     AsyncStorage.removeItem(KEYS.migrationFirstSeenAt),
     AsyncStorage.removeItem(KEYS.graceNudgeLastShownAt),
     AsyncStorage.removeItem(KEYS.graceNudgeShownCount),
+    // The age gate resets with everything else. This is a DEV-ONLY helper
+    // (Settings → dev reset); it is not reachable by a declined user, who has
+    // no route into the app at all.
+    AsyncStorage.removeItem(KEYS.ageGateBlocked),
+    AsyncStorage.removeItem(KEYS.ageGateRetryUsed),
+    AsyncStorage.removeItem(AGE_SYNC_PENDING),
   ]);
 }

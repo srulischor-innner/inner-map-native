@@ -1054,10 +1054,17 @@ export const api = {
     };
   },
 
-  /** GET /api/intake — returns the user's stored intake JSON (name, age, etc).
-   *  Returns null if the user hasn't completed intake or the field is missing. */
+  /** GET /api/intake — returns the user's stored intake JSON (name, gender, etc).
+   *  Returns null if the user hasn't completed intake or the field is missing.
+   *
+   *  `age` is GONE from this shape (2026-08, with the 18+ gate). The server no
+   *  longer accepts or stores it, and nothing ever read it — the only consumer
+   *  of this call in the whole app is HamburgerMenu, which reads `name`. Do not
+   *  re-add it: the Privacy Policy's minimisation list commits to collecting
+   *  "only age confirmation that you're 18+", which now lives as a boolean
+   *  behind /api/age-confirm. */
   async getIntake(): Promise<{
-    name?: string; age?: number; gender?: string;
+    name?: string; gender?: string;
     relationship?: string; profession?: string;
     goals?: string[]; goalsOther?: string; freeText?: string;
   } | null> {
@@ -1210,6 +1217,43 @@ export const api = {
       const res = await apiFetch('/api/terms/accept', { label: 'terms-accept', method: 'POST', headers });
       return res.ok;
     } catch { return false; }
+  },
+
+  /** POST /api/age-confirm — record that this user attested to being 18+.
+   *
+   *  THE BODY IS A BARE BOOLEAN AND MUST STAY THAT WAY. The date of birth the
+   *  user typed never leaves the device: it is reduced to this boolean by
+   *  utils/ageGate.evaluateDob and discarded. The server 400s on any
+   *  date-shaped key (dob / birthDate / age / year / month / day …) precisely
+   *  so this cannot regress quietly — see the endpoint's header for why that
+   *  is a legal requirement and not a preference.
+   *
+   *  The timestamp and policy version are stamped SERVER-side; the client
+   *  sends neither. Returns true on success so the caller can mark the sync
+   *  pending for the boot reconciliation if it failed. */
+  async confirmAge18(): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/age-confirm', {
+        label: 'age-confirm', method: 'POST', headers,
+        body: JSON.stringify({ confirmed: true }),
+      });
+      return res.ok;
+    } catch { return false; }
+  },
+
+  /** GET /api/age-confirm — the SERVER's record of the attestation. Used by
+   *  the boot reconciliation exactly as getTerms is. Returns null on any
+   *  transport failure; callers must treat null as "unknown", never as
+   *  "not confirmed". */
+  async getAge18(): Promise<{ age18Confirmed: boolean } | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/age-confirm', { label: 'age-confirm-get', headers });
+      if (!res.ok) return null;
+      const j = await res.json();
+      return { age18Confirmed: !!j?.age18Confirmed };
+    } catch { return null; }
   },
 
   /** GET /api/terms — the SERVER's record of acceptance. This is the audit

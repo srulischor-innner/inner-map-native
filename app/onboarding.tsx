@@ -1,8 +1,11 @@
-// Onboarding flow — a single screen with three phases behind one full-screen layout:
+// Onboarding flow — a single screen with several phases behind one full-screen layout:
 //   1. welcome — 6 swipeable intro slides (title, patterns, map, sketch, companion,
 //      not-therapy, begin)
-//   2. terms   — plain-language disclaimer with a checkbox and "I understand" CTA
-//   3. intake  — 4-step form: name / about / goals / free-text. Each step has its
+//   2. privacy — first-launch plain-language summary of what Inner Map stores
+//   3. age     — the 18+ gate. Its own phase, and it sits AHEAD of terms
+//                (2026-08 reorder — see the AgeGateScreen header for why).
+//   4. terms   — plain-language disclaimer with a checkbox and "I understand" CTA
+//   5. intake  — 4-step form: name / about / goals / free-text. Each step has its
 //      own "Continue" button; slide 2+ have a "skip" link to respect the user.
 //
 // On completion of each phase we mark the corresponding flag in AsyncStorage so a
@@ -25,8 +28,14 @@ import { PARTNER_ENABLED } from '../constants/features';
 import {
   markIntroSeen, markTermsAccepted, markIntakeComplete,
   markPrivacyNoticeSeen, hasSeenPrivacyNotice, markTermsSyncPending,
+  markAgeGateBlocked, clearAgeGateBlocked, markAgeGateRetryUsed,
+  isAgeGateBlocked, isAgeGateRetryUsed, markAgeSyncPending,
 } from '../services/onboarding';
 import { api } from '../services/api';
+import {
+  evaluateDob, localToday, parseBox, MINIMUM_AGE,
+  type DobInput, type AgeGateStatus,
+} from '../utils/ageGate';
 import { GuideSlide } from '../components/guide/GuideSlide';
 import { GuideDots } from '../components/guide/GuideDots';
 import { WELCOME_SLIDES } from '../utils/guideContent';
@@ -51,17 +60,49 @@ import {
 import { SupportResourcesScreen } from '../components/safety/SupportResourcesScreen';
 
 // Onboarding phases (full self-explorer flow):
-//   welcome → privacy → terms → intake → experience → (resources?|notTherapy)
+//   welcome → privacy → age → terms → intake → experience → (resources?|notTherapy)
 //
 // Invitee flow (deep-link via a partner invite, shortened path):
-//   privacy → terms → /relationships
+//   privacy → age → terms → /relationships
 //
 // The 'privacy' phase is the first-launch privacy notice — a warm
 // summary of what Inner Map stores, what it never does, and the
 // user's data rights. Inserted between Welcome (warm intro to what
-// Inner Map is) and Terms (formal accept). Persists the
-// privacyNoticeSeen flag on dismissal so re-entries skip it.
-type Phase = 'welcome' | 'privacy' | 'terms' | 'intake' | 'experience' | 'resources' | 'notTherapy';
+// Inner Map is) and the 18+ gate. Persists the privacyNoticeSeen flag
+// on dismissal so re-entries skip it.
+//
+// ============================================================================
+// WHY 'age' SITS WHERE IT SITS — the 2026-08 reorder
+// ============================================================================
+// The gate used to live inside IntakeFlow step 1, i.e. one phase AFTER terms.
+// api.acceptTerms() fires from the terms phase, so by the time a minor was
+// declined the server already held termsAccepted + termsAcceptedAt against
+// that user id. The live Terms of Service say that if we learn an account
+// belongs to someone under 18 we close it and delete the associated data —
+// and THE GATE IS THE MOMENT OF LEARNING. Either something deletes those
+// rows, or nothing is ever written. Founder ruling: nothing is ever written.
+// Hence this order, and hence NO deletion call anywhere on this path.
+//
+// AFTER 'privacy', NOT BEFORE IT. Two orders were available —
+// welcome → AGE → privacy → terms, or welcome → privacy → AGE → terms — and
+// the second was chosen:
+//
+//   • The boundary that actually mattered to the ruling is the one between
+//     the gate and TERMS, because terms is the first phase in this file that
+//     writes anything to a server. Welcome and privacy write only
+//     device-local flags (hasSeenWelcome, privacyNoticeSeen) and make no
+//     network call at all, so moving the gate ahead of them buys nothing and
+//     costs something.
+//   • What it costs: the privacy notice is the screen that explains what
+//     Inner Map does with personal data. A date of birth IS personal data,
+//     however briefly it is held. Asking for one before we have said a word
+//     about our data handling inverts the thing the notice exists to do — and
+//     the reassurance printed directly under the date field ("we don't store
+//     your date of birth") reads as a bare assertion from a stranger unless
+//     the notice has already been shown.
+//   • Welcome stays first because being declined by an app that has not yet
+//     told you what it is, is a worse experience for no gain.
+type Phase = 'welcome' | 'privacy' | 'age' | 'terms' | 'intake' | 'experience' | 'resources' | 'notTherapy';
 
 // PR B note: this key was previously written by app/connect/[code].tsx
 // when a brand-new user tapped a partner-invite universal link before
@@ -95,6 +136,14 @@ export default function OnboardingScreen() {
   // read is in flight; we hold rendering until it settles so we don't
   // flash through the wrong initial phase.
   const [privacyAlreadySeen, setPrivacyAlreadySeen] = useState<boolean | null>(null);
+  // ageBlocked / ageRetryUsed — the 18+ gate's device-local state, resolved
+  // once on mount alongside the other two reads. `ageBlocked` true means this
+  // device gave a date of birth under 18 at some point; the block screen
+  // replaces the ENTIRE flow (including the invitee path) and there is no way
+  // past it. Null while the read is in flight, for the same
+  // don't-flash-the-wrong-phase reason as the other two.
+  const [ageBlocked, setAgeBlocked] = useState<boolean | null>(null);
+  const [ageRetryUsed, setAgeRetryUsed] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -108,6 +157,41 @@ export default function OnboardingScreen() {
     hasSeenPrivacyNotice()
       .then(setPrivacyAlreadySeen)
       .catch(() => setPrivacyAlreadySeen(false));
+    // The block must survive backgrounding, force-quit and app updates — the
+    // flag is the only thing standing between a declined minor and simply
+    // relaunching into the flow.
+    //
+    // TIMEOUT-CAPPED, FALLING OPEN INTO THE FLOW. Both helpers swallow a THROW,
+    // but neither can swallow a STALL, and the render below HOLDS on
+    // `ageBlocked === null` — so an unresolved read would leave a blank
+    // SafeAreaView on screen forever. That matters more now that the boot gate
+    // in app/_layout.tsx fails CLOSED and sends unknown-state devices here.
+    //
+    // The two directions compose deliberately: boot won't let an unknown device
+    // rest in the tabs, and this screen won't let one sit on a blank frame. It
+    // falls through to the FLOW, not to the app — which means the user reaches
+    // the 'age' phase and meets the LIVE gate, the one that actually evaluates
+    // a date. A minor is declined there exactly as before; an adult passes.
+    // Since the reorder that phase sits ahead of terms, so falling through here
+    // cannot land anyone downstream of the gate.
+    // First answer wins — whichever of the read and the cap settles first. The
+    // late one is dropped rather than applied, so this can never fight the two
+    // other writers of this state (the intake gate's onAgeBlocked, and the
+    // correction offer's setAgeBlocked(false)).
+    let ageReadSettled = false;
+    const settleAgeRead = (b: boolean) => {
+      if (ageReadSettled) return;
+      ageReadSettled = true;
+      setAgeBlocked(b);
+    };
+    const ageReadCap = setTimeout(() => settleAgeRead(false), 3000);
+    isAgeGateBlocked()
+      .then((b) => { clearTimeout(ageReadCap); settleAgeRead(b); })
+      .catch(() => { clearTimeout(ageReadCap); settleAgeRead(false); });
+    isAgeGateRetryUsed()
+      .then(setAgeRetryUsed)
+      .catch(() => setAgeRetryUsed(false));
+    return () => clearTimeout(ageReadCap);
   }, []);
 
   // Full-path completion (self-explorer): mark intake complete + route
@@ -136,8 +220,36 @@ export default function OnboardingScreen() {
   // invitee would flash through one frame of the welcome slide before
   // the invitee effect resolved, OR the privacy notice would
   // momentarily double-fire while privacyAlreadySeen resolved.
-  if (isInvitee === null || privacyAlreadySeen === null) {
+  if (isInvitee === null || privacyAlreadySeen === null || ageBlocked === null) {
     return <SafeAreaView style={styles.root} edges={['top', 'bottom']} />;
+  }
+
+  // 18+ GATE — HARD BLOCK. Checked FIRST, ahead of the invitee shortcut and
+  // every phase, so there is no path of any kind around it: no account setup,
+  // no chat, no session, no intake write. See AgeBlockedScreen for what this
+  // does and does not guarantee.
+  if (ageBlocked) {
+    return (
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <AgeBlockedScreen
+          canCorrect={!ageRetryUsed}
+          onCorrect={async () => {
+            // The SINGLE correction offer, for genuine typos. Consumed by the
+            // tap, not by the outcome — so this cannot become an unlimited
+            // guess-until-it-works loop. The blocked flag deliberately STAYS
+            // set until a passing date clears it, which means a force-quit
+            // here relaunches to this screen with the offer spent.
+            await markAgeGateRetryUsed();
+            setAgeRetryUsed(true);
+            setAgeBlocked(false);
+            // Back to the GATE, which is now its own phase ahead of terms —
+            // not into intake, which since the reorder sits downstream of an
+            // acceptance the corrected user has not made yet.
+            setPhase('age');
+          }}
+        />
+      </SafeAreaView>
+    );
   }
 
   // INVITEE PATH — privacy notice (if not already seen) → terms →
@@ -147,20 +259,49 @@ export default function OnboardingScreen() {
   // when the user has already seen the privacy notice) on the first
   // render where isInvitee=true.
   if (isInvitee) {
-    const inviteePhase: 'privacy' | 'terms' =
-      phase === 'terms' ? 'terms' : (privacyAlreadySeen ? 'terms' : 'privacy');
+    // ⚠️ 18+ GATE — THIS PATH IS NOW GATED TOO (2026-08 reorder).
+    // It previously ran privacy → terms → /relationships and never touched
+    // intake, which is where the gate used to live — so an invitee was not
+    // age-gated at all, and the gap was left documented rather than fixed
+    // because PARTNER_ENABLED is false and the branch is provably dead
+    // (isInvitee is `PARTNER_ENABLED && !!code`). The reorder makes the gate
+    // a phase rather than an intake step, so giving this path the same gate
+    // is now a two-line change with no new ruling required, and it has been
+    // made: privacy → age → terms → /relationships.
+    //
+    // THE RESUME SHAPE IS THE POINT. `inviteePhase` is what lets a user who
+    // closed the app mid-onboarding skip a screen they already finished, and
+    // it is therefore the single most likely place to accidentally re-enter
+    // the flow DOWNSTREAM of the gate. It cannot: 'terms' is reachable here
+    // only when `phase` is already 'terms', and the only writer of that value
+    // anywhere in this file is AgeGateScreen's onPass.
+    const inviteePhase: 'privacy' | 'age' | 'terms' =
+      phase === 'terms' ? 'terms'
+        : phase === 'age' ? 'age'
+          : (privacyAlreadySeen ? 'age' : 'privacy');
     return (
       <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
         {inviteePhase === 'privacy' ? (
           <PrivacyNoticeScreen
             onAcknowledge={async () => {
               await markPrivacyNoticeSeen();
-              setPhase('terms');
+              setPhase('age');
             }}
+          />
+        ) : inviteePhase === 'age' ? (
+          <AgeGateScreen
+            onPass={() => setPhase('terms')}
+            onBlocked={() => setAgeBlocked(true)}
           />
         ) : (
           <TermsScreen
             onAccept={async () => {
+              // ACCEPT-TERMS CALL SITE 1 of 2 (the invitee / resume-shaped
+              // path). Reachable only when `phase === 'terms'`, and the only
+              // assignment of that value in this file is AgeGateScreen's
+              // onPass — so this POST cannot fire for anyone who has not
+              // passed the gate.
+              //
               // SERVER FIRST, then the local gate (2026-07-30). The server row
               // is the audit trail; writing the local flag first meant an
               // offline acceptance diverged permanently — local said yes, the
@@ -200,24 +341,38 @@ export default function OnboardingScreen() {
             // user's first visit, which isn't catastrophic.
             try { await AsyncStorage.setItem(HAS_SEEN_WELCOME_KEY, '1'); } catch {}
             await markIntroSeen();
-            // Jump straight to 'terms' if the privacy notice was
+            // Jump straight to the GATE if the privacy notice was
             // already acknowledged in a prior pass (dev-reset of
             // welcome+terms+intake but not privacy, mid-onboarding
             // close + relaunch, etc). Otherwise route through the
-            // notice.
-            setPhase(privacyAlreadySeen ? 'terms' : 'privacy');
+            // notice. Either way the next stop is 'age', never 'terms'
+            // — this skip used to land on 'terms' directly, which
+            // after the reorder would be a way past the gate.
+            setPhase(privacyAlreadySeen ? 'age' : 'privacy');
           }}
         />
       ) : phase === 'privacy' ? (
         <PrivacyNoticeScreen
           onAcknowledge={async () => {
             await markPrivacyNoticeSeen();
-            setPhase('terms');
+            setPhase('age');
           }}
+        />
+      ) : phase === 'age' ? (
+        // THE 18+ GATE. Its own phase, ahead of terms. Nothing downstream of
+        // here renders until onPass fires, and onPass is the only thing in
+        // this file that ever sets phase to 'terms'.
+        <AgeGateScreen
+          onPass={() => setPhase('terms')}
+          onBlocked={() => setAgeBlocked(true)}
         />
       ) : phase === 'terms' ? (
         <TermsScreen
           onAccept={async () => {
+            // ACCEPT-TERMS CALL SITE 2 of 2 (the main path). Same gating as
+            // site 1: this branch requires `phase === 'terms'`, which only
+            // AgeGateScreen's onPass ever sets.
+            //
             // Same contract as the invitee path above: server first, result
             // honoured, local gate last, pending marker on failure.
             const synced = await api.acceptTerms();
@@ -477,7 +632,6 @@ function TermsScreen({ onAccept }: { onAccept: () => void }) {
 // ============================================================================
 type IntakeState = {
   name: string;
-  age: string;
   gender: string;
   relationship: string;
   profession: string;
@@ -488,10 +642,20 @@ type IntakeState = {
 
 function IntakeFlow({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<IntakeState>({
-    name: '', age: '', gender: '', relationship: '', profession: '',
+    name: '', gender: '', relationship: '', profession: '',
     goals: [], goalsOther: '', freeText: '',
   });
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+
+  // NO DATE OF BIRTH HERE, AND NONE MAY BE ADDED (2026-08 reorder).
+  // The 18+ gate used to be the second half of step 1. It is now its own
+  // phase — AgeGateScreen — two phases upstream, ahead of terms. There is
+  // exactly one age question in this flow and it is not in this component;
+  // adding a second one here would re-create the "two age questions, one of
+  // them optional" confusion the gate was built to remove, and would put a
+  // date of birth back inside the component that owns the /api/intake
+  // payload. The step count is unchanged: step 1 is the name, as it was
+  // before the gate ever landed here, so there is no dangling index.
 
   // Keyboard avoidance — centralized in utils/useKeyboardInset. This
   // intake is a non-modal screen whose steps are each in a ScrollView,
@@ -501,10 +665,8 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
   const kbHeight = useKeyboardInset();
 
   async function submit() {
-    const ageNum = parseInt(state.age, 10);
     await api.postIntake({
       name: state.name,
-      age: Number.isFinite(ageNum) ? ageNum : null,
       gender: state.gender,
       relationship: state.relationship,
       profession: state.profession,
@@ -523,17 +685,23 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
         ))}
       </View>
 
+      {/* STEP 1 — the name, and only the name. The date of birth that briefly
+          shared this step moved out to the 'age' phase in the 2026-08 reorder;
+          by the time anyone reaches intake they have already passed the gate
+          AND accepted terms. */}
       {step === 1 ? (
-        <StepWrap title="What should I call you?" subtitle="First name is fine.">
-          <TextInput
-            value={state.name}
-            onChangeText={(t) => setState((s) => ({ ...s, name: t }))}
-            placeholder="Your name"
-            placeholderTextColor={colors.creamFaint}
-            style={styles.input}
-            selectionColor={colors.amber}
-            autoFocus
-          />
+        <StepWrap title="Let's start with you" subtitle="What should I call you?">
+          <Field label="Your name">
+            <TextInput
+              value={state.name}
+              onChangeText={(t) => setState((s) => ({ ...s, name: t }))}
+              placeholder="First name is fine"
+              placeholderTextColor={colors.creamFaint}
+              style={styles.input}
+              selectionColor={colors.amber}
+              autoFocus
+            />
+          </Field>
           <CTA
             onPress={() => setStep(2)}
             disabled={!state.name.trim()}
@@ -542,19 +710,14 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
         </StepWrap>
       ) : null}
 
+      {/* STEP 2 — the optional "Age" TextInput that used to head this step is
+          GONE (2026-08). It gated nothing, sat under "Everything here is
+          optional", and sent age:null whenever it didn't parse. The 18+ gate
+          replaces it — two age questions in one flow would be both confusing
+          and, given the step heading, misleading about which one matters. The
+          server no longer accepts the field. */}
       {step === 2 ? (
         <StepWrap title="A little about you" subtitle="Everything here is optional.">
-          <Field label="Age">
-            <TextInput
-              value={state.age}
-              onChangeText={(t) => setState((s) => ({ ...s, age: t.replace(/[^0-9]/g, '') }))}
-              keyboardType="number-pad"
-              placeholder="—"
-              placeholderTextColor={colors.creamFaint}
-              style={styles.input}
-              selectionColor={colors.amber}
-            />
-          </Field>
           <Field label="Gender">
             <ChipRow
               items={['Woman', 'Man', 'Non-binary', 'Prefer not to say']}
@@ -638,6 +801,392 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
         </StepWrap>
       ) : null}
     </View>
+  );
+}
+
+// ============================================================================
+// THE 18+ GATE — its own onboarding phase, sitting between the privacy notice
+// and the terms screen.
+//
+// ┌──────────────────────────────────────────────────────────────────────────┐
+// │ ⚖️  FOR COUNSEL — OPEN QUESTION, NOT RESOLVED HERE                        │
+// │                                                                          │
+// │ This screen collects a date of birth BEFORE terms acceptance. That       │
+// │ ORDER is new (2026-08) and is a deliberate founder decision that has     │
+// │ NOT yet been reviewed by counsel — the founder is taking the sequencing  │
+// │ question to his attorney. It is flagged here, at the collection point,   │
+// │ rather than in a commit message, so that whoever reviews this file sees  │
+// │ it where the collection actually happens.                                │
+// │                                                                          │
+// │ WHAT DID NOT CHANGE: the date is still derived and discarded. It lives   │
+// │ in component state, is reduced by evaluateDob() to one of four status    │
+// │ strings, and dies with this component. Nothing durable ever holds it.    │
+// │ The only things that persist for a user who PASSES are age18Confirmed,   │
+// │ the attestation timestamp and the policy version — the last two stamped  │
+// │ server-side. See utils/ageGate.ts for the storage contract and the live  │
+// │ Privacy Policy line it enforces.                                         │
+// │                                                                          │
+// │ WHAT CHANGED, AND WHY: the gate used to be intake step 1, one phase      │
+// │ AFTER terms, so api.acceptTerms() had already written termsAccepted +    │
+// │ termsAcceptedAt against the user id of anyone we then declined. The      │
+// │ live Terms of Service commit us to closing the account and deleting the  │
+// │ associated data if we LEARN a user is under 18 — and this gate is the    │
+// │ moment of learning. The founder's ruling was to move the gate rather     │
+// │ than to add a deletion: nothing is written about a declined minor, so    │
+// │ the clause stays dormant and no DELETE fires. That ruling is what put a  │
+// │ date-of-birth question ahead of terms acceptance, which is the point     │
+// │ counsel is being asked about.                                            │
+// └──────────────────────────────────────────────────────────────────────────┘
+//
+// The component owns the date, the evaluation, and both outcomes. The parent
+// only supplies the two exits:
+//   onPass    → advance to 'terms'. THE ONLY WRITER of phase 'terms' in this
+//               file, which is what makes both api.acceptTerms() call sites
+//               unreachable without a passing evaluation, by construction.
+//   onBlocked → render AgeBlockedScreen in place of the whole flow.
+// ============================================================================
+function AgeGateScreen({
+  onPass, onBlocked,
+}: {
+  onPass: () => void;
+  onBlocked: () => void;
+}) {
+  // DATE OF BIRTH — LOCAL COMPONENT STATE ONLY, AND IT MUST STAY THAT WAY.
+  //
+  // Deliberately not lifted into the parent and deliberately nowhere near
+  // IntakeState (the /api/intake payload shape): the date of birth must never
+  // be in a payload, a storage write, or a log line. It lives here, is reduced
+  // to a boolean by evaluateDob, and dies with the component. The live Privacy
+  // Policy commits to "We do NOT collect dates of birth (only age confirmation
+  // that you're 18+)" — putting these three strings anywhere durable makes
+  // that false.
+  const [dobRaw, setDobRaw] = useState({ month: '', day: '', year: '' });
+
+  // Keyboard avoidance — same treatment as the intake steps, since this screen
+  // is three number inputs and a CTA.
+  const kbHeight = useKeyboardInset();
+
+  // Evaluated fresh on every render rather than memoised, so a session left
+  // open across local midnight re-derives against the new day. `localToday()`
+  // reads the DEVICE'S calendar — see utils/ageGate for why the comparison is
+  // local rather than UTC, and why someone whose 18th birthday is TODAY passes.
+  const dob: DobInput = {
+    year: parseBox(dobRaw.year),
+    month: parseBox(dobRaw.month),
+    day: parseBox(dobRaw.day),
+  };
+  const dobStatus: AgeGateStatus = evaluateDob(dob, localToday());
+
+  // The gate. Only reachable from a CONTINUE that is disabled unless the date
+  // is a complete, real, plausible, past one — so 'incomplete' and 'invalid'
+  // can never arrive here, and a TYPO can therefore never trip the block or
+  // spend the correction offer.
+  async function continueFromGate() {
+    if (dobStatus === 'under') {
+      // HARD BLOCK. Persist FIRST, render second: a force-quit at the sight of
+      // the block screen must still leave the device blocked.
+      //
+      // Nothing else happens on this branch — no request, no intake write, no
+      // analytics event, no local record of the date, the age, or the attempt.
+      // Since the reorder this is also true of everything UPSTREAM: welcome
+      // and privacy write device-local flags only, so a declined minor reaches
+      // this line without a single network call having been made ON THEIR
+      // BEHALF BY THE FLOW. (Boot-time work that predates the flow — token
+      // bootstrap for an already-signed-in user id — is a separate matter and
+      // is described honestly on the block screen's header.)
+      //
+      // The founder ruling is explicit: they are someone we just declined to
+      // serve, and collecting their birthdate at that moment is the one thing
+      // we actively must not do. Derive, block, discard. `dobRaw` is unmounted
+      // with this component moments from now and is the only copy that ever
+      // existed.
+      await markAgeGateBlocked();
+      onBlocked();
+      return;
+    }
+    if (dobStatus !== 'ok') return; // unreachable; the CTA is disabled
+
+    // A corrected date that passes clears the block. No-op on the common path
+    // where nothing was ever set.
+    await clearAgeGateBlocked();
+
+    // Record the attestation. NOT awaited before advancing, unlike the terms
+    // accept — there is no local gate flag whose ordering depends on it, and a
+    // stalled request would freeze the flow with no spinner to explain it. The
+    // audit trail is still guaranteed: a failed POST marks the sync pending
+    // and the boot reconciliation in app/_layout.tsx re-POSTs it, exactly as
+    // it does for terms. The BOOLEAN is all that is sent; the timestamp and
+    // policy version are stamped server-side.
+    api.confirmAge18()
+      .then((ok) => {
+        if (!ok) {
+          console.warn('[age-gate] confirm POST failed — marking sync pending for boot retry');
+          return markAgeSyncPending();
+        }
+      })
+      .catch(() => markAgeSyncPending());
+
+    onPass();
+  }
+
+  return (
+    <View style={[styles.flex, { paddingBottom: kbHeight }]}>
+      <StepWrap
+        title="One quick thing"
+        subtitle="Inner Map is for adults. When were you born?"
+      >
+        <Field label="Date of birth">
+          <DateOfBirthInput
+            value={dobRaw}
+            onChange={setDobRaw}
+            invalid={dobStatus === 'invalid'}
+          />
+          {/* Says exactly what we do with it, because it is exactly what we
+              do with it. The Privacy Policy makes the same promise in the
+              same words; this is where the user actually sees it. */}
+          <Text style={styles.dobNote}>
+            Inner Map is for adults {MINIMUM_AGE} and over. We use this only to
+            confirm that you are — we don't store your date of birth.
+          </Text>
+          {dobStatus === 'invalid' ? (
+            <Text style={styles.dobHint}>
+              That doesn't look like a date — have another look?
+            </Text>
+          ) : null}
+        </Field>
+        <CTA
+          onPress={continueFromGate}
+          disabled={dobStatus === 'incomplete' || dobStatus === 'invalid'}
+          label="CONTINUE"
+        />
+      </StepWrap>
+    </View>
+  );
+}
+
+// ---------- date of birth ----------
+// THREE PLAIN NUMBER BOXES, NOT A PICKER — a deliberate choice.
+//
+// package.json has no date-picker dependency (no
+// @react-native-community/datetimepicker, no expo equivalent), and adding a
+// native module means a new dev/EAS build. utils/legalDocs.ts already declines
+// expo-web-browser for exactly that reason, so this follows the house
+// precedent: no new dependency for a one-screen need.
+//
+// A spinner picker would also be the wrong control here even if it were free.
+// Reaching a year ~20-100 scrolls back is slow, and the iOS wheel defaults to
+// TODAY, i.e. it opens pre-set to an answer that fails the gate. Three boxes
+// are one keystroke each, typed at the speed the user already knows their own
+// birthday.
+//
+// Each box carries its OWN visible label rather than relying on MM/DD/YYYY
+// order, so the well-known ambiguity between US and everywhere-else date order
+// cannot silently swap month and day. A 05/11 mix-up is at worst a few days of
+// error, but it can flip the answer for someone within days of turning 18 —
+// and the labels cost nothing.
+function DateOfBirthInput({
+  value, onChange, invalid,
+}: {
+  value: { month: string; day: string; year: string };
+  onChange: (v: { month: string; day: string; year: string }) => void;
+  invalid: boolean;
+}) {
+  const dayRef = useRef<TextInput>(null);
+  const yearRef = useRef<TextInput>(null);
+
+  // Digits only. Stripping non-digits here (rather than trusting
+  // keyboardType) matters because number-pad is a hint, not a guarantee:
+  // hardware keyboards, some IMEs and paste all deliver letters.
+  const setPart = (
+    part: 'month' | 'day' | 'year',
+    raw: string,
+    max: number,
+    next?: React.RefObject<TextInput | null>,
+  ) => {
+    const digits = raw.replace(/[^0-9]/g, '').slice(0, max);
+    onChange({ ...value, [part]: digits });
+    // Auto-advance only when the box is unambiguously finished. "1" could
+    // still become "12", so we wait for the second digit; jumping early
+    // would strand anyone born in January through September.
+    if (digits.length === max && next?.current) next.current.focus();
+  };
+
+  return (
+    <View style={styles.dobRow}>
+      <View style={styles.dobCell}>
+        <Text style={styles.dobCellLabel}>MONTH</Text>
+        <TextInput
+          value={value.month}
+          onChangeText={(t) => setPart('month', t, 2, dayRef)}
+          keyboardType="number-pad"
+          maxLength={2}
+          placeholder="MM"
+          placeholderTextColor={colors.creamFaint}
+          style={[styles.input, styles.dobInput, invalid && styles.dobInputInvalid]}
+          selectionColor={colors.amber}
+          accessibilityLabel="Birth month"
+        />
+      </View>
+      <View style={styles.dobCell}>
+        <Text style={styles.dobCellLabel}>DAY</Text>
+        <TextInput
+          ref={dayRef}
+          value={value.day}
+          onChangeText={(t) => setPart('day', t, 2, yearRef)}
+          keyboardType="number-pad"
+          maxLength={2}
+          placeholder="DD"
+          placeholderTextColor={colors.creamFaint}
+          style={[styles.input, styles.dobInput, invalid && styles.dobInputInvalid]}
+          selectionColor={colors.amber}
+          accessibilityLabel="Birth day"
+        />
+      </View>
+      <View style={[styles.dobCell, styles.dobCellYear]}>
+        <Text style={styles.dobCellLabel}>YEAR</Text>
+        <TextInput
+          ref={yearRef}
+          value={value.year}
+          onChangeText={(t) => setPart('year', t, 4)}
+          keyboardType="number-pad"
+          maxLength={4}
+          placeholder="YYYY"
+          placeholderTextColor={colors.creamFaint}
+          style={[styles.input, styles.dobInput, invalid && styles.dobInputInvalid]}
+          selectionColor={colors.amber}
+          accessibilityLabel="Birth year"
+        />
+      </View>
+    </View>
+  );
+}
+
+// ============================================================================
+// 18+ BLOCK SCREEN
+//
+// Shown when the entered date of birth belongs to someone under 18. It is the
+// end of the flow: there is no account, no chat, no session, no intake row,
+// and no route past this screen.
+//
+// FOUR THINGS THIS SCREEN DELIBERATELY DOES NOT DO:
+//
+//  1. NO CRISIS RESOURCES. No hotline, no /support-resources link, no pointer
+//     of any kind, and no crisis language — not one line. Explicit founder
+//     ruling with a stated reason: counsel is mid-analysis on the
+//     crisis-adjacent surfaces and may direct changes. The screen is trivial
+//     to extend once that lands. Do not add one here first.
+//
+//  2. NO SHAME, AND IT IS NOT AN ERROR. Cream on the app's own background,
+//     serif title, the same rhythm as NotTherapyScreen. Nothing red, no icon,
+//     no "denied" / "not permitted" / "you may not". They answered a question
+//     honestly and the answer is that we can't serve them yet. That is a fact
+//     about Inner Map, not a verdict on them, and the copy says so.
+//
+//  3. NO NEW DATA — AND IT IS NOW BROADER THAN IT WAS, BUT STILL NOT
+//     ABSOLUTE. Read this before quoting any of it into an assessment.
+//
+//     TRUE of the block itself: the date of birth is never stored, sent or
+//     logged (it is component state, reduced to a boolean and discarded); the
+//     'under' branch makes no request, records no age, and fires no analytics
+//     event; and after the block, boot makes no request at all — the blocked
+//     branch in app/_layout.tsx returns before token bootstrap, terms
+//     reconciliation, age reconciliation and RevenueCat identify, and the
+//     tabs never mount. The only thing written on this path is a device-local
+//     "declined" flag.
+//
+//     NEWLY TRUE OF THE FLOW (2026-08 reorder). THE GATE NOW RUNS BEFORE THE
+//     TERMS SCREEN, so api.acceptTerms() has NOT fired when this screen
+//     renders and NO termsAccepted / termsAcceptedAt row exists for a declined
+//     minor. That was the entire purpose of the reorder: the live Terms of
+//     Service promise to close the account and delete the data if we learn a
+//     user is under 18, this gate is the moment of learning, and the founder
+//     chose "never write it" over "write it and then delete it". Every phase
+//     upstream of the gate — welcome and the privacy notice — writes only
+//     device-local flags and makes no network call, so nothing the FLOW does
+//     on behalf of a declined minor reaches the server at all.
+//
+//     STILL NOT TRUE, and this is the part that must not be over-read: this
+//     screen does not promise that no row of any kind exists. The sign-in
+//     screen runs AHEAD of onboarding on a fresh install, so a user who
+//     signed in first already has an auth_identities row carrying their email
+//     and a user id minted for them, and boot's deferred token bootstrap may
+//     have run against that id before the flow ever started. None of that is
+//     about their age, none of it is created by the gate, and none of it is
+//     removed here — no deletion call is made from this path, by ruling.
+//
+//     So the honest statement is now: nothing about the person's AGE OR BIRTH
+//     DATE exists anywhere; the flow wrote nothing to the server about them,
+//     including no terms acceptance; and rows created before onboarding
+//     began, if they signed in, still exist and are untouched.
+//
+//  4. NO CLEVERNESS ABOUT RE-ENTRY. One correction offer for a genuine typo,
+//     then it is final. Re-entering with a different date after a reinstall is
+//     trivially possible, and that is FINE: misrepresentation shifting
+//     liability is the entire mechanism the gate creates. What the UI must not
+//     do is INVITE it — so the correction offer is worded as "if you typed it
+//     wrong", never as "try a different date", and it appears exactly once.
+// ============================================================================
+function AgeBlockedScreen({
+  canCorrect, onCorrect,
+}: {
+  canCorrect: boolean;
+  onCorrect: () => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.ageBlockRoot} showsVerticalScrollIndicator={false}>
+      <View style={{ flex: 1 }} />
+      <Text style={styles.ageBlockTitle}>Not just yet</Text>
+      <Text style={styles.ageBlockBody}>
+        Inner Map is built for adults, and we're not able to offer it to you yet.
+      </Text>
+      {/* This line replaced "Nothing you entered has been saved." — which was
+          FALSE when terms were accepted one phase BEFORE the gate. The claim
+          below is narrow and exactly true: the date of birth is reduced to a
+          boolean in component state and never written, never sent, never
+          logged (utils/ageGate.ts header; the endpoint 400s on any date-shaped
+          key). It is a statement about what was never collected, so it stays
+          true no matter how anything else is later ruled. */}
+      <Text style={styles.ageBlockBody}>
+        Your date of birth wasn't stored and never left this device. We used it
+        to answer that one question, and then it was gone.
+      </Text>
+      {/* ADDED WITH THE 2026-08 REORDER, and scoped to exactly what the reorder
+          made provable — no further.
+            "before the terms"  — the phase machine puts 'age' ahead of 'terms'
+                                  and AgeGateScreen's onPass is the only writer
+                                  of phase 'terms', so acceptTerms() cannot have
+                                  fired for anyone reading this.
+            "sent nothing to us" — the 'under' branch makes no api call and no
+                                  analytics call, and every upstream phase
+                                  writes device-local flags only.
+          What it deliberately does NOT say: that no account exists, that no
+          record of any kind exists, or that anything has been deleted. A user
+          who signed in before onboarding has an auth_identities row, and this
+          screen removes nothing. Do not broaden this sentence without being
+          able to point at the code that makes the broader claim true. */}
+      <Text style={styles.ageBlockBody}>
+        We ask this before the terms, so you never agreed to anything — and
+        answering it sent nothing to us.
+      </Text>
+      <Text style={styles.ageBlockClose}>
+        Thank you for answering honestly.
+      </Text>
+      {canCorrect ? (
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            onCorrect();
+          }}
+          style={styles.ageBlockCorrect}
+          accessibilityLabel="Correct my date of birth"
+        >
+          <Text style={styles.ageBlockCorrectText}>
+            If you typed your date of birth wrong, correct it
+          </Text>
+        </Pressable>
+      ) : null}
+      <View style={{ flex: 1 }} />
+    </ScrollView>
   );
 }
 
@@ -895,6 +1444,29 @@ const styles = StyleSheet.create({
     borderColor: colors.border, borderWidth: 1,
   },
 
+  // Date of birth — three boxes on one row. Month and day are equal width;
+  // the year takes 1.4 so "YYYY" isn't cramped against the two-digit boxes.
+  dobRow: { flexDirection: 'row', gap: 10 },
+  dobCell: { flex: 1 },
+  dobCellYear: { flex: 1.4 },
+  dobCellLabel: {
+    color: colors.creamFaint, fontFamily: fonts.sans,
+    fontSize: 10, letterSpacing: 1.5, marginBottom: 6,
+  },
+  dobInput: { textAlign: 'center', letterSpacing: 2 },
+  // Invalid = a typo (Feb 30, a future date, year 1200). Amber, the app's own
+  // attention colour — NOT red. Nothing here is a failure state; the user is
+  // mid-sentence and we're pointing at a slip.
+  dobInputInvalid: { borderColor: colors.amberDim },
+  dobNote: {
+    color: colors.creamFaint, fontFamily: fonts.sans,
+    fontSize: 12, lineHeight: 18, marginTop: spacing.sm,
+  },
+  dobHint: {
+    color: colors.amber, fontFamily: fonts.sans,
+    fontSize: 12, lineHeight: 18, marginTop: 6,
+  },
+
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 14, paddingVertical: 8,
@@ -1003,6 +1575,60 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     textAlign: 'center',
     letterSpacing: 0.2,
+  },
+
+  // 18+ block screen — deliberately a sibling of notTherapy, not of any error
+  // state. Same centered rhythm, same serif title, same generous vertical
+  // padding, same cream-on-background palette. There is no red anywhere in
+  // this block and no red should ever be added to it: this is a quiet closing
+  // note, not a rejection notice.
+  ageBlockRoot: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xxl,
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  ageBlockTitle: {
+    color: colors.cream,
+    fontFamily: fonts.serifBold,
+    fontSize: 30,
+    letterSpacing: 0.4,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  ageBlockBody: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 16,
+    lineHeight: 26,
+    textAlign: 'center',
+    letterSpacing: 0.2,
+    marginBottom: spacing.md,
+  },
+  // Closing beat in the same italic serif the privacy notice uses for its
+  // final line, so the screen ends warmly rather than trailing off.
+  ageBlockClose: {
+    color: colors.amber,
+    fontFamily: fonts.serifItalic,
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  // The single correction offer. Understated on purpose — a quiet underlined
+  // line, not the amber pill CTA the rest of onboarding uses. The pill would
+  // read as "the way forward" and invite a second guess; this reads as what it
+  // is, a way to fix a typo.
+  ageBlockCorrect: { alignSelf: 'center', padding: 12, marginTop: spacing.xl },
+  ageBlockCorrectText: {
+    color: colors.creamFaint,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+    textDecorationLine: 'underline',
   },
 
   // Privacy notice — sibling of notTherapy in rhythm + typography

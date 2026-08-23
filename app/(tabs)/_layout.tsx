@@ -28,6 +28,7 @@ import {
   refreshPartnerSharedSeenStatus,
 } from '../../services/partnerSharedSeen';
 import { api } from '../../services/api';
+import { isAgeGateBlocked } from '../../services/onboarding';
 
 const TAB_ROUTES: { name: string; label: string; path: string }[] = [
   { name: 'index',         label: 'CHAT',    path: '/' },
@@ -328,8 +329,70 @@ function TopTabBar({ onMenu }: { onMenu: () => void }) {
   );
 }
 
+// =============================================================================
+// 18+ GATE — DESTINATION BACKSTOP (2026-08).
+//
+// Every fix in app/_layout.tsx guards a DOOR: the boot sequence, the magic-link
+// deep link, the notification tap. This guards the ROOM. It is here because the
+// audit that found the magic-link bypass found it by accident — the handler was
+// a separate listener nobody had connected to the gate — and the same shape can
+// recur any time someone adds a listener, an intent filter, or a route. A gate
+// with one unguarded door is not a gate, and the reliable way to have no
+// unguarded doors is to also check at the only place they all lead.
+//
+// It HOLDS RENDER while the answer is unknown, rather than mounting the tabs
+// and redirecting after. Mounting them would run every tab screen's effects —
+// the chat tab's session fetch among them — which is the exact "writes to the
+// server about a blocked minor" defect this repair exists to close. The hold
+// also incidentally removes the "<100ms flash of tabs before the boot redirect
+// lands" that app/_layout.tsx documents.
+//
+// The read is capped at 1500ms and falls open to NOT blocked. That direction is
+// the opposite of the boot read's, deliberately: this is a BACKSTOP behind a
+// boot gate that already fails closed, so a stalled read here has already been
+// caught upstream, and failing closed in both places would turn one slow
+// AsyncStorage into a dark screen for users the gate has nothing to say about.
+// A blocked device that somehow arrived here on a stalled read still meets the
+// live gate at the 'age' phase of onboarding (since the 2026-08 reorder that
+// phase sits ahead of the terms screen, so nothing is written on the way to it).
+//
+// NO NETWORK CALL, NO WRITE, NO DELETION on the blocked path — it reads a local
+// flag and routes.
+// =============================================================================
+function useAgeGateBackstop() {
+  const router = useRouter();
+  const [blocked, setBlocked] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const timer = setTimeout(() => { if (alive) setBlocked((b) => (b === null ? false : b)); }, 1500);
+    isAgeGateBlocked()
+      .then((b) => { if (alive) setBlocked(b); })
+      .catch(() => { if (alive) setBlocked(false); });
+    return () => { alive = false; clearTimeout(timer); };
+  }, []);
+
+  useEffect(() => {
+    if (blocked !== true) return;
+    console.log('[tabs] age-gate blocked — leaving the tabs for /onboarding');
+    try { router.replace('/onboarding'); } catch (e) {
+      console.warn('[tabs] age-gate redirect threw:', (e as Error)?.message);
+    }
+  }, [blocked, router]);
+
+  return blocked;
+}
+
 export default function TabsLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const ageBlocked = useAgeGateBackstop();
+
+  // Unknown or blocked → render the app background and nothing else. No tab
+  // screen mounts, so no tab screen's effects fire.
+  if (ageBlocked !== false) {
+    return <View style={{ flex: 1, backgroundColor: colors.background }} />;
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <TopTabBar onMenu={() => setMenuOpen(true)} />

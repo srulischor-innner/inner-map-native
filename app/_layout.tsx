@@ -35,6 +35,7 @@ import { colors } from '../constants/theme';
 import {
   getOnboardingState, OnboardingState,
   isTermsSyncPending, clearTermsSyncPending,
+  isAgeGateBlocked, isAgeSyncPending, clearAgeSyncPending,
 } from '../services/onboarding';
 import { registerForPushNotifications } from '../services/push';
 import { configurePurchases, identifyUser } from '../services/purchases';
@@ -240,6 +241,15 @@ function RootLayout() {
   // decision in state rather than firing it inline is the whole fix for the
   // dropped-redirect bug described on that effect.
   const [pendingRoute, setPendingRoute] = useState<'/sign-in' | '/onboarding' | null>(null);
+  // 18+ GATE — the boot read's verdict, published to the OTHER effects in this
+  // component. 'unknown' until the boot IIFE resolves it; nothing that touches
+  // the network or a third-party SDK may run until it is 'clear'. The
+  // RevenueCat effect below is gated on it — that effect has its own empty-deps
+  // mount and would otherwise fire identifyUser() for a blocked minor
+  // regardless of what the boot sequence decided, because it never sees the
+  // decision at all.
+  const [ageGateDecision, setAgeGateDecision] =
+    useState<'unknown' | 'blocked' | 'clear'>('unknown');
   // Force-pass for the font-load gate. If useFonts hasn't resolved
   // within 2.5s — which happens in some preview/standalone builds
   // where asset bundling races with first render — we proceed with
@@ -471,13 +481,99 @@ function RootLayout() {
         //     and surfaces MigrationModal if the user is still
         //     anonymous AND signInChoiceMade=false (existing Build-10
         //     tester upgrading).
+        // GATE 0 (18+, 2026-08) — sits AHEAD of both gates below. A device
+        // that was declined by the age gate goes to /onboarding, which renders
+        // the block screen instead of any phase. Without this, a minor could
+        // force-quit at the block screen and relaunch straight into whatever
+        // the flags happen to say.
+        //
+        // Read separately from getOnboardingState on purpose. That call's
+        // timeout path defaults its flags TRUE to break the onboarding loop,
+        // and a legal gate must never be satisfied by a storage stall.
+        //
+        // TIMEOUT-WRAPPED, AND THE FALLBACK IS `true` — i.e. UNKNOWN MEANS
+        // BLOCKED. Both halves are load-bearing:
+        //
+        //   THE WRAPPER. isAgeGateBlocked's try/catch catches a THROW. It
+        //   cannot catch a STALL: a promise that never resolves is never
+        //   caught, and an unwrapped `await` here sits AHEAD of all three
+        //   routing branches. On a stalled read setPendingRoute would never be
+        //   called on ANY branch — not the age branch, not sign-in, not
+        //   onboarding — the Stack's first screen is (tabs), and the device
+        //   would simply REST IN THE MAIN APP. That is a bypass for a blocked
+        //   minor and, worse, a boot-routing regression for the entire
+        //   installed base, in a file whose whole header is about AsyncStorage
+        //   stalls (Android's serial executor, the 5000ms multiGet cap, the ANR
+        //   mitigation). Its neighbour getOnboardingState() is wrapped for
+        //   exactly this reason; so is this.
+        //
+        //   THE DIRECTION. This is the same ruling getOnboardingState already
+        //   applies to termsAccepted (see its timeout branch): the three
+        //   loop-breaker flags default TRUE, but a LEGAL gate must fail toward
+        //   SHOWING the screen, never toward waiving it. So an unknown answer
+        //   routes to /onboarding rather than into the tabs. The cost is
+        //   bounded and it is symmetric: /onboarding re-reads the flag on
+        //   mount, and if that read is ALSO unknown it falls into the flow — so
+        //   the user meets the live gate at the 'age' phase either way, which
+        //   since the 2026-08 reorder sits ahead of the terms screen rather
+        //   than after it. A minor is declined there; an adult re-enters a
+        //   date, passes, and is returned to the app with their account, tokens
+        //   and data untouched (nothing on this path deletes or resets
+        //   anything).
+        //
+        // Deliberately NOT folded into `complete` below: `complete` gates
+        // EXISTING users too, and none of them have an age18 flag, so adding
+        // one there would bounce the entire installed base back through
+        // onboarding. The ruling is a gate on FIRST-TIME signup.
+        const ageBlocked = await withTimeout(isAgeGateBlocked(), 3000, true, 'isAgeGateBlocked');
+        // Publish to the RevenueCat effect below, which cannot see this scope.
+        setAgeGateDecision(ageBlocked ? 'blocked' : 'clear');
         const needsSignIn = !state.signInChoiceMade && !state.hasSeenIntro;
         const complete = state.hasSeenIntro && state.termsAccepted && state.intakeComplete;
-        console.log(`[boot] step 2/3 — needsSignIn=${needsSignIn} complete=${complete}`);
+        console.log(`[boot] step 2/3 — ageBlocked=${ageBlocked} needsSignIn=${needsSignIn} complete=${complete}`);
 
         // DECIDE ONLY. Do not navigate from here — see the delivery effect
         // below for why an inline router.replace() at this point is thrown
         // away rather than honored.
+        if (ageBlocked) {
+          console.log('[boot] → queue replace(/onboarding) — age gate blocked');
+          setPendingRoute('/onboarding');
+          // ===================================================================
+          // HARD RETURN. This is not a style choice — everything below this
+          // point talks to the server, and it used to run unconditionally on a
+          // blocked device because this branch only queued a route.
+          //
+          // What the old fall-through did, on EVERY COLD START, forever:
+          //   - api.bootstrapTokens() — peekUserId() returns the stored UUID,
+          //     so POST /api/auth/bootstrap fired and the server minted and
+          //     STORED A REFRESH-TOKEN ROW for a user it had been told is a
+          //     minor.
+          //   - terms reconciliation — its guard is `if (!pending && !local)
+          //     return;`, and back when the gate lived at intake step 1 a
+          //     declined minor had local === true, because terms were accepted
+          //     one phase EARLIER than the gate. So it never returned: GET
+          //     /api/terms fired every launch, and a set pending flag re-POSTed
+          //     acceptTerms() — writing a terms-acceptance row for a known
+          //     minor AFTER the block.
+          //
+          //     The 2026-08 reorder put the gate BEFORE the terms screen, so a
+          //     newly-declined minor now has local === false and pending false
+          //     and that guard would return on its own. This hard return is
+          //     still load-bearing and must stay: devices blocked by the older
+          //     build still carry termsAccepted === true, the pending flag is
+          //     set by any failed POST regardless of order, and a block that
+          //     depends on a downstream guard happening to hold is not a block.
+          //   - the age reconciliation and (via the effect further down)
+          //     RevenueCat configure + identifyUser.
+          //
+          // A block that keeps writing to the server about the blocked person
+          // is not a block. Returning here stops all of it. The push
+          // registration was already unreachable on this path — it lives in the
+          // `complete` else-branch below — and stays unreachable.
+          // ===================================================================
+          console.log('[boot] boot sequence complete — BLOCKED: deferred network work skipped');
+          return;
+        }
         if (needsSignIn && !hasRedirectedToOnboarding) {
           console.log('[boot] → queue replace(/sign-in)');
           setPendingRoute('/sign-in');
@@ -541,6 +637,31 @@ function RootLayout() {
             console.warn('[terms] reconcile threw:', (e as Error)?.message);
           }
         })();
+
+        // 3. 18+ ATTESTATION RECONCILIATION. Same shape as terms above, with
+        //    one deliberate and important difference: the ONLY trigger is the
+        //    pending flag, which is set exclusively when a POST this app made
+        //    actually failed.
+        //
+        //    There is no "local says onboarded but the server has no record →
+        //    re-POST" rung, and there must not be one. Every user who
+        //    onboarded before this build has no age record, and manufacturing
+        //    an attestation on their behalf would be fabricating a legal
+        //    record for someone who was never asked the question. This path
+        //    can only ever re-send a confirmation the user genuinely gave.
+        (async () => {
+          try {
+            if (!(await isAgeSyncPending())) return;
+            const server = await api.getAge18();
+            if (server === null) return;            // unknown — try again next launch
+            if (server.age18Confirmed) { await clearAgeSyncPending(); return; }
+            const ok = await api.confirmAge18();
+            console.log(`[age-gate] reconcile → re-POSTed attestation: ${ok ? 'ok' : 'failed'}`);
+            if (ok) await clearAgeSyncPending();
+          } catch (e) {
+            console.warn('[age-gate] reconcile threw:', (e as Error)?.message);
+          }
+        })();
       } catch (e) {
         console.error('[boot] boot sequence threw — proceeding to main app anyway:', (e as Error)?.message, (e as Error)?.stack);
       }
@@ -569,7 +690,27 @@ function RootLayout() {
                 ? '/'
                 : raw.startsWith('/') ? raw : `/${raw}`;
             console.log('[boot] notification tap → route:', route);
-            router.push(route as any);
+            // 18+ GATE — ENTRY POINT. `route` falls back to '/' for anything
+            // unrecognised, so this handler can drop a user straight into the
+            // chat tab, and it fires independently of the boot sequence. A
+            // blocked device should never HAVE a push token (registration lives
+            // behind the `complete` branch, which the block now returns before
+            // reaching) but "should never" is not a gate. Read the flag, and
+            // fail toward /onboarding when the answer is unknown — same
+            // direction as the boot read.
+            (async () => {
+              const blocked = await withTimeout(
+                isAgeGateBlocked(), 3000, true, 'isAgeGateBlocked(notification)',
+              );
+              if (blocked) {
+                console.log('[boot] notification tap ignored — device is age-gate blocked');
+                try { router.replace('/onboarding'); } catch {}
+                return;
+              }
+              router.push(route as any);
+            })().catch((e) =>
+              console.warn('[boot] notification tap routing threw:', (e as Error)?.message),
+            );
           } catch (e) {
             console.warn('[boot] notification tap handler threw:', (e as Error)?.message);
           }
@@ -602,6 +743,43 @@ function RootLayout() {
             (parsed.path === '/email' || parsed.path === 'email')) ||
           (parsed.hostname === 'my-inner-map.com' && /\/auth\/email\/?$/.test(parsed.path || ''));
         if (!isAuthEmail) return;
+
+        // =====================================================================
+        // 18+ GATE — ENTRY POINT, AND IT IS CHECKED BEFORE THE NETWORK CALL.
+        //
+        // THE EXPLOIT THIS CLOSES, which was entirely in-product: a device
+        // declined by the age gate requests a sign-in email from the WEBSITE
+        // (POST /api/auth/email/request is public), taps the link on the same
+        // phone, the universal link routes into this app, api.authSignIn
+        // resolves the EXISTING identity so `isNewUser` is false, and the
+        // handler below called router.replace('/') — dropping a blocked minor
+        // into the chat tab with the map, sessions and journal alongside it.
+        // This listener is registered independently of the boot IIFE, so GATE 0
+        // up there never saw it, and app/(tabs)/ had no guard of its own.
+        //
+        // The check sits AHEAD of api.authSignIn deliberately. Checking after
+        // would fix the routing but still trade the token for a session and
+        // stamp lastUsedAt on the identity row — the same "keep writing to the
+        // server about a blocked minor" defect the boot sequence just stopped.
+        // Nothing is sent; the link is simply not consumed, so it stays valid
+        // for its 15 minutes and can be used from a device that is not blocked.
+        //
+        // Fails toward blocked on an unknown read, matching the boot read. The
+        // replace() is best-effort: on a cold launch the navigator may not be
+        // mounted yet and it throws, which is harmless — the boot IIFE reads
+        // the same flag and queues the same route through pendingRoute.
+        // =====================================================================
+        const linkBlocked = await withTimeout(
+          isAgeGateBlocked(), 3000, true, 'isAgeGateBlocked(magic-link)',
+        );
+        if (linkBlocked) {
+          console.log('[boot] magic-link NOT consumed — device is age-gate blocked');
+          try { router.replace('/onboarding'); } catch (e) {
+            console.warn('[boot] blocked-link routing threw:', (e as Error)?.message);
+          }
+          return;
+        }
+
         const token = parsed.queryParams?.token;
         const tokenStr = Array.isArray(token) ? token[0] : token;
         if (typeof tokenStr !== 'string' || !tokenStr) {
@@ -623,6 +801,14 @@ function RootLayout() {
         // signing in from settings via a fresh email link), just
         // stay where they are — the api method has already updated
         // SecureStore with the resolved userId.
+        //
+        // Both branches are now reachable only by a device that is NOT blocked
+        // (checked above, before authSignIn). The isNewUser:true branch was
+        // additionally VERIFIED rather than assumed: /onboarding's component
+        // re-reads isAgeGateBlocked on mount and holds render until it settles,
+        // then renders AgeBlockedScreen ahead of the invitee shortcut and every
+        // phase — so even if this branch were somehow reached while blocked, it
+        // lands on the block screen and not on a phase.
         try {
           router.replace(out.isNewUser ? '/onboarding' : '/');
         } catch (e) {
@@ -690,8 +876,27 @@ function RootLayout() {
   // the peek (SecureStore/AsyncStorage). Placed after the boot effect above
   // so its two store reads queue behind routing on Android's serial
   // AsyncStorage executor rather than in front of it.
+  //
+  // 18+ GATE — GATED ON THE BOOT VERDICT (2026-08). This effect has its own
+  // empty-deps mount and cannot see the boot IIFE's local `ageBlocked`, so
+  // before this gate it configured RevenueCat and called identifyUser() —
+  // binding a third-party store/analytics identity to the UUID of a user we
+  // had just declined — on every cold start of a blocked device. It now waits
+  // for the verdict and runs only on 'clear'. 'unknown' never proceeds, so a
+  // stalled read is silent rather than fail-open here too.
+  //
+  // The wait costs at most the boot read's 3s cap, and costs correctness
+  // nothing: services/purchases.ts binds the identity again immediately before
+  // any real store call (ensureIdentified), which is why this was always the
+  // EARLY binding rather than the only one.
   // =========================================================================
   useEffect(() => {
+    if (ageGateDecision !== 'clear') {
+      if (ageGateDecision === 'blocked') {
+        console.log('[purchases] skipped — device is age-gate blocked');
+      }
+      return;
+    }
     (async () => {
       await configurePurchases();
       const userId = await peekUserId();
@@ -703,7 +908,7 @@ function RootLayout() {
     })().catch((e) =>
       console.warn('[purchases] boot wiring threw:', (e as Error)?.message),
     );
-  }, []);
+  }, [ageGateDecision]);
 
   // Hoisted above the render gate because the redirect-delivery effect below
   // needs it too: it is one of the three conditions that decide whether the
