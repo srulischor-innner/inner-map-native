@@ -27,3 +27,14 @@ export const READING_WAITING_LINES: { text: string; holdMs: number }[] = [
   { text: 'Writing it out…', holdMs: 20000 },
   { text: 'Almost there.', holdMs: Number.POSITIVE_INFINITY },
 ];
+
+// THE FAILURE STATE (founder ruling 2026-08-23). A generation that fails must
+// SAY so and offer a retry — never fall back to re-offering itself, which is
+// what it did before: an errored row read as 'ready' again on the next poll,
+// so a person could tap into a silent loop and never learn anything had gone
+// wrong. No error code, no stack, no blame. One reassurance that the map is
+// untouched, because that is the thing a person would actually worry about.
+export const READING_ERROR_TITLE = "The reading didn't finish";
+export const READING_ERROR_BODY =
+  'Something went wrong while it was being written. Nothing on your map changed.';
+export const READING_ERROR_ACTION = 'Try again';

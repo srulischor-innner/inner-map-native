@@ -1242,6 +1242,8 @@ export const api = {
     exists: boolean;
     id?: string;
     status?: 'generating' | 'ready' | 'error';
+    /** Server-judged: a generating row nothing will finish (worker died).*/
+    stale?: boolean;
     body?: string | null;
     createdAt?: string;
     eligibility?: { eligible: boolean; reason?: string | null };

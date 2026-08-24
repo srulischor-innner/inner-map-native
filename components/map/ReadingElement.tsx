@@ -26,6 +26,14 @@
 // holding on the last line so a slow generation never reads as a stuck timer.
 // Leaving the screen is safe: the row is already 'generating' server-side and
 // the reading finishes whether or not anyone watches.
+//
+// WHEN IT FAILS (founder ruling 2026-08-23) the element SAYS so and offers a
+// retry. It used to do neither: an errored row fell past both status checks
+// below and re-rendered as 'ready', so the same tap started the same failing
+// generation with nothing ever named. Two failures reach this state — a
+// generation that threw (status 'error'), and one nothing will ever finish
+// because the worker died with the process (`stale`, which the SERVER judges;
+// a device with a wrong clock must not get a vote on it).
 // ============================================================================
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
@@ -38,9 +46,10 @@ import {
   READING_LOCKED_TITLE, READING_LOCKED_BODY,
   READING_UNLOCKED_TITLE, READING_UNLOCKED_BODY,
   READING_WAITING_LINES,
+  READING_ERROR_TITLE, READING_ERROR_BODY, READING_ERROR_ACTION,
 } from '../../utils/readingCopy';
 
-type Phase = 'hidden' | 'locked' | 'ready' | 'generating' | 'has-reading';
+type Phase = 'hidden' | 'locked' | 'ready' | 'generating' | 'has-reading' | 'error';
 
 export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: string) => void }) {
   const [phase, setPhase] = useState<Phase>('hidden');
@@ -63,6 +72,11 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
       setBody(r.body);
       setCreatedAt(r.createdAt);
       setPhase('has-reading');
+      return;
+    }
+    // Both failure shapes, read from the server's own verdict.
+    if (r.exists && (r.status === 'error' || (r.status === 'generating' && r.stale))) {
+      setPhase('error');
       return;
     }
     if (r.exists && r.status === 'generating') { setPhase('generating'); return; }
@@ -119,30 +133,42 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
       onOpen(body, createdAt);
       return;
     }
-    if (phase !== 'ready') return;   // locked taps do nothing but explain
+    // 'error' retries; 'locked' taps do nothing but explain.
+    if (phase !== 'ready' && phase !== 'error') return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setLineIdx(0);
     setPhase('generating');
     const r = await api.generateReading();
     if (!alive.current) return;
-    if (!r || r.eligible === false) { await refresh(); return; }
+    // A null answer is the request itself failing (offline, timeout, 500).
+    // Saying so is the whole point of this state — dropping back to the
+    // offer would be the silent re-offer we just removed.
+    if (!r) { setPhase('error'); return; }
+    if (r.eligible === false) { await refresh(); return; }
   }, [phase, body, createdAt, onOpen, refresh]);
 
   if (phase === 'hidden') return null;
 
   const locked = phase === 'locked';
   const generating = phase === 'generating';
+  const failed = phase === 'error';
   const title = locked ? READING_LOCKED_TITLE
     : generating ? READING_WAITING_LINES[lineIdx]?.text ?? READING_WAITING_LINES[0].text
+    : failed ? READING_ERROR_TITLE
     : READING_UNLOCKED_TITLE;
-  const sub = locked ? READING_LOCKED_BODY : generating ? null : READING_UNLOCKED_BODY;
+  const sub = locked ? READING_LOCKED_BODY
+    : generating ? null
+    : failed ? READING_ERROR_BODY
+    : READING_UNLOCKED_BODY;
 
   const Inner = (
-    <View style={[styles.card, locked && styles.cardLocked]}>
+    <View style={[styles.card, locked && styles.cardLocked, failed && styles.cardFailed]}>
       <View style={styles.row}>
-        <Text style={[styles.title, locked && styles.titleLocked]}>{title}</Text>
+        <Text style={[styles.title, locked && styles.titleLocked, failed && styles.titleFailed]}>{title}</Text>
         {generating ? <ActivityIndicator size="small" color="rgba(230,180,122,0.5)" /> : null}
       </View>
       {sub ? <Text style={[styles.body, locked && styles.bodyLocked]}>{sub}</Text> : null}
+      {failed ? <Text style={styles.retry}>{READING_ERROR_ACTION}</Text> : null}
     </View>
   );
 
@@ -154,7 +180,9 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
       onPress={onPress}
       disabled={locked}
       accessibilityRole={locked ? undefined : 'button'}
-      accessibilityLabel={locked ? READING_LOCKED_TITLE : READING_UNLOCKED_TITLE}
+      accessibilityLabel={locked ? READING_LOCKED_TITLE
+        : failed ? READING_ERROR_TITLE + '. ' + READING_ERROR_ACTION
+        : READING_UNLOCKED_TITLE}
       style={({ pressed }) => [pressed && !locked ? styles.pressed : null]}
     >
       {Inner}
@@ -182,5 +210,18 @@ const styles = StyleSheet.create({
   titleLocked: { color: 'rgba(255,255,255,0.42)' },
   body: { color: 'rgba(255,255,255,0.55)', fontSize: 13, lineHeight: 19, marginTop: 6 },
   bodyLocked: { color: 'rgba(255,255,255,0.34)' },
+  // The failure card is quieter than the offer and warmer than locked: it is
+  // not an alarm, and it is not a dead element either.
+  cardFailed: {
+    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  titleFailed: { color: 'rgba(255,255,255,0.70)' },
+  retry: {
+    color: 'rgba(230,180,122,0.92)',
+    fontSize: 13,
+    letterSpacing: 0.3,
+    marginTop: 10,
+  },
   pressed: { opacity: 0.7 },
 });
