@@ -245,6 +245,7 @@ async function apiFetch(path: string, opts: ApiFetchOpts): Promise<Response> {
   // server-side cutover — at which point an expired access token starts
   // 401ing and this silently re-mints + replays so the user sees no blip.
   if (res.status === 401 && !isAuthEndpoint(path) && !opts._retried) {
+    let recovered = false;
     const { refreshToken } = await getTokens();
     if (refreshToken) {
       console.log(`[api] ${opts.label} ← 401; attempting single-flight token refresh`);
@@ -255,6 +256,27 @@ async function apiFetch(path: string, opts: ApiFetchOpts): Promise<Response> {
         if (fresh) merged['Authorization'] = `Bearer ${fresh}`;
         console.log(`[api] ${opts.label} → replaying with refreshed access token`);
         res = await apiFetchOnce(path, { ...opts, headers: merged, _retried: true });
+        recovered = true;
+      }
+    }
+    // THE FLOOR (2026-08-23). If the token could not be re-minted — no
+    // refresh token stored, or the refresh itself was refused — retry ONCE
+    // with the Authorization header removed. While the server still
+    // dual-accepts, that resolves via X-User-Id and the person sees nothing;
+    // performRefresh has already dropped the dead token pair, so subsequent
+    // requests are clean too.
+    //
+    // After the REQUIRE_BEARER cutover this second attempt 401s as well,
+    // which is the correct outcome: there is no identity left to fall back on
+    // and the person genuinely has to sign in again. It is a migration floor,
+    // not a permanent bypass — it cannot weaken the cutover, because the
+    // cutover stops trusting the very header it re-sends.
+    if (!recovered) {
+      const bare: Record<string, string> = { ...((opts.headers as Record<string, string>) || {}) };
+      if (bare['Authorization']) {
+        delete bare['Authorization'];
+        console.log(`[api] ${opts.label} ← 401 unrecoverable by refresh; retrying without the Bearer`);
+        res = await apiFetchOnce(path, { ...opts, headers: bare, _retried: true });
       }
     }
   }

@@ -39,6 +39,22 @@ try {
   console.warn('[push] setNotificationHandler at import threw:', (e as Error)?.message);
 }
 
+/** One POST/DELETE to /api/push-token with the shared identity headers, and a
+ *  single retry without the Bearer if the server answers 401. Push registration
+ *  is best-effort and deliberately silent, so a stale access token must not be
+ *  able to switch it off with nobody finding out. */
+async function pushFetch(method: 'POST' | 'DELETE', body?: string): Promise<void> {
+  const url =
+    ((Constants.expoConfig?.extra as any)?.apiBaseUrl ||
+      'https://inner-map-production.up.railway.app') + '/api/push-token';
+  const headers = await buildIdentityHeaders();
+  const res = await fetch(url, { method, headers, body });
+  if (res.status !== 401 || !headers['Authorization']) return;
+  const bare: Record<string, string> = { ...headers };
+  delete bare['Authorization'];
+  await fetch(url, { method, headers: bare, body });
+}
+
 export async function registerForPushNotifications(): Promise<string | null> {
   // Physical device check — push tokens can't be issued on simulators.
   if (!Device.isDevice) {
@@ -81,17 +97,13 @@ export async function registerForPushNotifications(): Promise<string | null> {
     // Best-effort server registration. If the endpoint isn't live yet, we still
     // have the token stashed locally and can resync on next boot. Headers go
     // through the shared injector (X-User-Id + Bearer) — this is a raw fetch
-    // (not apiFetch), so it gets no 401-retry, which is fine for best-effort.
+    // (not apiFetch), so it gets no refresh-and-replay. Once the server answers
+    // 401 on a stale Bearer (2026-08-23) that starts to matter: registration
+    // would fail for anyone holding an expired access token, and this call is
+    // silent by design, so nobody would ever find out. pushFetch drops the
+    // Bearer and retries once, which is all a best-effort call needs.
     try {
-      await fetch(
-        ((Constants.expoConfig?.extra as any)?.apiBaseUrl ||
-          'https://inner-map-production.up.railway.app') + '/api/push-token',
-        {
-          method: 'POST',
-          headers: await buildIdentityHeaders(),
-          body: JSON.stringify({ token, platform: Platform.OS }),
-        },
-      );
+      await pushFetch('POST', JSON.stringify({ token, platform: Platform.OS }));
     } catch {}
     console.log('[push] token:', token.slice(0, 16) + '…');
     return token;
@@ -133,11 +145,7 @@ export async function enableInboxPush(): Promise<boolean> {
  *  never throws — the send path then finds no token and no-ops. */
 export async function disableInboxPush(): Promise<void> {
   try {
-    await fetch(
-      ((Constants.expoConfig?.extra as any)?.apiBaseUrl ||
-        'https://inner-map-production.up.railway.app') + '/api/push-token',
-      { method: 'DELETE', headers: await buildIdentityHeaders() },
-    );
+    await pushFetch('DELETE');
   } catch {}
   try { await AsyncStorage.removeItem(TOKEN_STORE_KEY); } catch {}
   try { await AsyncStorage.setItem(OPTIN_STORE_KEY, '0'); } catch {}
