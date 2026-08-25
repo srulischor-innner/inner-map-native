@@ -54,12 +54,53 @@ export const fonts = {
   serif:        'CormorantGaramond_400Regular',
   serifItalic:  'CormorantGaramond_400Regular_Italic',
   serifBold:    'CormorantGaramond_600SemiBold',
+  // ^ SEE serifInkSlack BELOW BEFORE PUTTING ONE OF THESE IN A CENTERED
+  //   OR ROW-LAID-OUT TITLE. Cormorant's 'f' draws outside its own advance
+  //   width, and a shrink-wrapped box cuts it off.
 
   // DM Sans
   sans:       'DMSans_400Regular',
   sansMedium: 'DMSans_500Medium',
   sansBold:   'DMSans_600SemiBold',
 };
+
+/**
+ * Horizontal room a Cormorant title needs beyond its measured width.
+ *
+ * WHY THIS NUMBER EXISTS. The Guide's Map tab rendered "Self" as "Sel" on a
+ * real device. Nothing truncated the string — it is a 4-character literal with
+ * no numberOfLines, no width and no ellipsizeMode anywhere in that path.
+ *
+ * Cormorant Garamond's lowercase 'f' draws 0.131 em of ink to the RIGHT of
+ * where its advance width ends. That is a Garamond design feature — the reason
+ * fi/fl ligatures exist — and mid-word the hook simply tucks over the next
+ * letter. As the LAST glyph it lands outside the advance box. React Native
+ * measures text by summing advance widths on both platforms, so the box stops
+ * short of the ink and the terminal is clipped. Verified against the shipped
+ * .ttf files: 'f' is -0.131 em, the next-worst ASCII letter is 'R' at -0.012,
+ * and DM Sans has none at all. Run scripts/check-glyph-overhang.js.
+ *
+ * This is NOT an Android bug. The measurement is advance-based on iOS too — if
+ * anything iOS is slightly tighter, since Android rounds the box up to a whole
+ * pixel. Android is simply where it was noticed.
+ *
+ * WHEN YOU NEED IT: a serif title whose box is shrink-wrapped to its content —
+ * inside `alignItems: 'center'`, or as a flex child in a row. A title in a
+ * container that stretches it (`width: '100%'`, or default cross-axis stretch)
+ * already has room and needs nothing.
+ *
+ * Prefer `alignSelf: 'stretch'` in a COLUMN — it costs no visual shift when
+ * textAlign is already centered. Use this padding in a ROW, where the cross
+ * axis is vertical and stretch would change the height instead.
+ *
+ * letterSpacing is a MITIGATOR here, not a cause: it widens the measured box.
+ * If removing letterSpacing ever FIXES a clip, that is the separate
+ * trailing-letterSpacing measurement bug, not this.
+ */
+export const CORMORANT_MAX_INK_OVERHANG_EM = 0.131;
+export function serifInkSlack(fontSize: number, letterSpacing = 0): number {
+  return Math.max(0, Math.ceil(fontSize * CORMORANT_MAX_INK_OVERHANG_EM - letterSpacing));
+}
 
 export const spacing = {
   xs: 4,

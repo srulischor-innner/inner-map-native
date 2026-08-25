@@ -92,6 +92,7 @@ export default function SettingsScreen() {
   // Global "share new journal entries with the AI" default. true = shared
   // (synced to the server for RAG); false = new entries stay on-device.
   const [journalShareOn, setJournalShareOn] = useState<boolean>(true);
+  const [shorterReplies, setShorterReplies] = useState<boolean>(false);
   // Inbox notification opt-in (the ONLY notification type). Local mirror of the
   // opt-in state; the server-side gate is token presence. Off by default.
   const [notifyOn, setNotifyOn] = useState<boolean>(false);
@@ -110,6 +111,7 @@ export default function SettingsScreen() {
     // don't run a SecureStore read and a setState for a row they never render.
     if (__DEV__) getUserId().then(setUserId).catch(() => {});
     getJournalShareDefault().then(setJournalShareOn).catch(() => {});
+    api.getReplyLength().then((v) => setShorterReplies(v === 'shorter')).catch(() => {});
     getInboxPushOptIn().then(setNotifyOn).catch(() => {});
     (async () => {
       const ok = await biometricsAvailable();
@@ -157,6 +159,24 @@ export default function SettingsScreen() {
     Haptics.selectionAsync().catch(() => {});
     setJournalShareOn(next);
     await setJournalShareDefault(next);
+  }
+
+  // Optimistic, then REVERTED if the write did not land. The whole feature
+  // exists because someone asked for shorter replies and the product could
+  // not hear her; a switch that shows 'on' for a preference that was never
+  // stored would be the same failure with a nicer surface. Same rule the
+  // prompt follows: only claim to hold it when it is actually held.
+  async function toggleShorterReplies(next: boolean) {
+    Haptics.selectionAsync().catch(() => {});
+    setShorterReplies(next);
+    const ok = await api.setReplyLength(next ? 'shorter' : 'standard');
+    if (!ok) {
+      setShorterReplies(!next);
+      Alert.alert(
+        "Couldn't save that",
+        'Your preference was not stored, so nothing has changed. Check your connection and try again.',
+      );
+    }
   }
 
   async function toggleInboxNotify(next: boolean) {
@@ -289,6 +309,23 @@ export default function SettingsScreen() {
             />
           </View>
         ) : null}
+        <View style={[styles.row, { marginBottom: spacing.sm }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Shorter replies</Text>
+            <Text style={styles.rowSub}>
+              Fewer words, same care. You can also just say so in conversation —
+              “keep it shorter” works, and it sticks from then on, including next
+              time you open the app.
+            </Text>
+          </View>
+          <Switch
+            value={shorterReplies}
+            onValueChange={toggleShorterReplies}
+            trackColor={{ false: '#3A3340', true: 'rgba(230,180,122,0.45)' }}
+            thumbColor={shorterReplies ? colors.amber : '#bdb6c8'}
+            ios_backgroundColor="#3A3340"
+          />
+        </View>
         <View style={[styles.row, { marginBottom: spacing.sm }]}>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowTitle}>Share journal with AI</Text>

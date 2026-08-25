@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, fonts, radii, spacing } from '../../constants/theme';
+import { colors, fonts, radii, spacing, serifInkSlack } from '../../constants/theme';
 import type { IntegrationKey } from './CircleMapCanvas';
 
 type Props = {
@@ -121,6 +121,12 @@ const styles = StyleSheet.create({
     fontFamily: fonts.serifBold,
     fontSize: 26,
     letterSpacing: 0.3,
+    // This panel also has a part titled "Self", in a flexDirection:'row'
+    // header, which shrink-wraps on the horizontal axis exactly like the
+    // Guide slide did. alignSelf:'stretch' would change the HEIGHT here,
+    // so the room goes on as padding instead. Left-aligned in a
+    // space-between row, so nothing shifts.
+    paddingRight: serifInkSlack(26, 0.3),
   },
   close: { padding: 6 },
   body: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },

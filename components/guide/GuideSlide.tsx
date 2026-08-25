@@ -209,6 +209,14 @@ const styles = StyleSheet.create({
     lineHeight: 42,
     textAlign: 'center',
     marginBottom: spacing.md,
+    // THE 'Sel' FIX. The parent is a column with alignItems:'center', so a
+    // Text with no width of its own is shrink-wrapped to the sum of its
+    // advance widths — and Cormorant's 'f' draws 4.7px past that at this
+    // size, so the Map tab's "Self" lost its terminal and read as "Sel".
+    // Stretching costs nothing visually because textAlign is already
+    // centered; it just gives the ink somewhere to land. See
+    // serifInkSlack in constants/theme.ts.
+    alignSelf: 'stretch',
   },
   // Cinematic title — ~22% larger than the reference title, same
   // CormorantGaramond_600SemiBold so the weight stays consistent.

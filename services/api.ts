@@ -1169,6 +1169,41 @@ export const api = {
     } catch {}
   },
 
+  /** GET /api/reply-length — 'shorter' | 'standard'.
+   *
+   *  The SAME user_settings key the chat path sets when someone asks for
+   *  shorter replies in conversation. One key, two ways in: saying it, or
+   *  finding it. Someone who has already decided the replies are too long
+   *  should not have to phrase a request to a machine to fix it.
+   *
+   *  Defaults to 'standard' on any failure — a toggle that reads wrong is
+   *  worse than one that reads conservatively. */
+  async getReplyLength(): Promise<'shorter' | 'standard'> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/reply-length', { label: 'reply-length', headers });
+      if (!res.ok) return 'standard';
+      const j: any = await res.json();
+      return j?.replyLength === 'shorter' ? 'shorter' : 'standard';
+    } catch { return 'standard'; }
+  },
+
+  /** POST /api/reply-length. Returns whether the write actually landed, so
+   *  the caller can revert the switch rather than show a preference that
+   *  was never stored — the same honesty rule the prompt follows. */
+  async setReplyLength(value: 'shorter' | 'standard'): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/reply-length', {
+        method: 'POST',
+        label: 'reply-length-set',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ replyLength: value }),
+      });
+      return res.ok;
+    } catch { return false; }
+  },
+
   async getLatestMap(): Promise<any | null> {
     try {
       const headers = await authHeaders();

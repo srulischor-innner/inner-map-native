@@ -41,7 +41,7 @@ import { useKeyboardInset } from '../../utils/useKeyboardInset';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { colors, fonts, radii, spacing } from '../../constants/theme';
+import { colors, fonts, radii, spacing, serifInkSlack } from '../../constants/theme';
 import { api } from '../../services/api';
 import { playPreFetchedAudio } from '../../utils/ttsStream';
 import { armPendingChatMessage } from '../../utils/pendingChatMessage';
@@ -1206,7 +1206,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.sm,
   },
-  title: { fontFamily: fonts.serifBold, fontSize: 26, letterSpacing: 0.3 },
+  // Same row-header shrink-wrap as IntegrationPanel, same "Self" title.
+  // paddingRight, not alignSelf: the cross axis in a row is vertical.
+  title: {
+    fontFamily: fonts.serifBold, fontSize: 26, letterSpacing: 0.3,
+    paddingRight: serifInkSlack(26, 0.3),
+  },
   close: { padding: 6 },
   body: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl },
 
