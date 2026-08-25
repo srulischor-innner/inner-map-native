@@ -146,26 +146,62 @@ check('iOS will accept the API URL (HTTPS or ATS exemption)',
 // not failure) when the eas CLI is unavailable or not authenticated
 // — operator might be running the local check without EAS access,
 // and we don't want to block that flow.
-function listEasSecrets() {
+// 2026-08-25: this had been silently skipping for an unknown length of time.
+// `eas secret:list` is deprecated and NO LONGER HONOURS --json — it prints the
+// human table regardless, JSON.parse throws, and the catch below turned that
+// into "CLI unavailable, continuing without verification". The CLI was
+// installed and logged in the whole time. A check that cannot fail is not a
+// check, and this one guards a SILENT failure mode: without the WEB client ID,
+// Android sign-in returns no idToken and the user just sees an error.
+//
+// `eas env:list` replaces it and has no JSON output at all (--format is
+// long|short), so the names are parsed from the text. --environment is required
+// or the command tries to prompt and dies on a non-interactive stdin.
+function listEasSecrets(profile) {
   const { execSync } = require('child_process');
-  try {
-    const stdout = execSync('eas secret:list --json', {
-      cwd: path.join(__dirname, '..'),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      encoding: 'utf8',
-      timeout: 15000,
-    });
-    const parsed = JSON.parse(stdout);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch (e) {
-    return null; // CLI not available, not logged in, or list returned non-JSON
+  const run = (cmd) => {
+    try {
+      return execSync(cmd, {
+        cwd: path.join(__dirname, '..'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+        timeout: 20000,
+      });
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // Current path: env:list, text output, NAME=value per line.
+  const env = String(profile || 'production').toLowerCase();
+  const out = run(`eas env:list --scope project --environment ${env} --format short`);
+  if (out) {
+    const names = [];
+    for (const line of out.split(/\r?\n/)) {
+      const m = /^([A-Z0-9_]+)=/.exec(line.trim());
+      if (m) names.push({ name: m[1] });
+    }
+    if (names.length) return names;
   }
+
+  // Fallback: the deprecated command, parsed as text rather than JSON.
+  const legacy = run('eas secret:list');
+  if (legacy) {
+    const names = [];
+    for (const line of legacy.split(/\r?\n/)) {
+      const m = /^Name\s+([A-Z0-9_]+)\s*$/.exec(line.trim());
+      if (m) names.push({ name: m[1] });
+    }
+    if (names.length) return names;
+  }
+
+  return null; // CLI genuinely unavailable or not authenticated
 }
-const easSecrets = listEasSecrets();
+const easSecrets = listEasSecrets(profile);
 if (easSecrets === null) {
-  console.log('  ⚠ EAS secret check skipped — `eas secret:list` unavailable. ' +
-              'Run `eas login` (or `npm install -g eas-cli`) for full pre-flight ' +
-              'coverage. Continuing without verification.');
+  console.log('  ⚠ EAS secret check skipped — neither `eas env:list` nor `eas secret:list` ' +
+              'returned anything. Run `eas login` (or `npm install -g eas-cli`) for ' +
+              'full pre-flight coverage. Continuing without verification.');
 } else {
   const secretNames = new Set(easSecrets.map((s) => s.name));
   // The WEB client ID is the hard requirement — without it Android
