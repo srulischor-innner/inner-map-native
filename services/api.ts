@@ -1147,6 +1147,28 @@ export const api = {
     } catch { return []; }
   },
 
+  /** POST /api/parts/visited — the person just opened this part.
+   *
+   *  This is the ONLY writer of parts.lastVisitedAt. Before it existed the
+   *  folder showed lastDetected as "Last seen", which advances whenever the
+   *  MODEL mentions the part — so a part untouched for two months could read
+   *  "2 weeks ago" (founder ruling 2026-08-25).
+   *
+   *  Fire-and-forget: a failed stamp costs a recency line, never the folder.
+   *  Never awaited by the UI. */
+  async markPartVisited(partId: string): Promise<void> {
+    try {
+      if (!partId) return;
+      const headers = await authHeaders();
+      await apiFetch("/api/parts/visited", {
+        method: "POST",
+        label: "parts-visited",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ partId }),
+      });
+    } catch {}
+  },
+
   async getLatestMap(): Promise<any | null> {
     try {
       const headers = await authHeaders();

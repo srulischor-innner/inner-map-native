@@ -416,11 +416,14 @@ export function InnerMapCanvas({
         />
       ) : null}
 
-      {/* CHANGED-SINCE-LAST-VISIT markers — one subtle accent dot per node
-          category that has a part touched since the frozen mapLastViewedAt
-          baseline. Category-level (the map has 7 nodes, not one per part);
-          cleared automatically next visit when markMapSeen advances the
-          baseline. Self never fires MAP_UPDATE so it never lights. */}
+      {/* CHANGED-SINCE-YOU-LAST-OPENED-IT markers — one subtle accent dot per
+          node category. Still category-level (the map has 7 nodes, not one per
+          part), but map.tsx decides membership per part now: lastChangedAt (a
+          real write to the part's own fields) against lastVisitedAt (when the
+          person opened it), plus a first-visit rule so a first look is not a
+          map covered in dots. It used to be lastDetected — which advances when
+          the MODEL mentions a part — against one map-wide viewed stamp.
+          Clears when the folder is opened. Self is never in the set. */}
       {changedNodes && changedNodes.size > 0 ? (
         <>
           {changedNodes.has('wound')       ? <ChangedDot x={wound.x - wound.r * 0.72}               y={wound.y - wound.r * 0.72} /> : null}
@@ -476,15 +479,21 @@ function CountBadge({
   );
 }
 
-// Subtle "changed since your last visit" marker — a small accent dot at a
+// "Changed since you last opened it" marker — a small accent dot at a
 // node's top-LEFT shoulder (the CountBadge owns the top-right, so they never
 // collide). Purely visual + pointerEvents='none'; the node's TapTarget still
-// owns the touch.
+// owns the touch. Which nodes light is decided in map.tsx (per-part
+// lastChangedAt vs lastVisitedAt, plus the first-visit rule); the sighted
+// explanation is the legend line under the header, and this label is the
+// same sentence for a screen reader — without it the dot was silent to
+// VoiceOver and unexplained to everyone else.
 function ChangedDot({ x, y }: { x: number; y: number }) {
   const SIZE = 9;
   return (
     <View
       pointerEvents="none"
+      accessible
+      accessibilityLabel="Changed since you last opened it"
       style={[styles.changedDot, { left: x - SIZE / 2, top: y - SIZE / 2, width: SIZE, height: SIZE, borderRadius: SIZE / 2 }]}
     />
   );

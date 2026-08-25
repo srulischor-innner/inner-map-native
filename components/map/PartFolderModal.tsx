@@ -222,6 +222,79 @@ const MANAGER_FIREFIGHTER_DEEPER: DeeperField[] = [
   { label: 'History',        key: 'history',        placeholder: 'When this formed...' },
 ];
 
+// ==========================================================================
+// WHAT THE BODY ALREADY RENDERED — and Go deeper as the remainder.
+//
+// The lists above and the body <Section>s below used to be maintained
+// separately, with nothing comparing them, and five fields had drifted into
+// both. A wound folder rendered "Where It Lives" and "When It Started"
+// twice; fixer and skeptic rendered the same `desire` field under two
+// labels. Same class as the reading's repeated paragraph: one value, two
+// homes, no check (founder ruling 2026-08-25 — fix by construction).
+//
+// Each section component now declares its body rows here, ONCE, and the JSX
+// reads its labels and field keys from that declaration — so the record is
+// not documentation that can fall behind the render, it IS the render. Go
+// deeper is then the component's DEEPER list minus this record, computed at
+// module load. A field cannot appear in both halves, and nobody has to
+// remember that it must not.
+//
+// Subtraction is on the field key AND on the label. Key catches the same
+// value shown twice. Label catches two DIFFERENT values shown under one
+// heading, which reads to a person as the same defect — fixer's body shows
+// "How It Shows Up" from triggers/phrases while PROTECTOR_DEEPER carries a
+// marker field under that same heading. The body keeps the heading; the
+// deeper row drops out for fixer and stays for skeptic, whose body calls
+// its equivalent "Its Evidence".
+type BodyField = { label: string; key?: string };
+type BodyRecord = Record<string, BodyField>;
+
+const WOUND_BODY = {
+  belief:  { label: 'The Belief' },
+  feeling: { label: 'The Feeling Layer', key: 'feeling' },
+  body:    { label: 'Where It Lives',    key: 'body' },
+  history: { label: 'When It Started',   key: 'history' },
+} as const;
+
+const FIXER_BODY = {
+  pattern:  { label: 'The Pattern',        key: 'pattern' },
+  protects: { label: "What It's Protecting", key: 'what-it-protects' },
+  showsUp:  { label: 'How It Shows Up' },
+  needs:    { label: 'What It Needs',      key: 'desire' },
+} as const;
+
+const SKEPTIC_BODY = {
+  pattern:  { label: 'The Pattern',        key: 'pattern' },
+  protects: { label: "What It's Protecting", key: 'what-it-protects' },
+  evidence: { label: 'Its Evidence' },
+  needs:    { label: 'What It Needs',      key: 'desire' },
+} as const;
+
+const SELF_LIKE_BODY = {
+  built:   { label: 'What It Built',  key: 'what-it-built' },
+  manages: { label: 'How It Manages', key: 'how-it-shows-up' },
+  wants:   { label: 'What It Wants',  key: 'agenda' },
+  showsUp: { label: 'How It Shows Up', key: 'clenched-or-open' },
+} as const;
+
+const PROTECTOR_ROW_BODY = {
+  strategy: { label: 'Strategy',           key: 'strategy' },
+  manages:  { label: "What It's Managing", key: 'what-it-manages' },
+} as const;
+
+function deeperMinusBody(deeper: DeeperField[], body: BodyRecord): DeeperField[] {
+  const rows = Object.values(body);
+  const keys = new Set(rows.map((f) => f.key).filter(Boolean) as string[]);
+  const labels = new Set(rows.map((f) => f.label.trim().toLowerCase()));
+  return deeper.filter((f) => !keys.has(f.key) && !labels.has(f.label.trim().toLowerCase()));
+}
+
+const WOUND_DEEPER_SHOWN         = deeperMinusBody(WOUND_DEEPER, WOUND_BODY);
+const FIXER_DEEPER_SHOWN         = deeperMinusBody(PROTECTOR_DEEPER, FIXER_BODY);
+const SKEPTIC_DEEPER_SHOWN       = deeperMinusBody(PROTECTOR_DEEPER, SKEPTIC_BODY);
+const SELF_LIKE_DEEPER_SHOWN     = deeperMinusBody(SELF_LIKE_DEEPER, SELF_LIKE_BODY);
+const PROTECTOR_ROW_DEEPER_SHOWN = deeperMinusBody(MANAGER_FIREFIGHTER_DEEPER, PROTECTOR_ROW_BODY);
+
 // ============================================================================
 // Main component
 // ============================================================================
@@ -792,28 +865,28 @@ function WoundSections({ mapData, part }: { mapData: any; part: any }) {
     <View style={styles.sections}>
       <DetectedPill part={part} color="#E05050" />
       <Section
-        label="The Belief"
+        label={WOUND_BODY.belief.label}
         value={mapData?.wound || part?.corePhrase}
         placeholder="The core belief is still taking shape..."
       />
       <Section
-        label="The Feeling Layer"
-        value={readField(part, 'feeling') || part?.fullDescription}
+        label={WOUND_BODY.feeling.label}
+        value={readField(part, WOUND_BODY.feeling.key) || part?.fullDescription}
         placeholder="The feeling beneath the story..."
       />
       <Section
-        label="Where It Lives"
-        value={readField(part, 'body')}
+        label={WOUND_BODY.body.label}
+        value={readField(part, WOUND_BODY.body.key)}
         placeholder="Where this lives in the body..."
       />
       <Section
-        label="When It Started"
-        value={readField(part, 'history') || mapData?.objectiveStory}
+        label={WOUND_BODY.history.label}
+        value={readField(part, WOUND_BODY.history.key) || mapData?.objectiveStory}
         placeholder="Still emerging..."
       />
       <SelfVoiceButton part={part} />
-      <PartRecencyRows firstDetected={part?.firstDetected} lastDetected={part?.lastDetected} lastSource={part?.lastSource} />
-      <GoDeeperSection part={part} fields={WOUND_DEEPER} />
+      <PartRecencyRows firstDetected={part?.firstDetected} lastVisitedAt={part?.lastVisitedAt} lastSource={part?.lastSource} />
+      <GoDeeperSection part={part} fields={WOUND_DEEPER_SHOWN} />
     </View>
   );
 }
@@ -822,28 +895,28 @@ function FixerSections({ part }: { part: any }) {
     <View style={styles.sections}>
       <DetectedPill part={part} color="#E6B47A" />
       <Section
-        label="The Pattern"
-        value={readField(part, 'pattern') || part?.howItShowsUp || part?.fullDescription}
+        label={FIXER_BODY.pattern.label}
+        value={readField(part, FIXER_BODY.pattern.key) || part?.howItShowsUp || part?.fullDescription}
         placeholder="The proving pattern is still taking shape..."
       />
       <Section
-        label="What It's Protecting"
-        value={readField(part, 'what-it-protects')}
+        label={FIXER_BODY.protects.label}
+        value={readField(part, FIXER_BODY.protects.key)}
         placeholder="What this part is protecting against..."
       />
       <Section
-        label="How It Shows Up"
+        label={FIXER_BODY.showsUp.label}
         value={part?.triggers?.join?.(', ') || part?.recurringPhrases?.join?.(', ') || part?.voice}
         placeholder="How this shows up in your life..."
       />
       <Section
-        label="What It Needs"
-        value={readField(part, 'desire')}
+        label={FIXER_BODY.needs.label}
+        value={readField(part, FIXER_BODY.needs.key)}
         placeholder="Still getting to know this part..."
       />
       <SelfVoiceButton part={part} />
-      <PartRecencyRows firstDetected={part?.firstDetected} lastDetected={part?.lastDetected} lastSource={part?.lastSource} />
-      <GoDeeperSection part={part} fields={PROTECTOR_DEEPER} />
+      <PartRecencyRows firstDetected={part?.firstDetected} lastVisitedAt={part?.lastVisitedAt} lastSource={part?.lastSource} />
+      <GoDeeperSection part={part} fields={FIXER_DEEPER_SHOWN} />
     </View>
   );
 }
@@ -852,28 +925,28 @@ function SkepticSections({ part }: { part: any }) {
     <View style={styles.sections}>
       <DetectedPill part={part} color="#86BDDC" />
       <Section
-        label="The Pattern"
-        value={readField(part, 'pattern') || part?.howItShowsUp || part?.fullDescription}
+        label={SKEPTIC_BODY.pattern.label}
+        value={readField(part, SKEPTIC_BODY.pattern.key) || part?.howItShowsUp || part?.fullDescription}
         placeholder="The withdrawal pattern is still taking shape..."
       />
       <Section
-        label="What It's Protecting"
-        value={readField(part, 'what-it-protects')}
+        label={SKEPTIC_BODY.protects.label}
+        value={readField(part, SKEPTIC_BODY.protects.key)}
         placeholder="What this part is protecting against..."
       />
       <Section
-        label="Its Evidence"
+        label={SKEPTIC_BODY.evidence.label}
         value={part?.recurringPhrases?.join?.(', ') || part?.voice}
         placeholder="The evidence this part holds..."
       />
       <Section
-        label="What It Needs"
-        value={readField(part, 'desire')}
+        label={SKEPTIC_BODY.needs.label}
+        value={readField(part, SKEPTIC_BODY.needs.key)}
         placeholder="Still getting to know this part..."
       />
       <SelfVoiceButton part={part} />
-      <PartRecencyRows firstDetected={part?.firstDetected} lastDetected={part?.lastDetected} lastSource={part?.lastSource} />
-      <GoDeeperSection part={part} fields={PROTECTOR_DEEPER} />
+      <PartRecencyRows firstDetected={part?.firstDetected} lastVisitedAt={part?.lastVisitedAt} lastSource={part?.lastSource} />
+      <GoDeeperSection part={part} fields={SKEPTIC_DEEPER_SHOWN} />
     </View>
   );
 }
@@ -916,28 +989,28 @@ function SelfLikeSections({ part, mapData }: { part: any; mapData: any }) {
     <View style={styles.sections}>
       <DetectedPill part={part} color="#8A7AAA" />
       <Section
-        label="What It Built"
-        value={readField(part, 'what-it-built') || mapData?.compromise}
+        label={SELF_LIKE_BODY.built.label}
+        value={readField(part, SELF_LIKE_BODY.built.key) || mapData?.compromise}
         placeholder="The actual life this part has shaped — work, choices, the way you show up day to day."
       />
       <Section
-        label="How It Manages"
-        value={readField(part, 'how-it-shows-up')}
+        label={SELF_LIKE_BODY.manages.label}
+        value={readField(part, SELF_LIKE_BODY.manages.key)}
         placeholder="How this part navigates between your fixer and skeptic to keep things workable."
       />
       <Section
-        label="What It Wants"
-        value={readField(part, 'agenda')}
+        label={SELF_LIKE_BODY.wants.label}
+        value={readField(part, SELF_LIKE_BODY.wants.key)}
         placeholder="Underneath everything, what this part is trying to feel — usually some version of okay, stable, at peace."
       />
       <Section
-        label="How It Shows Up"
-        value={readField(part, 'clenched-or-open')}
+        label={SELF_LIKE_BODY.showsUp.label}
+        value={readField(part, SELF_LIKE_BODY.showsUp.key)}
         placeholder="How this part is currently holding things — relaxed and trusting, or tight and managing."
       />
       <SelfVoiceButton part={part} />
-      <PartRecencyRows firstDetected={part?.firstDetected} lastDetected={part?.lastDetected} lastSource={part?.lastSource} />
-      <GoDeeperSection part={part} fields={SELF_LIKE_DEEPER} />
+      <PartRecencyRows firstDetected={part?.firstDetected} lastVisitedAt={part?.lastVisitedAt} lastSource={part?.lastSource} />
+      <GoDeeperSection part={part} fields={SELF_LIKE_DEEPER_SHOWN} />
     </View>
   );
 }
@@ -1001,14 +1074,23 @@ function formatAbsoluteDate(iso: string | null | undefined): string | null {
 // end-to-end and recorded server-side, but its DISPLAY is BANKED/deferred — the
 // dates carry the need for now. To surface it later, append a source clause to
 // the LAST SEEN value (source tracks the most-recent write).
+// 2026-08-25: LAST SEEN used to read `lastDetected`, which advances every time
+// the MODEL mentions the part — not when the person opened it. A part not
+// visited in two months showed "2 weeks ago" because it had come up in
+// conversation two weeks earlier. The arithmetic was never wrong; the field
+// was. It now reads `lastVisitedAt`, written only by POST /api/parts/visited.
+//
+// A part that has never been opened shows no LAST SEEN line at all, rather
+// than a stamp derived from something else. Nothing is better than a number
+// that means a different thing.
 function PartRecencyRows({
-  firstDetected, lastDetected,
-}: { firstDetected?: string | null; lastDetected?: string | null; lastSource?: string | null }) {
+  firstDetected, lastVisitedAt,
+}: { firstDetected?: string | null; lastVisitedAt?: string | null; lastSource?: string | null }) {
   const noticed = formatAbsoluteDate(firstDetected);
-  const lastSeenRel = formatRelativeTime(lastDetected);
+  const lastSeenRel = formatRelativeTime(lastVisitedAt);
   if (!noticed && !lastSeenRel) return null;
   const addTs = Date.parse(firstDetected || '');
-  const updTs = Date.parse(lastDetected || '');
+  const updTs = Date.parse(lastVisitedAt || '');
   const sameMoment = Number.isFinite(addTs) && Number.isFinite(updTs) && Math.abs(updTs - addTs) < 60_000;
   const showLastSeen = !sameMoment && !!lastSeenRel;
   return (
@@ -1021,7 +1103,7 @@ function PartRecencyRows({
       ) : null}
       {showLastSeen ? (
         <View style={styles.recencyLine}>
-          <Text style={styles.lastActivatedLabel}>LAST SEEN</Text>
+          <Text style={styles.lastActivatedLabel}>LAST OPENED</Text>
           <Text style={styles.lastActivatedValue}>{lastSeenRel}</Text>
         </View>
       ) : null}
@@ -1052,23 +1134,24 @@ function ProtectorList({
               <DetectedPill part={row} color={color} />
             </View>
             <Section
-              label="Strategy"
-              value={readField(row, 'strategy')}
+              label={PROTECTOR_ROW_BODY.strategy.label}
+              value={readField(row, PROTECTOR_ROW_BODY.strategy.key)}
               placeholder="The strategy is still taking shape..."
             />
             <Section
-              label="What It's Managing"
-              value={readField(row, 'what-it-manages')}
+              label={PROTECTOR_ROW_BODY.manages.label}
+              value={readField(row, PROTECTOR_ROW_BODY.manages.key)}
               placeholder="Still getting to know this part..."
             />
-            {/* Last activated — surfaces the parts.lastDetected
-                timestamp as a relative-time line. Helps the user see
-                which protectors are currently busy vs. which haven't
-                fired in weeks. Hidden when the row has never been
-                detected (a brand-new part inserted via direct edit). */}
-            <PartRecencyRows firstDetected={row.firstDetected} lastDetected={row.lastDetected} lastSource={row.lastSource} />
+            {/* NOTICED / LAST OPENED. This used to read lastDetected under a
+                "Last seen" label — a model-recency signal wearing a visit
+                record's label (founder ruling 2026-08-25). Opening the
+                Managers or Firefighters folder opens every protector card at
+                once, so map.tsx stamps every row in that category; each of
+                those is a real visit. Hidden when never opened. */}
+            <PartRecencyRows firstDetected={row.firstDetected} lastVisitedAt={row.lastVisitedAt} lastSource={row.lastSource} />
             <SelfVoiceButton part={row} />
-            <GoDeeperSection part={row} fields={MANAGER_FIREFIGHTER_DEEPER} />
+            <GoDeeperSection part={row} fields={PROTECTOR_ROW_DEEPER_SHOWN} />
           </View>
         ))}
       </View>

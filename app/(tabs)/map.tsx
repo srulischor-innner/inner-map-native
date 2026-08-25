@@ -98,6 +98,12 @@ export default function MapScreen() {
   // labels after the same 8s the ring stays inflated.
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [folderPart, setFolderPart] = useState<NodeKey | null>(null);
+  // Part ids opened during THIS session. The visit stamp is fire-and-forget
+  // and `parts` is not refetched when a folder closes, so without this the
+  // dot would stay lit until the next app launch. Deliberately NOT written
+  // into `parts`: while you are standing in a folder, its LAST OPENED line
+  // should still show the PREVIOUS visit. "Just now" is not information.
+  const [visitedThisSession, setVisitedThisSession] = useState<Set<string>>(new Set());
   const sessionIdRef = useRef<string>(uuidv4());
 
   // Wound layers — array from /api/latest-map. Index 0 is the primary
@@ -227,26 +233,49 @@ export default function MapScreen() {
   }, []);
   useEffect(() => { loadMap(); }, [loadMap]);
 
-  // Per-node "changed since last visit" set. Category-level (the map has 7
-  // nodes, not one per part): a node lights if ANY part in its category was
-  // touched (lastDetected) after the frozen baseline. First-ever visit (null
-  // baseline) lights every populated node. Self is excluded — it never carries
-  // map changes. Cleared next visit when markMapSeen advances the baseline —
-  // same lastSeenMapAt + same mechanic as the tab dot.
+  // Per-node "changed since you last opened it" marker. Still category-level
+  // (the map has 7 nodes, not one per part), but the COMPARISON is per part
+  // and both sides of it are now real (founder ruling 2026-08-25):
+  //
+  //   lastChangedAt  — derived server-side: the newest write stamp across the
+  //                    part's own fields. An actual change to the content.
+  //   lastVisitedAt  — when the PERSON opened that part. Written only by
+  //                    POST /api/parts/visited.
+  //
+  // It used to compare lastDetected — which advances whenever the MODEL
+  // mentions a part — against one map-wide "last viewed" stamp. So the dot
+  // fired for a part being talked about rather than changed, and it fired on
+  // parts the person had opened minutes earlier. Neither is what it claims.
+  //
+  // FIRST-VISIT RULE. A part that has never been opened does not light merely
+  // for existing: the old code lit EVERY populated node on a first look,
+  // which is a map full of dots asserting a change since a visit that never
+  // happened. A never-opened part lights only when it APPEARED since the last
+  // time the person looked at the map at all — the one case where the dot is
+  // saying something both true and new. On the first-ever map view there is
+  // no baseline, and nothing lights.
+  //
+  // Self is excluded by KEYS — it never carries map changes.
   const changedNodes = useMemo(() => {
     const set = new Set<NodeKey>();
     const KEYS: NodeKey[] = ['wound', 'fixer', 'skeptic', 'self-like', 'manager', 'firefighter'];
-    const firstEver = !seenBaselineAt;
     const baseline = seenBaselineAt ? Date.parse(seenBaselineAt) : NaN;
     for (const p of parts) {
       const cat = String(p?.category || '').toLowerCase().trim() as NodeKey;
       if (!KEYS.includes(cat)) continue;
-      const upd = Date.parse(p?.lastDetected || '');
-      if (!Number.isFinite(upd)) continue;
-      if (firstEver || (Number.isFinite(baseline) && upd > baseline)) set.add(cat);
+      if (visitedThisSession.has(String(p?.id || ''))) continue;
+      const visited = Date.parse(p?.lastVisitedAt || '');
+      if (Number.isFinite(visited)) {
+        const changed = Date.parse(p?.lastChangedAt || '');
+        if (Number.isFinite(changed) && changed > visited) set.add(cat);
+        continue;
+      }
+      // Never opened — new-since-your-last-look only.
+      const appeared = Date.parse(p?.firstDetected || '');
+      if (Number.isFinite(baseline) && Number.isFinite(appeared) && appeared > baseline) set.add(cat);
     }
     return set;
-  }, [parts, seenBaselineAt]);
+  }, [parts, seenBaselineAt, visitedThisSession]);
 
 
   // The mapData passed to the canvas + folder reflects whichever layer is
@@ -399,10 +428,30 @@ export default function MapScreen() {
     }
   }
 
+  // The person opened this folder. Stamp every part the folder shows: the one
+  // row for wound / fixer / skeptic / self-like, and EVERY row for manager /
+  // firefighter, because that folder opens every protector card at once — each
+  // of those is a real visit. Fire-and-forget: a failed stamp costs a recency
+  // line, never the folder.
+  function markPartsVisited(k: NodeKey) {
+    const ids = (parts || [])
+      .filter((p) => String(p?.category || '').toLowerCase().trim() === k)
+      .map((p) => String(p?.id || ''))
+      .filter(Boolean);
+    if (!ids.length) return;
+    setVisitedThisSession((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.add(id);
+      return next;
+    });
+    for (const id of ids) api.markPartVisited(id);
+  }
+
   function handleTap(k: NodeKey) {
     tapHaptic(k);
     setActivePart(k);
     setFolderPart(k);
+    markPartsVisited(k);
   }
 
   // ---------- INTEGRATION (TIKUN) VIEW ----------
@@ -656,6 +705,20 @@ export default function MapScreen() {
         <View pointerEvents="none">
           <Text style={styles.circleTitle}>Integrated Map</Text>
           <Text style={styles.circleHeader}>Tap any part to see its transformation</Text>
+        </View>
+      ) : null}
+
+      {/* What the dot means. It sat unlabelled on the wound — the most loaded
+          element on the map — where an unexplained mark reads as "something is
+          wrong with this" (founder ruling 2026-08-25). Rendered only while at
+          least one dot is actually showing, and only in triangle view, so it
+          costs nothing the rest of the time; it lives in the header band the
+          circle view already uses, well clear of the mic bar. */}
+      {view === 'triangle' && changedNodes.size > 0 ? (
+        <View pointerEvents="none">
+          <Text style={styles.changedLegend}>
+            {'\u25CF  Changed since you last opened it'}
+          </Text>
         </View>
       ) : null}
 
@@ -1031,6 +1094,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 0.5,
     marginBottom: 8,
+  },
+  // Same quiet grammar as circleHeader. The glyph is part of the string so it
+  // inherits the line's colour — the key reads as one phrase, not a caption
+  // with a decoration in front of it.
+  changedLegend: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 11,
+    color: 'rgba(230,180,122,0.55)',
+    textAlign: 'center',
+    letterSpacing: 0.4,
+    marginTop: 2,
+    marginBottom: 6,
   },
 
   // Error overlay — uses a centered layout because it needs the RETRY
