@@ -61,7 +61,19 @@ const base = {
     // + autoIncrement) manages the BUILD number only — this string is never
     // touched by it and must be bumped by hand. 1.1.0 -> 1.2.0 for the release
     // carrying payments, the belief map element and the greeting revert.
-    version: '1.2.0',
+    //
+    // 1.2.0 -> 1.3.0 (2026-08-25). 1.2.0 is out: iOS build 39 and Android
+    // versionCode 38 both went out on 2026-08-04, and the Android AAB was
+    // uploaded to Play Open Testing by hand on 2026-08-16. Everything since is
+    // a new release — 11 commits, including the 18+ age attestation (a launch
+    // blocker, e40b1ad), the reading element on the Map tab (1ff23ac), and the
+    // map-screen corrections (1a7ffa3, d24b452).
+    //
+    // A minor bump rather than a patch because this adds a signup step and a
+    // user-facing surface. It is also the safe direction: App Store Connect
+    // refuses a new build under a version that has already been released, and
+    // a build number alone would not clear that.
+    version: '1.3.0',
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'dark',
