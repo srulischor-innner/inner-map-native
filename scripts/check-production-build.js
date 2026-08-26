@@ -197,6 +197,57 @@ function listEasSecrets(profile) {
 
   return null; // CLI genuinely unavailable or not authenticated
 }
+// ---- package.json vs package-lock.json (2026-08-25) ----
+// The EAS builder's first real step is `npm ci`, and `npm ci` REFUSES to run
+// when package.json and package-lock.json disagree. It does not resolve, it
+// does not warn, it exits.
+//
+// That is what killed the 1.3.0 launch attempt: a commit added
+// react-native-web and @expo/metro-runtime to devDependencies without running
+// an install, so neither reached the lock file. Both platforms died 16 seconds
+// in, at "Install dependencies", with the useless message "Unknown error. See
+// logs of the Install dependencies build phase."
+//
+// It is checked HERE because this is the cheapest possible place: a lock file
+// is a local file, the answer takes a millisecond, and the alternative is
+// finding out from a remote builder after an upload and a queue.
+//
+// No network, no npm invocation — just the two files. Every dependency named
+// in package.json must have a node_modules/<name> entry in the lock file.
+// That is the exact condition npm ci enforces, minus transitive resolution.
+function checkLockfileInSync() {
+  const fs = require('fs');
+  const root = path.join(__dirname, '..');
+  const lockPath = path.join(root, 'package-lock.json');
+  if (!fs.existsSync(lockPath)) {
+    check('package-lock.json exists', false,
+      'EAS runs `npm ci`, which cannot run without a lock file');
+    return;
+  }
+  let pkg, lock;
+  try {
+    pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  } catch (e) {
+    check('package.json + package-lock.json parse', false, e.message);
+    return;
+  }
+  const declared = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  const inLock = lock.packages || {};
+  const missing = Object.keys(declared).filter((name) => inLock[`node_modules/${name}`] === undefined);
+  check(
+    `package-lock.json is in sync with package.json (${Object.keys(declared).length} direct deps)`,
+    missing.length === 0,
+    missing.length
+      ? `MISSING FROM LOCK FILE: ${missing.join(', ')}. ` +
+        '`npm ci` on the EAS builder will refuse to install and the build dies at ' +
+        '"Install dependencies" in ~15s. Fix locally with `npm install --package-lock-only`, ' +
+        'then COMMIT package-lock.json.'
+      : undefined,
+  );
+}
+checkLockfileInSync();
+
 const easSecrets = listEasSecrets(profile);
 if (easSecrets === null) {
   console.log('  ⚠ EAS secret check skipped — neither `eas env:list` nor `eas secret:list` ' +
