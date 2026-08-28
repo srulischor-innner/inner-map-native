@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-// EVERY SURFACE THAT OPENS THE MIC MUST HOLD THE SCREEN AWAKE.
+// RULES EVERY SURFACE THAT OPENS THE MIC MUST FOLLOW.
+//
+//   1. hold the screen awake for the length of the take
+//   2. reach a record-ready audio session through ensureRecordingMode()
 //
 // The bug this protects (founder ruling 2026-08-27): expo-audio pauses the
 // native recorder when the screen locks, so a hands-free take dies after
@@ -24,6 +27,15 @@ const DIRS = ['components', 'app'];
 const STARTS_RECORDING = /recorder\.record\(\)/;
 const HOOK_CALL = /useRecordingWakeLock\(\s*([^,]+),\s*WAKE_TAG\.(\w+)\s*\)/;
 const HOOK_IMPORT = /import\s*\{[^}]*useRecordingWakeLock[^}]*\}\s*from/;
+// RULE 2 (founder ruling 2026-08-28). A bare setAudioModeAsync before capture
+// is the shape that produced the "every other message" silent-capture bug: it
+// does not tear down a live player, does not retry, and returns nothing to
+// check — so recording could begin while the session was still parked in
+// playback mode, and capture silence. ChatInput was hardened in June; the
+// other four were not. Map Voice PARKS the session for its own spoken
+// replies, so on that bar the crossing was one tap away.
+const USES_HANDOFF = /ensureRecordingMode\s*\(/;
+const BARE_RECORD_MODE_SET = /allowsRecording:\s*true/;
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -64,6 +76,13 @@ function audit(files) {
       failures.push(`${rel} reuses WAKE_TAG.${tag}, already held by ${tags.get(tag)} — one surface would release the other's lock`);
     } else {
       tags.set(tag, rel);
+    }
+
+    // RULE 2 — the audio-session handoff.
+    if (!USES_HANDOFF.test(src)) {
+      failures.push(`${rel} starts a recorder without ensureRecordingMode() — a bare audio-mode set can begin capture in playback mode and record silence`);
+    } else if (BARE_RECORD_MODE_SET.test(src)) {
+      failures.push(`${rel} still sets allowsRecording:true directly — ensureRecordingMode() must be the only path to a record-ready session`);
     }
   }
   return { failures, checked };
@@ -109,3 +128,4 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`  ✓ all ${checked} recording surfaces hold a uniquely-tagged screen-sleep lock`);
+console.log(`  ✓ all ${checked} reach the mic through ensureRecordingMode(), never a bare audio-mode set`);

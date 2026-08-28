@@ -48,6 +48,7 @@ import { api } from '../../services/api';
 import { subscribeBeliefChanged } from '../../utils/beliefEvents';
 import { CrisisResourcesCard } from '../safety/CrisisResourcesCard';
 import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
+import { ensureRecordingMode } from '../../utils/ttsStream';
 
 type VoiceState = 'idle' | 'recording' | 'thinking' | 'speaking';
 type ModalKind = null | 'explainer' | 'selfInfo' | 'selfLikeInfo' | 'selfLikeDisabled';
@@ -359,12 +360,21 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
         console.log('[map-voice-bar] mic permission denied');
         return;
       }
-      try {
-        await setAudioModeAsync({
-          allowsRecording: true, playsInSilentMode: true,
-          interruptionMode: 'doNotMix', shouldPlayInBackground: false,
-        });
-      } catch {}
+      // AUTHORITATIVE PLAYBACK->RECORD HANDOFF (founder ruling 2026-08-28).
+      // Was a bare setAudioModeAsync in a swallowed try. That is the exact
+      // shape that produced the "every other message" silent-capture bug in
+      // chat: a plain set does not tear down a live player, does not retry,
+      // and returns nothing to check, so capture could begin while the
+      // session was still parked in playback mode (allowsRecording:false)
+      // and record silence. ChatInput was hardened in June; these four were
+      // not. Map Voice PARKS the session for its own TTS replies, so
+      // THIS component parks it, for its own spoken replies — so the very
+      // next hold on this same bar was the shortest path to the bug.
+      const sessionReady = await ensureRecordingMode();
+      if (!sessionReady) {
+        console.warn('[map-voice-bar] audio session not record-ready — aborting (refusing to record silence)');
+        return;
+      }
       await recorder.prepareToRecordAsync();
       // STUCK-RECORDER FIX (build 13 quick-tap regression):
       //   prepareToRecordAsync takes ~500ms on iOS cold start. If the

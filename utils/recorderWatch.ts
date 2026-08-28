@@ -31,9 +31,25 @@
 //     suppressed, exactly like the poll, while one of the OWNER's own stop
 //     paths is running (see the guard on the subscription below).
 import { useEffect, useRef } from 'react';
+import * as Haptics from 'expo-haptics';
 import type { AudioRecorder } from 'expo-audio';
 
 export const RECORDER_WATCH_INTERVAL_MS = 500;
+
+// A PAUSED BAR IS NOT A SIGNAL TO SOMEONE WITH THEIR EYES CLOSED
+// (founder ruling 2026-08-28). Free Flow's own record prompt says "Close
+// your eyes. Just let the words come" — so the visible paused state this
+// file exists to produce reaches everyone EXCEPT the person in the mode it
+// matters most for. They keep talking into a recorder that stopped.
+//
+// Fired here rather than in each owner for the same reason the wake lock is
+// released here-not-there: this is the one place an interruption is
+// detected, so a surface added later inherits it. Warning-style, not
+// success — this is bad news and should not feel neutral. Never awaited and
+// never able to throw: a haptic failure must not touch recording.
+function buzzInterrupted() {
+  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+}
 
 export function useRecorderWatch(recorder: AudioRecorder, opts: {
   /** JS believes a recording (held or locked) is live. */
@@ -93,6 +109,7 @@ export function useRecorderWatch(recorder: AudioRecorder, opts: {
     const sub = recorder.addListener('recordingStatusUpdate', (status) => {
       if (!status.hasError) return;
       if (cbRef.current.stoppingRef.current) return;
+      buzzInterrupted();
       cbRef.current.onEncodeError(status.error ?? null);
     });
     const iv = setInterval(() => {
@@ -115,7 +132,7 @@ export function useRecorderWatch(recorder: AudioRecorder, opts: {
         }
         return;
       }
-      if (!st.isRecording) o.onInterrupted();
+      if (!st.isRecording) { buzzInterrupted(); o.onInterrupted(); }
     }, RECORDER_WATCH_INTERVAL_MS);
     return () => {
       sub.remove();

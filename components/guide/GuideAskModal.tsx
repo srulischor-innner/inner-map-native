@@ -40,6 +40,7 @@ import { getTopUpProduct, purchase } from '../../services/purchases';
 import { BudgetRefusalSheet } from '../billing/BudgetRefusalSheet';
 import { renderInlineMarkdown } from '../../utils/inlineMarkdown';
 import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
+import { ensureRecordingMode } from '../../utils/ttsStream';
 
 // Per-word reveal cadence — same value as the regular Chat tab so the
 // two surfaces feel identical to the eye. See app/(tabs)/index.tsx.
@@ -450,12 +451,21 @@ export function GuideAskModal({ visible, onClose }: Props) {
         Alert.alert('Microphone off', 'Grant mic access in Settings to ask by voice.');
         return;
       }
-      try {
-        await setAudioModeAsync({
-          allowsRecording: true, playsInSilentMode: true,
-          interruptionMode: 'doNotMix', shouldPlayInBackground: false,
-        });
-      } catch {}
+      // AUTHORITATIVE PLAYBACK->RECORD HANDOFF (founder ruling 2026-08-28).
+      // Was a bare setAudioModeAsync in a swallowed try. That is the exact
+      // shape that produced the "every other message" silent-capture bug in
+      // chat: a plain set does not tear down a live player, does not retry,
+      // and returns nothing to check, so capture could begin while the
+      // session was still parked in playback mode (allowsRecording:false)
+      // and record silence. ChatInput was hardened in June; these four were
+      // not. Map Voice PARKS the session for its own TTS replies, so
+      // Map Voice -> here crossed that boundary unprotected.
+      const sessionReady = await ensureRecordingMode();
+      if (!sessionReady) {
+        console.warn('[guide-ask-mic] audio session not record-ready — aborting (refusing to record silence)');
+        Alert.alert('One sec', 'Audio is still finishing playback. Try the mic again in a moment.');
+        return;
+      }
       await recorder.prepareToRecordAsync();
       recorder.record();
       setRecording(true);

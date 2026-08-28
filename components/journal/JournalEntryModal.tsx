@@ -41,6 +41,7 @@ import { api } from '../../services/api';
 import { JournalKind, getJournalShareDefault } from '../../services/journal';
 import { useRecorderWatch } from '../../utils/recorderWatch';
 import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
+import { ensureRecordingMode } from '../../utils/ttsStream';
 
 const FREE_FLOW_GUIDANCE = [
   'This works best when you bypass your inner editor entirely — the part of you that shapes what you say before you say it.',
@@ -313,12 +314,22 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
           console.log('[journal-mic] hold ended during permission prompt — aborting start');
           return false;
         }
-        try {
-          await setAudioModeAsync({
-            allowsRecording: true, playsInSilentMode: true,
-            interruptionMode: 'doNotMix', shouldPlayInBackground: false,
-          });
-        } catch {}
+        // AUTHORITATIVE PLAYBACK->RECORD HANDOFF (founder ruling 2026-08-28).
+        // Was a bare setAudioModeAsync in a swallowed try. That is the exact
+        // shape that produced the "every other message" silent-capture bug in
+        // chat: a plain set does not tear down a live player, does not retry,
+        // and returns nothing to check, so capture could begin while the
+        // session was still parked in playback mode (allowsRecording:false)
+        // and record silence. ChatInput was hardened in June; these four were
+        // not. Map Voice PARKS the session for its own TTS replies, so
+        // Map Voice -> here crossed that boundary unprotected.
+        const sessionReady = await ensureRecordingMode();
+        if (!sessionReady) {
+          console.warn('[journal-mic] audio session not record-ready — aborting (refusing to record silence)');
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+          Alert.alert('One sec', 'Audio is still finishing playback. Try the mic again in a moment.');
+          return false;
+        }
         if (!holdActiveRef.current) {
           console.log('[journal-mic] hold ended during audio-session switch — aborting start');
           return false;
