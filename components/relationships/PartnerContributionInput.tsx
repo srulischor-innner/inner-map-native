@@ -33,6 +33,7 @@ import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } fr
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
+import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
 
 const CONTRIB_MAX_CHARS = 500;
 const MIN_RECORDING_MS = 500;
@@ -61,6 +62,11 @@ export function PartnerContributionInput({
   const [sending, setSending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [recording, setRecording] = useState(false);
+  // Screen-sleep lock — held for exactly as long as the take is live, so
+  // auto-lock cannot pause the recorder underneath us. Release is structural
+  // (see utils/recordingWakeLock.ts): every stop path and every unmount.
+  useRecordingWakeLock(recording, WAKE_TAG.partner);
+
   const [recordSec, setRecordSec] = useState(0);
 
   // expo-audio recorder + tick timer. Same shape as ChatInput.

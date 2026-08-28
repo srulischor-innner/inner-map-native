@@ -334,7 +334,7 @@ export function InnerMapCanvas({
         {/* FIREFIGHTERS — dashed orange ring on the right */}
         <DashedRing node={firefighters} r={firefightersR} stroke={MAP_STROKE.firefighters} rgb={MAP_RGB.firefighters} />
 
-        {/* SELF-LIKE — brighter lavender diamond below Self */}
+        {/* YOU — brighter lavender diamond below Self */}
         <SelfLikeDiamond d={selfLike} stroke={MAP_STROKE.selfLike} rgb={MAP_RGB.selfLike} />
 
         {/* SELF — breathing lavender circle at center */}
@@ -391,7 +391,7 @@ export function InnerMapCanvas({
           />
         );
       })()}
-      <NodeLabel x={selfLike.cx}     y={selfLike.cy + selfLike.size + 18} label="SELF-LIKE" color={MAP_STROKE.selfLike} />
+      <NodeLabel x={selfLike.cx}     y={selfLike.cy + selfLike.size + 18} label="YOU" color={MAP_STROKE.selfLike} />
 
       {/* COUNT BADGES — small "N" pill at the top-right of each side
           ring when the user has more than one manager / firefighter.
@@ -444,7 +444,7 @@ export function InnerMapCanvas({
       <TapTarget node={self}      kind="self"        onTap={onNodeTap} label="SELF" />
       <TapTarget node={managers}  kind="manager"     onTap={onNodeTap} label="MANAGERS" />
       <TapTarget node={firefighters} kind="firefighter" onTap={onNodeTap} label="FIREFIGHTERS" />
-      <DiamondTapTarget d={selfLike} kind="self-like" onTap={onNodeTap} label="SELF-LIKE" />
+      <DiamondTapTarget d={selfLike} kind="self-like" onTap={onNodeTap} label="YOU" />
     </View>
   );
 }

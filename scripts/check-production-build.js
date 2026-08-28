@@ -248,6 +248,43 @@ function checkLockfileInSync() {
 }
 checkLockfileInSync();
 
+// EVERY MIC SURFACE HOLDS THE SCREEN AWAKE (founder ruling 2026-08-27).
+// Delegated to its own script so the rule can be run on its own during
+// development; run here because the failure it guards is invisible until a
+// real person records hands-free on a real phone and loses the take.
+function checkRecordingWakeLock() {
+  const { execFileSync } = require('child_process');
+  try {
+    execFileSync(process.execPath, [path.join(__dirname, 'check-recording-wakelock.js')],
+      { stdio: 'pipe', encoding: 'utf8' });
+    check('every recording surface holds a screen-sleep lock', true);
+  } catch (e) {
+    const out = String((e && (e.stdout || '')) + (e && (e.stderr || ''))).trim();
+    check('every recording surface holds a screen-sleep lock', false,
+      (out || 'check-recording-wakelock.js failed') +
+      ' — without it expo-audio pauses the recorder at iOS auto-lock (~30s) and a hands-free take dies silently.');
+  }
+}
+checkRecordingWakeLock();
+
+// THE LOCKED READING CARD SPEAKS ABOUT THIS MAP, NOT THE RULE (2026-08-27).
+// Executes the copy function over every reachable gate state. Guards the
+// regression that is easy to make and invisible on a healthy account: copy
+// that reverts to one generic sentence for every locked map.
+function checkReadingLockedCopy() {
+  const { execFileSync } = require('child_process');
+  try {
+    execFileSync(process.execPath, [path.join(__dirname, 'check-reading-locked-copy.mjs')],
+      { stdio: 'pipe', encoding: 'utf8' });
+    check('the locked reading card names what THIS map is missing', true);
+  } catch (e) {
+    const out = String((e && (e.stdout || '')) + (e && (e.stderr || ''))).trim();
+    check('the locked reading card names what THIS map is missing', false,
+      out || 'check-reading-locked-copy.mjs failed');
+  }
+}
+checkReadingLockedCopy();
+
 const easSecrets = listEasSecrets(profile);
 if (easSecrets === null) {
   console.log('  ⚠ EAS secret check skipped — neither `eas env:list` nor `eas secret:list` ' +

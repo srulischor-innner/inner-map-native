@@ -3,7 +3,7 @@
 // Replaces the press-and-hold MapVoiceButton + MapVoicePanel (entry
 // modal + 10-min cap timer) with two mics side-by-side:
 //
-//   SELF (left, ●)        SELF-LIKE (right, ◆)  ← disabled in Phase 1
+//   SELF (left, ●)        LEADING (right, ◆)  ← disabled in Phase 1
 //
 // Self mic flow:
 //   tap-and-hold → records audio → release → POST audio to
@@ -47,6 +47,7 @@ import { colors, fonts, spacing, radii } from '../../constants/theme';
 import { api } from '../../services/api';
 import { subscribeBeliefChanged } from '../../utils/beliefEvents';
 import { CrisisResourcesCard } from '../safety/CrisisResourcesCard';
+import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
 
 type VoiceState = 'idle' | 'recording' | 'thinking' | 'speaking';
 type ModalKind = null | 'explainer' | 'selfInfo' | 'selfLikeInfo' | 'selfLikeDisabled';
@@ -101,7 +102,19 @@ const POST_STOP_FLUSH_MS = 150;
 const BAR_BASELINE = 50;
 const TOAST_BASELINE = 140;
 const SELF_LABEL = 'SELF';
-const SELF_LIKE_LABEL = 'SELF-LIKE';
+// THE MIC LABEL NAMES THE STATE, NOT THE ENTITY (founder ruling 2026-08-27).
+// This mic mimics You in the LEADING state — it speaks the way You would if
+// You were standing on your own ground. The diamond above it is labelled YOU;
+// the mic under it is what You sounds like when leading.
+//
+// "LEADING" over "YOU, LEADING" on a measurement, not a preference: at
+// DMSans-SemiBold 10px / letterSpacing 1.4, inside a space-around column with
+// the info icon, the label budget on a 320pt screen is 116pt. "YOU, LEADING"
+// is 85.0pt — fine at default, but it overflows at 1.36x text scaling, the top
+// of iOS's NORMAL range before accessibility sizes. Nothing in this app sets
+// maxFontSizeMultiplier, so nothing catches it. "LEADING" is 52.5pt and holds
+// to 2.21x, slightly MORE headroom than the "SELF-LIKE" it replaces.
+const SELF_LIKE_LABEL = 'LEADING';
 
 // Reasons stopAndDispatch can be invoked. Surfaces in the diagnostic
 // log so future truncation reports can be triaged at a glance:
@@ -124,19 +137,19 @@ const EXPLAINER_BODY = [
 const EXPLAINER_SELF_LINE =
   '🎙 Self — "I see you. I\'m here." Pure presence. When you need to be witnessed and settle — without being managed.';
 const EXPLAINER_SELF_LIKE_LINE =
-  '🎙 Self-like part — "I hear you, AND we\'re going a different way." Active leadership. When you need to hold a line with a part — make a different choice, redirect.';
+  '🎙 Leading — "I hear you, AND we\'re going a different way." When you need to hold a line with a part: make a different choice, redirect.';
 // "Part on your map" framing is deliberate in the three strings below:
 // the mic itself is ALSO labeled SELF-LIKE, so "tap Self-like" alone was
 // ambiguous (users tapped the mic again). Every pointer names the PART on
 // the map — the diamond on the triangle — so it can't be read as the mic.
 const EXPLAINER_FOOTNOTE =
-  "(Self-like part voice becomes available once you've established your own belief separate from your parts. Tap the SELF-LIKE part on your map — the diamond on the triangle — to begin.)";
+  "(This voice becomes available once you've established your own belief, separate from what your parts believe. Tap YOU on your map — the diamond on the triangle — to begin.)";
 
 const SELF_INFO_BODY =
   "Self — pure presence. Speak, and the part you're blended with lights up; Self responds to it. This is what your own grounded presence sounds like — so you can begin to recognize it, and find it, in yourself.";
 const SELF_LIKE_INFO_BODY =
-  "Self-like — leadership. It speaks to the part that's active, from the ground you stand on. Hear what it's like to lead your system from your own belief — so you can come to embody it yourself.";
-// SELF-LIKE MIC LOCK — title + body.
+  "You, leading. It speaks to the part that's active, from the ground you stand on. You didn't pick which part shows up — the system does that — but you choose how you meet it. Hear what that sounds like, so you can come to speak it yourself.";
+// THE LEADING MIC LOCK — title + body.
 //
 // This is a DESIGNED LOCK, not an unbuilt feature, and the copy has to say so.
 // It renders for 82 of the 88 users who have a self-like row, and the previous
@@ -147,13 +160,18 @@ const SELF_LIKE_INFO_BODY =
 // Self-like voice with no established ground has nothing to lead from.
 //
 // So the copy states the CONDITION, not an absence. It also stops giving
-// directions: EXPLAINER_FOOTNOTE above already carries the "tap the SELF-LIKE
-// part on your map" pointer, and repeating it here turned a warm gate into a
-// two-step instruction. Vocabulary is the app's own — "what you stand on"
-// (BeliefGround.tsx:147, PartFolderModal.tsx:464) and "separate from what your
-// parts believe" (BeliefGround / PartFolderModal placeholder), and the ground
-// metaphor is the one the map already renders (BeliefGround is literally the
-// floor the triangle stands on).
+// directions: EXPLAINER_FOOTNOTE above already carries the "tap YOU on your
+// map" pointer, and repeating it here turned a warm gate into a
+// two-step instruction. Vocabulary is the app's own — "what you stand on" and
+// "separate from what your parts believe", both from the Self-like folder's
+// belief section (PartFolderModal.tsx).
+//
+// The ground metaphor used to be rendered too: a belief band across the foot
+// of the map, literally the floor the triangle stood on. It was removed on
+// 2026-08-27 and "what you stand on" now lives only in the Self-like folder.
+// That makes the pointer above load-bearing rather than merely helpful — the
+// diamond on the triangle is the ONLY way in, so if that pointer is ever
+// dropped this lock becomes a dead end.
 const SELF_LIKE_DISABLED_TITLE = "Unlocks with what you stand on";
 const SELF_LIKE_DISABLED_BODY =
   "This voice speaks from your own ground — so it waits until there's ground to speak from. It opens once you've established what you stand on, separate from what your parts believe.";
@@ -176,6 +194,11 @@ type Props = {
 
 export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, bottomInset = 0 }: Props) {
   const [state, setState] = useState<VoiceState>('idle');
+  // Screen-sleep lock — held for exactly as long as the take is live, so
+  // auto-lock cannot pause the recorder underneath us. Release is structural
+  // (see utils/recordingWakeLock.ts): every stop path and every unmount.
+  useRecordingWakeLock(state === 'recording', WAKE_TAG.mapVoice);
+
   const [modal, setModal] = useState<ModalKind>(null);
   const [explainerSeen, setExplainerSeen] = useState<boolean | undefined>(undefined);
   const [holdSec, setHoldSec] = useState(0);
@@ -234,7 +257,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
   }, []);
 
   // Refresh the belief gate. Round 9 correction (single-belief model):
-  // Self-like activates only when the user's SELF-LIKE PART specifically
+  // Leading activates only when the user's YOU row specifically
   // carries a belief — not any part on the map. The whole map operates
   // from one underlying belief system; the Self-like part holds the
   // single different belief that contrasts with the entire map. Called
@@ -881,7 +904,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
           ) : null}
         </View>
 
-        {/* Self-like mic. When `selfLikeEnabled` is false (no part has
+        {/* The LEADING mic (You, leading). When `selfLikeEnabled` is false (no part has
             a belief yet), tap → 'selfLikeDisabled' tooltip and no
             recording. When enabled, behavior mirrors Self: press-and-
             hold to record, release to dispatch with mode='self-like'.
@@ -904,8 +927,8 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
             accessible
             accessibilityLabel={
               selfLikeEnabled
-                ? 'Self-like part — hold to speak, slide up to cancel'
-                : 'Self-like part — not yet available'
+                ? 'You, leading — hold to speak, slide up to cancel'
+                : 'You, leading — not yet available'
             }
             accessibilityRole="button"
           >
@@ -930,7 +953,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
               onPress={() => setModal('selfLikeInfo')}
               hitSlop={8}
               style={styles.infoBtn}
-              accessibilityLabel="What does Self-like part do"
+              accessibilityLabel="What does leading sound like"
             >
               <Ionicons
                 name="information-circle-outline"
@@ -965,7 +988,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
           <View style={styles.toast}>
             <Text style={styles.toastText}>
               {fallbackToast.kind === 'missing_belief'
-                ? 'To develop your belief, tap the SELF-LIKE part on your map — the diamond on the triangle.'
+                ? 'To develop your belief, tap YOU on your map — the diamond on the triangle.'
                 : fallbackToast.kind === 'no_part_detected'
                   ? 'Couldn’t identify a single part — try again with one specific situation.'
                   : fallbackToast.kind === 'hold-to-record'
@@ -1019,7 +1042,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
         </Pressable>
       </Modal>
 
-      {/* Self-like part (i) popup. */}
+      {/* You, leading — (i) popup. */}
       <Modal
         visible={modal === 'selfLikeInfo'}
         transparent
@@ -1029,7 +1052,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       >
         <Pressable style={styles.backdrop} onPress={() => setModal(null)}>
           <Pressable style={styles.card} onPress={() => {}}>
-            <Text style={styles.cardTitle}>Self-like part</Text>
+            <Text style={styles.cardTitle}>You, leading</Text>
             <Text style={styles.cardBody}>{SELF_LIKE_INFO_BODY}</Text>
             <Pressable onPress={() => setModal(null)} style={styles.gotItBtn}>
               <Text style={styles.gotItText}>GOT IT</Text>
@@ -1038,7 +1061,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
         </Pressable>
       </Modal>
 
-      {/* Self-like mic lock — states the unlock condition. NOT a placeholder:
+      {/* Leading mic lock — states the unlock condition. NOT a placeholder:
           the voice is built, it is gated on the user having a belief. See the
           copy constants for why the wording matters. */}
       <Modal

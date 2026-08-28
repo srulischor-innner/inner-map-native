@@ -1310,11 +1310,11 @@ export const api = {
    *  The timestamp and policy version are stamped SERVER-side; the client
    *  sends neither. Returns true on success so the caller can mark the sync
    *  pending for the boot reconciliation if it failed. */
-  /** GET /api/reading — the newest reading for this user, plus the two gates.
-   *  `eligibility` says whether this map qualifies; `deliveryGate` is the
-   *  product-level hold that stays shut until one real PART_NAMED capture has
-   *  fired anywhere (server ruling 2026-08-21g). Both are read by the Map-tab
-   *  element; neither is ever inferred on device.
+  /** GET /api/reading — the newest reading for this user, plus the gate.
+   *  `eligibility` says whether this map qualifies, and since 2026-08-27 it is
+   *  the ONLY thing gating delivery: the product-level live-capture hold that
+   *  used to sit beside it was removed server-side. Read by the Map-tab
+   *  element; never inferred on device.
    *  Old servers return 404/400 — treated as 'no reading, not eligible', so a
    *  client that ships ahead of the server simply shows nothing. */
   async getReading(): Promise<{
@@ -1325,8 +1325,19 @@ export const api = {
     stale?: boolean;
     body?: string | null;
     createdAt?: string;
-    eligibility?: { eligible: boolean; reason?: string | null };
-    deliveryGate?: { ready: boolean; reason?: string | null };
+    /** The gate, in full. The server has always sent every one of these
+     *  fields; the type used to declare only the first two, which is why
+     *  the locked copy could talk about requirements but never about THIS
+     *  map. Read-only on device — never recomputed here. */
+    eligibility?: {
+      eligible: boolean;
+      reason?: string | null;
+      woundBelief?: boolean;
+      fixerPattern?: boolean;
+      skepticPattern?: boolean;
+      protCount?: number;
+      protectorFloor?: number;
+    };
   } | null> {
     try {
       const headers = await authHeaders();

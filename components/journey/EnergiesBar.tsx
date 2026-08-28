@@ -16,7 +16,7 @@ const PART_DESCRIPTION: Record<string, string> = {
   wound: 'The core belief at the center.',
   manager: 'Proactive routines that keep things steady.',
   firefighter: 'Reactive moves that reach for relief.',
-  'self-like': 'The part that holds it all together.',
+  'self-like': 'The one who holds it all together.',
   self: 'The calm presence underneath everything.',
   compromised: 'The part that holds it all together.',
 };

@@ -27,11 +27,9 @@ const path = require('path');
 
 const NATIVE = path.resolve(__dirname, '..');
 const barPath     = path.join(NATIVE, 'components', 'map', 'MapVoiceBar.tsx');
-const groundPath  = path.join(NATIVE, 'components', 'map', 'BeliefGround.tsx');
 const folderPath  = path.join(NATIVE, 'components', 'map', 'PartFolderModal.tsx');
 
 const bar    = fs.readFileSync(barPath, 'utf8');
-const ground = fs.readFileSync(groundPath, 'utf8');
 const folder = fs.readFileSync(folderPath, 'utf8');
 
 let failures = 0, n = 0;
@@ -107,13 +105,32 @@ step('(d) the modal it renders in is still the selfLikeDisabled one',
 // The point of matching vocabulary is that a user meets the SAME words in the
 // modal and on the screen that resolves it. Checked against those files rather
 // than asserted, so a rename over there fails here.
-step('(e) "what you stand on" is the phrase BeliefGround actually shows the user',
-  /What do you stand on\?/.test(ground) && /What you stand on/.test(ground));
+step('(e) "what you stand on" is the phrase the You folder actually shows',
+  /What do you stand on\?/.test(folder) && /What you stand on/.test(folder),
+  'the belief band was removed 2026-08-27; these phrases live in the You folder now');
 step('(e) "separate from what your parts believe" is PartFolderModal\'s own line',
   /separate from what your parts believe/.test(folder));
 step('(e) the belief-establishment button is still "Establish your belief"',
   /Establish your belief/.test(folder),
   'if the button is renamed, this modal\'s wording should follow it');
+
+// ===== (e2) THE RENAME: SELF-LIKE -> YOU (founder ruling 2026-08-27) ======
+// The label names the STATE, not the entity: the diamond on the map is YOU,
+// and this mic is what You sounds like when leading. "LEADING" rather than
+// "YOU, LEADING" on a measurement — the longer form overflows the column at
+// 1.36x text scaling, inside iOS's normal (non-accessibility) range.
+step('(e2) the mic label names the state',
+  /const SELF_LIKE_LABEL = 'LEADING';/.test(bar));
+step('(e2) no user-visible "Self-like" survives in the mic bar',
+  !/(cardTitle}>|Text>)[^<]*Self-like/i.test(bar) && !/'SELF-LIKE'/.test(bar),
+  'the stored category may say self-like; nothing a person READS may');
+step('(e2) the pointer sends people to YOU on the map, not to a Self-like part',
+  /Tap YOU on your map/.test(bar));
+step('(e2) the map diamond is labelled YOU',
+  /label="YOU"/.test(fs.readFileSync(path.join(NATIVE, 'components', 'map', 'InnerMapCanvas.tsx'), 'utf8')));
+step('(e2) the stored category is UNTOUCHED — the database keeps its name',
+  /'self-like'/.test(bar),
+  'renaming the category would orphan every existing row');
 
 // ===== (f) COPY-ONLY: the gate itself is untouched ========================
 // The risk in a copy fix is quietly changing who sees the modal.

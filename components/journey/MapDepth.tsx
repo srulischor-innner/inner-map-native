@@ -77,7 +77,7 @@ const PARTS: PartConfig[] = [
   },
   {
     key: 'self-like',
-    name: 'Self-Like',
+    name: 'You',
     color: '#A090C0',
     sections: [
       { field: 'what-it-built', label: 'What it built' },

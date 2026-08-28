@@ -39,6 +39,7 @@ import type { BudgetRefusal } from '../../services/api';
 import { getTopUpProduct, purchase } from '../../services/purchases';
 import { BudgetRefusalSheet } from '../billing/BudgetRefusalSheet';
 import { renderInlineMarkdown } from '../../utils/inlineMarkdown';
+import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
 
 // Per-word reveal cadence — same value as the regular Chat tab so the
 // two surfaces feel identical to the eye. See app/(tabs)/index.tsx.
@@ -82,6 +83,11 @@ export function GuideAskModal({ visible, onClose }: Props) {
   // STOP button + the stop-on-close abort.
   const [streaming, setStreaming] = useState(false);
   const [recording, setRecording] = useState(false);
+  // Screen-sleep lock — held for exactly as long as the take is live, so
+  // auto-lock cannot pause the recorder underneath us. Release is structural
+  // (see utils/recordingWakeLock.ts): every stop path and every unmount.
+  useRecordingWakeLock(recording, WAKE_TAG.guideAsk);
+
   const [transcribing, setTranscribing] = useState(false);
   // Budget cap (payments 3f). /api/guide-chat draws on the SAME measured-cost
   // pool as the main chat and refuses with the same server-authored payload

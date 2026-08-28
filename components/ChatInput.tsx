@@ -106,6 +106,7 @@ import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
 import { colors, fonts, spacing } from '../constants/theme';
 import { ensureRecordingMode } from '../utils/ttsStream';
 import { useRecorderWatch } from '../utils/recorderWatch';
+import { useRecordingWakeLock, WAKE_TAG } from '../utils/recordingWakeLock';
 
 export function ChatInput({
   disabled,
@@ -149,6 +150,11 @@ export function ChatInput({
     onPrefillConsumed?.();
   }, [prefillText, onPrefillConsumed]);
   const [recording, setRecording] = useState(false);
+  // Screen-sleep lock — held for exactly as long as the take is live, so
+  // auto-lock cannot pause the recorder underneath us. Release is structural
+  // (see utils/recordingWakeLock.ts): every stop path and every unmount.
+  useRecordingWakeLock(recording, WAKE_TAG.chat);
+
   const [seconds, setSeconds] = useState(0);
   // Multi-line auto-expand (beta fix, July 2026), forked per platform:
   // ANDROID — intrinsic multiline growth is unreliable under Fabric (the

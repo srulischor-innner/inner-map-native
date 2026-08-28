@@ -40,6 +40,7 @@ import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
 import { JournalKind, getJournalShareDefault } from '../../services/journal';
 import { useRecorderWatch } from '../../utils/recorderWatch';
+import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
 
 const FREE_FLOW_GUIDANCE = [
   'This works best when you bypass your inner editor entirely — the part of you that shapes what you say before you say it.',
@@ -75,6 +76,11 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
+  // Screen-sleep lock — held for exactly as long as the take is live, so
+  // auto-lock cannot pause the recorder underneath us. Release is structural
+  // (see utils/recordingWakeLock.ts): every stop path and every unmount.
+  useRecordingWakeLock(recording, WAKE_TAG.journal);
+
   const [transcribing, setTranscribing] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [saving, setSaving] = useState(false);

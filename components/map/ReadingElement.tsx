@@ -1,28 +1,42 @@
 // ============================================================================
-// THE READING ELEMENT — Map tab (cycle 3, founder ruling 2026-08-21k).
+// THE READING ELEMENT — Map tab.
 //
-// REUSES THE SELF-LIKE PATTERN, deliberately. This is not a card, not an inbox
-// item, not a banner. It is an element that sits on the map and does not click
-// — stating plainly what unlocks it — until the map qualifies, at which point
-// it becomes clickable. Becoming clickable is most of the message.
+// FOLLOWS THE SELF-LIKE MIC PATTERN EXACTLY (founder ruling 2026-08-27). Not a
+// card, not a banner. A glyph with a label under it, sitting on the map: dim
+// and cream when locked, amber and lit when open — the same grammar as the
+// mic row a thumb's width below it, so people learn ONE pattern rather than
+// two. Becoming lit is most of the message.
 //
-// No counters. No percentages. No progress bar. No "3 of 5". The person is
-// never shown a distance to travel.
+// It replaced a bordered, tinted card that was three faults at once: oversized,
+// sitting over the wound (the most loaded thing on the map), and never naming
+// itself — its title stated an unlock condition, so a person could look at it
+// and still not know a reading existed.
 //
-// THREE THINGS GATE IT, and the device decides none of them:
+// TAPPABLE WHILE LOCKED. Exactly like the Self-like mic: the lock is a
+// DESIGNED state, not unbuilt software, and it explains itself when touched.
+// Inert means it does not produce a reading — never that it ignores you. (An
+// element that visibly does nothing when tapped also reads as broken UI under
+// App Store Guideline 2.1, the same reasoning that rewrote the mic's copy.)
+//
+// TWO THINGS GATE IT, and the device decides neither:
 //   1. eligibility  — wound belief + both poles + 3 filled protectors, computed
-//                     server-side (GET /api/reading returns it).
-//   2. deliveryGate — the product-level hold: no reading reaches ANY user until
-//                     one real PART_NAMED capture has fired somewhere. Until
-//                     then this element renders locked even for a qualifying
-//                     map, because the whole THEIR-NAMES chain has only ever
-//                     run on a backfilled row.
-//   3. the server   — an old server (no /api/reading) returns null and the
+//                     server-side (GET /api/reading returns it, in full).
+//   2. the server   — an old server (no /api/reading) returns null and the
 //                     element renders NOTHING at all, so a client that ships
 //                     ahead of its server is silent rather than broken.
 //
-// GENERATION takes 50–60 seconds. The waiting state is the element itself:
-// it breathes, and a single line advances on its own timing — never looping,
+// A third gate used to sit above both: a product-level hold that kept the
+// reading shut for EVERY user until one real PART_NAMED capture had fired
+// somewhere. It was removed on 2026-08-27 — it had never once opened, so it
+// could not tell an untested capture path from a broken one while holding a
+// finished feature shut. Delivery rests on eligibility alone now.
+//
+// THE LOCKED CARD SPEAKS FROM THIS MAP, not from the rulebook. It leads with
+// what a reading is (the person has never seen one) and then names which
+// pieces are on their map and which are not — see utils/readingCopy.ts.
+//
+// GENERATION takes 50–60 seconds. The waiting state is the element itself: it
+// breathes, and a single line advances on its own timing — never looping,
 // holding on the last line so a slow generation never reads as a stuck timer.
 // Leaving the screen is safe: the row is already 'generating' server-side and
 // the reading finishes whether or not anyone watches.
@@ -36,16 +50,18 @@
 // a device with a wrong clock must not get a vote on it).
 // ============================================================================
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing, cancelAnimation,
 } from 'react-native-reanimated';
 import { api } from '../../services/api';
+import { colors, fonts, spacing } from '../../constants/theme';
 import {
-  READING_LOCKED_TITLE, READING_LOCKED_BODY,
-  READING_UNLOCKED_TITLE, READING_UNLOCKED_BODY,
-  READING_WAITING_LINES,
+  READING_LABEL, READING_LEAD, readingWaitingLine, type ReadingEligibility,
+  READING_LOCKED_TITLE,
+  READING_UNLOCKED_TITLE, READING_UNLOCKED_SUB,
+  READING_WAITING_LINES, READING_GOT_IT,
   READING_ERROR_TITLE, READING_ERROR_BODY, READING_ERROR_ACTION,
 } from '../../utils/readingCopy';
 
@@ -56,6 +72,10 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
   const [body, setBody] = useState<string | null>(null);
   const [createdAt, setCreatedAt] = useState<string | undefined>(undefined);
   const [lineIdx, setLineIdx] = useState(0);
+  // The gate as the SERVER described it, kept so the locked card can speak
+  // about this map rather than about the rule. Never recomputed on device.
+  const [eligibility, setEligibility] = useState<ReadingEligibility | null>(null);
+  const [explaining, setExplaining] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lineRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alive = useRef(true);
@@ -68,6 +88,7 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
     if (!alive.current) return;
     // An old server, or any failure: render nothing rather than guess.
     if (!r) { setPhase('hidden'); return; }
+    if (r.eligibility) setEligibility(r.eligibility);
     if (r.exists && r.status === 'ready' && r.body) {
       setBody(r.body);
       setCreatedAt(r.createdAt);
@@ -80,11 +101,11 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
       return;
     }
     if (r.exists && r.status === 'generating') { setPhase('generating'); return; }
-    // The delivery gate outranks eligibility: a qualifying map still reads
-    // locked until one live capture has happened somewhere.
-    const gateReady = r.deliveryGate ? r.deliveryGate.ready : false;
+    // Eligibility alone decides now. The product-level live-capture gate that
+    // used to outrank it was removed server-side (2026-08-27); an older server
+    // that still sends deliveryGate is simply ignored, never re-honoured.
     const eligible = r.eligibility ? r.eligibility.eligible : false;
-    setPhase(eligible && gateReady ? 'ready' : 'locked');
+    setPhase(eligible ? 'ready' : 'locked');
   }, []);
 
   useEffect(() => {
@@ -128,12 +149,18 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
   }, [phase, refresh, breath]);
 
   const onPress = useCallback(async () => {
+    // Locked: explain. This is the Self-like mic's behaviour exactly — the
+    // tap is answered, it just does not produce a reading.
+    if (phase === 'locked') {
+      Haptics.selectionAsync().catch(() => {});
+      setExplaining(true);
+      return;
+    }
     if (phase === 'has-reading' && body) {
       Haptics.selectionAsync().catch(() => {});
       onOpen(body, createdAt);
       return;
     }
-    // 'error' retries; 'locked' taps do nothing but explain.
     if (phase !== 'ready' && phase !== 'error') return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     setLineIdx(0);
@@ -152,76 +179,164 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
   const locked = phase === 'locked';
   const generating = phase === 'generating';
   const failed = phase === 'error';
-  const title = locked ? READING_LOCKED_TITLE
-    : generating ? READING_WAITING_LINES[lineIdx]?.text ?? READING_WAITING_LINES[0].text
+
+  // The line under the label. Locked says nothing here — the whole point of
+  // the small element is that it does not explain itself in place; it names
+  // itself and holds the explanation behind a tap.
+  const sub = generating
+    ? READING_WAITING_LINES[lineIdx]?.text ?? READING_WAITING_LINES[0].text
     : failed ? READING_ERROR_TITLE
+    : locked ? null
+    : READING_UNLOCKED_SUB;
+
+  const a11y = locked
+    ? `${READING_LOCKED_TITLE} — locked. Tap to hear what it needs.`
+    : failed ? `${READING_ERROR_TITLE}. ${READING_ERROR_ACTION}`
+    : generating ? 'Writing your reading'
     : READING_UNLOCKED_TITLE;
-  const sub = locked ? READING_LOCKED_BODY
-    : generating ? null
-    : failed ? READING_ERROR_BODY
-    : READING_UNLOCKED_BODY;
 
   const Inner = (
-    <View style={[styles.card, locked && styles.cardLocked, failed && styles.cardFailed]}>
-      <View style={styles.row}>
-        <Text style={[styles.title, locked && styles.titleLocked, failed && styles.titleFailed]}>{title}</Text>
-        {generating ? <ActivityIndicator size="small" color="rgba(230,180,122,0.5)" /> : null}
+    <View style={styles.wrap}>
+      <Text style={[styles.glyph, locked && styles.glyphLocked, failed && styles.glyphFailed]}>◎</Text>
+      <View style={styles.labelRow}>
+        <Text style={[styles.label, locked && styles.labelLocked, failed && styles.labelFailed]}>
+          {READING_LABEL}
+        </Text>
+        {generating ? <ActivityIndicator size="small" color={colors.amber} /> : null}
       </View>
-      {sub ? <Text style={[styles.body, locked && styles.bodyLocked]}>{sub}</Text> : null}
+      {sub ? (
+        <Text style={[styles.sub, failed && styles.subFailed]} numberOfLines={2}>{sub}</Text>
+      ) : null}
       {failed ? <Text style={styles.retry}>{READING_ERROR_ACTION}</Text> : null}
     </View>
   );
 
-  if (generating) {
-    return <Animated.View style={breathStyle} accessibilityLabel="Writing your reading">{Inner}</Animated.View>;
-  }
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={locked}
-      accessibilityRole={locked ? undefined : 'button'}
-      accessibilityLabel={locked ? READING_LOCKED_TITLE
-        : failed ? READING_ERROR_TITLE + '. ' + READING_ERROR_ACTION
-        : READING_UNLOCKED_TITLE}
-      style={({ pressed }) => [pressed && !locked ? styles.pressed : null]}
-    >
-      {Inner}
-    </Pressable>
+    <>
+      {generating ? (
+        <Animated.View style={[styles.col, breathStyle]} accessibilityLabel={a11y}>{Inner}</Animated.View>
+      ) : (
+        <Pressable
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={a11y}
+          style={({ pressed }) => [styles.col, locked && styles.colLocked, pressed && styles.pressed]}
+        >
+          {Inner}
+        </Pressable>
+      )}
+
+      {/* The locked explanation. Same card the Self-like mic lock uses —
+          centred, serif, one GOT IT — because it is the same kind of moment
+          and should not feel like a different app. Copy leads with what a
+          reading IS and then names what THIS map is missing. */}
+      <Modal
+        visible={explaining}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setExplaining(false)}
+        statusBarTranslucent
+      >
+        <Pressable style={styles.backdrop} onPress={() => setExplaining(false)}>
+          <Pressable style={styles.card} onPress={() => {}}>
+            <Text style={styles.cardTitle}>{READING_LOCKED_TITLE}</Text>
+            <Text style={styles.cardBody}>{READING_LEAD}</Text>
+            <Text style={[styles.cardBody, styles.cardBodyLast]}>{readingWaitingLine(eligibility)}</Text>
+            <Pressable onPress={() => setExplaining(false)} style={styles.gotItBtn}>
+              <Text style={styles.gotItText}>{READING_GOT_IT}</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
+// Visual grammar borrowed wholesale from MapVoiceBar's mic column: glyph over
+// an uppercase tracked label, amber when live, creamFaint at 0.4 opacity when
+// locked. It takes the mic's LABEL treatment rather than its 60px circle — a
+// mic-sized button here would repeat the size problem this element was
+// rebuilt to fix.
 const styles = StyleSheet.create({
-  card: {
-    marginHorizontal: 20,
-    marginTop: 18,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(230,180,122,0.28)',
-    backgroundColor: 'rgba(230,180,122,0.05)',
-  },
-  cardLocked: {
-    borderColor: 'rgba(255,255,255,0.10)',
-    backgroundColor: 'rgba(255,255,255,0.02)',
-  },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { color: 'rgba(230,180,122,0.92)', fontSize: 15, letterSpacing: 0.2, flexShrink: 1 },
-  titleLocked: { color: 'rgba(255,255,255,0.42)' },
-  body: { color: 'rgba(255,255,255,0.55)', fontSize: 13, lineHeight: 19, marginTop: 6 },
-  bodyLocked: { color: 'rgba(255,255,255,0.34)' },
-  // The failure card is quieter than the offer and warmer than locked: it is
-  // not an alarm, and it is not a dead element either.
-  cardFailed: {
-    borderColor: 'rgba(255,255,255,0.14)',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-  },
-  titleFailed: { color: 'rgba(255,255,255,0.70)' },
-  retry: {
-    color: 'rgba(230,180,122,0.92)',
-    fontSize: 13,
-    letterSpacing: 0.3,
-    marginTop: 10,
-  },
+  col: { alignItems: 'center', paddingVertical: 6 },
+  colLocked: { opacity: 0.4 },
   pressed: { opacity: 0.7 },
+  wrap: { alignItems: 'center' },
+  glyph: {
+    color: colors.amber,
+    fontSize: 13,
+    marginBottom: 4,
+    letterSpacing: 0.5,
+    textShadowColor: colors.amber,
+    textShadowRadius: 10,
+  },
+  glyphLocked: { color: colors.creamFaint, textShadowRadius: 0 },
+  glyphFailed: { color: colors.cream, textShadowRadius: 0 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  label: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 10,
+    letterSpacing: 1.4,
+  },
+  labelLocked: { color: colors.creamFaint },
+  labelFailed: { color: colors.cream },
+  sub: {
+    color: 'rgba(240,237,232,0.55)',
+    fontFamily: fonts.serif,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+    textAlign: 'center',
+    paddingHorizontal: 24,
+  },
+  subFailed: { color: 'rgba(240,237,232,0.7)' },
+  retry: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 10,
+    letterSpacing: 1.4,
+    marginTop: 6,
+  },
+
+  // ---- the explanation card (mirrors MapVoiceBar's lock card) ----
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#0e0e1a',
+    borderRadius: 20,
+    padding: spacing.lg,
+    borderWidth: 0.5,
+    borderColor: 'rgba(230,180,122,0.25)',
+  },
+  cardTitle: {
+    color: colors.amber,
+    fontFamily: fonts.serifBold,
+    fontSize: 22,
+    lineHeight: 28,
+    marginBottom: spacing.md,
+    textAlign: 'center',
+  },
+  cardBody: {
+    color: colors.cream,
+    fontFamily: fonts.serif,
+    fontSize: 16,
+    lineHeight: 24,
+    marginBottom: spacing.md,
+  },
+  cardBodyLast: { marginBottom: spacing.sm },
+  gotItBtn: { alignSelf: 'center', paddingVertical: spacing.sm, paddingHorizontal: spacing.lg },
+  gotItText: {
+    color: colors.amber,
+    fontFamily: fonts.sansBold,
+    fontSize: 12,
+    letterSpacing: 1.6,
+  },
 });

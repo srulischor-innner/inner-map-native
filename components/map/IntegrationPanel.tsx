@@ -39,7 +39,7 @@ const META: Record<IntegrationKey, { title: string; color: string; body: string 
       "The wisdom, freed from withdrawal. Still discerns — now in service of genuine judgment rather than self-protection. The part that knew something was wrong and refused to pretend otherwise becomes the part that knows what is true and can say so.",
   },
   'self-like': {
-    title: 'Self-Like',
+    title: 'You',
     color: '#A090C0',
     body:
       "Still present. Transparent now. The part that was managing and controlling — open rather than clenched — becomes the bridge between your inner world and everything outside it. Da'at serving connection rather than defense. The ego not gone. Just no longer in the way.",

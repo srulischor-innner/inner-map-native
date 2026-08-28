@@ -96,16 +96,17 @@ const META: Record<NodeKey, Meta> = {
       'The center of the system. No agenda, no fear. Genuine curiosity, warmth, presence.',
   },
   'self-like': {
-    title: 'The Self-Like Part',
+    title: 'You',
     color: '#8A7AAA',
-    subtitle: 'The architect of your actual life',
+    subtitle: 'The one who receives, and chooses',
     // Reframed (June 2026) — two-beat framing: (1) honor what it built and
     // how well, then (2) name the new possibility — leading from its own
     // ground (the belief, separate from the parts) rather than being run by
     // the loudest part. Two paragraphs joined by a blank line.
     description:
-      'The part that navigates between your fixer and skeptic. It built your career, your relationships, the rhythms of your life — finding ways to feel okay within the system. It has done this brilliantly, for your whole life.\n\n' +
-      "And it's the part that can do something new: stop being run by whichever part is loudest, and lead. To stand on its own ground — what you believe, separate from what your parts believe — and hold it.",
+      'You are the one all of this arrives at. You navigated between your fixer and your skeptic and built your career, your relationships, the rhythms of your life — finding ways to feel okay inside the system. You have done this brilliantly, for your whole life.\n\n' +
+      "You don't choose which part speaks up — the system does that. What you choose is your relationship to what arrives. That's what changes: instead of being run by whichever part is loudest, you stand on ground of your own — what you believe, separate from what your parts believe — and lead from there.\n\n" +
+      "You and Self are not the same thing. You is the one who receives and chooses; Self is what there is to receive from — always there underneath, and reachable once you can let a part go.",
   },
   manager: {
     title: 'Managers',
@@ -345,11 +346,11 @@ export function PartFolderModal({
           <Text style={styles.description}>{meta.description}</Text>
 
           {/* User's articulated belief — the single belief that
-              activates Self-like voice across the whole map (round 9
-              correction). Renders ONLY inside the Self-like part
+              activates the leading voice across the whole map (round 9
+              correction). Renders ONLY inside the You (self-like) part
               folder. Doesn't require a part.id — the empty-state
               "Establish your belief" button routes to chat, and the
-              server saves on the Self-like row via the SAVE_BELIEF
+              server saves on the self-like row via the SAVE_BELIEF
               marker (it tolerates the row not existing yet by
               creating one when the user has at least begun mapping). */}
           {BELIEF_PART_TYPES.has(String(partKey)) ? (
@@ -504,7 +505,7 @@ function BeliefSection({ part, color, onClose }: { part: any; color: string; onC
     if (!part?.id) return;
     Alert.alert(
       'Clear belief?',
-      'This will remove the belief you saved. The Self-like voice will be unavailable until you establish a new belief.',
+      'This will remove the belief you saved. The leading voice will be unavailable until you establish a new belief.',
       [
         { text: 'Cancel', style: 'cancel' },
         {

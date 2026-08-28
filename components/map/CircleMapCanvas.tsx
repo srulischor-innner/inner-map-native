@@ -76,7 +76,7 @@ const LABEL: Record<IntegrationKey, string> = {
   skeptic: 'Skeptic',
   manager: 'Managers',
   firefighter: 'Firefighters',
-  'self-like': 'Self-Like',
+  'self-like': 'You',
   self: 'Self',
 };
 

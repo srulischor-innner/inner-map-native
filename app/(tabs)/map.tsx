@@ -17,7 +17,6 @@ import { colors, fonts } from '../../constants/theme';
 import { api } from '../../services/api';
 import { computeMapGeometry, MapGeometry } from '../../utils/mapLayout';
 import { InnerMapCanvas, NodeKey } from '../../components/map/InnerMapCanvas';
-import { BeliefGround } from '../../components/map/BeliefGround';
 import { ReadingElement } from '../../components/map/ReadingElement';
 import { ReadingModal } from '../../components/map/ReadingModal';
 import { PartFolderModal } from '../../components/map/PartFolderModal';
@@ -298,26 +297,16 @@ export default function MapScreen() {
     };
   }, [mapData, layers, currentLayerIndex]);
 
-  // ===== THE BELIEF (what the user stands on) =====
-  // parts.belief on the canonical self-like row. This is NOT markerFields.belief
-  // (the WOUND's core belief, "I'm not enough") — it's the single self-belief
-  // the user articulated, one per account, and the only thing on this map that
-  // belongs to the person rather than to a part. It already rides in on the
-  // /api/parts payload we fetch above, so surfacing it costs no new request.
-  const selfBelief = useMemo(() => {
-    const row = parts.find(
-      (p: any) => String(p?.category || '').toLowerCase().trim() === 'self-like',
-    );
-    const b = row?.belief;
-    return typeof b === 'string' && b.trim() ? b.trim() : null;
-  }, [parts]);
-
-  // Live-update the canvas when the belief changes while this tab stays
-  // mounted. Two paths emit on the belief bus after their server write lands:
-  // the Self-like folder's editor (save AND clear — the user is standing on
-  // this very screen, so nothing would otherwise re-fetch) and the SAVE_BELIEF
-  // marker in the chat flow (Map tab never re-mounts on a tab switch). We
-  // re-fetch rather than trust a payload — same contract MapVoiceBar uses.
+  // Re-fetch parts when the belief changes while this tab stays mounted. Two
+  // paths emit on the belief bus after their server write lands: the Self-like
+  // folder's editor (save AND clear) and the SAVE_BELIEF marker in the chat
+  // flow (Map tab never re-mounts on a tab switch).
+  //
+  // The belief no longer renders on this screen — the front band was removed
+  // 2026-08-27 and "what you stand on" lives in the Self-like folder now. This
+  // stays because the FIRST save can CREATE the canonical self-like row, and
+  // without a re-fetch the diamond that leads to the folder would not appear
+  // until the tab re-mounted.
   useEffect(
     () =>
       subscribeBeliefChanged(() => {
@@ -344,7 +333,6 @@ export default function MapScreen() {
   const [micBarTopW, setMicBarTopW] = useState<number | null>(null);
   const canvasWrapRef = useRef<View>(null);
   const MIC_CLEARANCE = 12; // breathing gap between diamond and mic stack
-  const BELIEF_GAP = 10;    // breathing gap between the SELF-LIKE label and the ground line
 
   // The mic bar's top edge in canvasWrap-LOCAL coordinates. Both inputs are
   // window measurements, so this already accounts for safe-area insets, the
@@ -356,20 +344,13 @@ export default function MapScreen() {
     return Number.isFinite(y) ? y : null;
   }, [canvasTopW, micBarTopW]);
 
-  // ===== BELIEF GROUND RESERVATION =====
-  // The belief band sits in the strip between the bottom of the map geometry
-  // and the mic clearance — i.e. ABOVE micTopLocal, so it can never collide
-  // with the mics, the integration toggle (bottom: 14) or the layer dots
-  // (bottom: 18), all of which live below that line. We reserve its MEASURED
-  // height (see BeliefGround's onMeasure) rather than a fixed worst case, so a
-  // one-line belief doesn't cost the map the same 3-line budget as a long one.
-  const [beliefBandH, setBeliefBandH] = useState(0);
-  // Show the ground only once there's a map to stand on. A user with nothing
-  // mapped is being asked "start building", not "what do you stand on" — and
-  // the START BUILDING CTA occupies this same lower region.
-  const showBeliefGround = loadStatus === 'loaded' && (layers.length > 0 || !!mapData?.wound);
-  const beliefReserve =
-    showBeliefGround && micTopLocal != null && beliefBandH > 0 ? beliefBandH + BELIEF_GAP : 0;
+  // ===== THE FREED STRIP =====
+  // The band between the bottom of the map geometry and the mic clearance used
+  // to hold the belief ground, and the geometry above it gave up height to
+  // make room. Both are gone (founder ruling 2026-08-27): "what you stand on"
+  // moved into the Self-like folder, reached by the diamond on the triangle.
+  // The map now gets that height back, and the strip is where the reading
+  // element is going to live.
 
   const effectiveH = useMemo(() => {
     if (!size) return null;
@@ -378,17 +359,14 @@ export default function MapScreen() {
       const measured = micTopLocal - MIC_CLEARANCE;
       // Defensive clamp on the MEASUREMENT ONLY — a bogus value (tiny or past
       // the wrap's own bottom) falls back to the full canvas rather than
-      // collapsing the map. The belief reserve is subtracted AFTER this check
-      // on purpose: a legitimately tall band must never look like a bad
-      // measurement and bounce the map back to full height.
       if (measured >= size.h * 0.55 && measured < size.h) h = measured;
     }
     // Hard ceiling on what the band may take. Node radii are fixed while node
     // POSITIONS are proportional, so an unbounded reserve would eventually
     // stack the wound off the top of the canvas. 22% covers the worst
     // realistic band (3 lines at 1.4x font scaling) with room to spare.
-    return h - Math.min(beliefReserve, h * 0.22);
-  }, [size, micTopLocal, beliefReserve]);
+    return h;
+  }, [size, micTopLocal]);
 
   const geom: MapGeometry | null = size && effectiveH ? computeMapGeometry(size.w, effectiveH) : null;
 
@@ -693,14 +671,6 @@ export default function MapScreen() {
       {/* Persistent header — only in circle (integration) view. A single
           quiet line of italic copy that tells the user the parts are
           tappable. Hidden when the triangle view is active. */}
-      {/* The reading. Inert and explaining itself until the map qualifies
-          AND the delivery gate has opened; clickable after. Sits in the
-          header band rather than the triangle geometry so nothing about the
-          canvas layout depends on whether it is showing. */}
-      <ReadingElement
-        onOpen={(b, at) => { setReadingBody(b); setReadingAt(at); setReadingOpen(true); }}
-      />
-
       {view === 'circle' ? (
         <View pointerEvents="none">
           <Text style={styles.circleTitle}>Integrated Map</Text>
@@ -775,38 +745,34 @@ export default function MapScreen() {
           ) : null}
         </Animated.View>
 
-        {/* ===== THE BELIEF GROUND =====
-            The floor the triangle stands on. Deliberately OUTSIDE the slide
-            layer above: there is exactly one belief per account, so it must
-            not page away when the user swipes between wound layers — the
-            layers change, what the person stands on does not.
-            Bottom-anchored rather than top-anchored so its position never
-            depends on its own measured height; only the geometry ABOVE it
-            reacts to that measurement, which keeps the first-frame settle to
-            a single silent reflow instead of a visible jump.
-            Fades with triangleOpacity so toggling into the integration view
-            hides it without changing effectiveH — if it unmounted there, the
-            whole triangle would re-scale mid-cross-fade. */}
-        {size && micTopLocal != null && showBeliefGround ? (
-          <Animated.View
-            style={[
-              styles.beliefGroundWrap,
-              { bottom: Math.max(0, size.h - micTopLocal + MIC_CLEARANCE), opacity: triangleOpacity },
-            ]}
-            pointerEvents={view === 'triangle' ? 'box-none' : 'none'}
+        {/* ===== THE READING, IN THE FREED STRIP =====
+            The band between the bottom of the map geometry and the mic
+            clearance — vacated when the belief ground moved into the You
+            folder (founder ruling 2026-08-27).
+
+            It sits DIRECTLY ABOVE the mic row on purpose: it borrows that row's
+            visual grammar (glyph over a tracked uppercase label, cream when
+            locked, amber when live), and putting it anywhere else would make
+            two things that behave identically look unrelated.
+
+            Outside the slide layer, like the belief band before it: there is
+            one reading per account, so it must not page away when the user
+            swipes between wound layers. Bottom-anchored, so its position never
+            depends on its own height and the map geometry above it no longer
+            has to reserve anything.
+
+            Visible in BOTH views, unlike the band it replaced — that was
+            literally the floor the triangle stood on, whereas a reading of the
+            whole map is no less true in the integration view. */}
+        {size && micTopLocal != null ? (
+          <View
+            style={[styles.readingStripWrap, { bottom: Math.max(0, size.h - micTopLocal + MIC_CLEARANCE) }]}
+            pointerEvents="box-none"
           >
-            <BeliefGround
-              belief={selfBelief}
-              width={size.w}
-              onMeasure={setBeliefBandH}
-              // Routes to the Self-like folder, where BeliefSection is the
-              // first section — establish / edit / clear all live there, and
-              // the full untruncated text is visible. handleTap also springs
-              // the self-like diamond, which quietly teaches WHERE the belief
-              // is kept (the same place the mic's fallback toast points to).
-              onPress={() => handleTap('self-like')}
+            <ReadingElement
+              onOpen={(b, at) => { setReadingBody(b); setReadingAt(at); setReadingOpen(true); }}
             />
-          </Animated.View>
+          </View>
         ) : null}
 
         {/* Empty / error overlays — sit above the (faint) triangle when no
@@ -1027,14 +993,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  // Belief ground — full-bleed band pinned above the mic clearance. No height
-  // here on purpose: the band sizes to its own content and reports that height
-  // back so the map geometry can reserve exactly it. `bottom` is supplied
-  // inline from the measured mic-bar position.
-  beliefGroundWrap: {
+  // The reading element's strip — full-bleed, pinned above the mic clearance.
+  // No height: the element sizes to its own content, and nothing reserves
+  // space for it (the geometry above is no longer height-coupled to this band,
+  // which is the whole point of having removed the belief reservation).
+  readingStripWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
+    alignItems: 'center',
   },
 
   // Dot indicators for layer count, centered above the YOUR PROGRESS strip.

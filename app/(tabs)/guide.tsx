@@ -324,7 +324,7 @@ function FeatureCard({ feature }: { feature: GuideFeature }) {
   // Small iconography for each feature. Keeps the visual hierarchy consistent with
   // the amber left-border card style used across the app.
   // Ionicons keyed off the variant. self / self-like mirror the visual
-  // shorthand the Map tab itself uses (● for Self, ◆ for Self-like) so
+  // shorthand the Map tab itself uses (● for Self, ◆ for You) so
   // the card icons reinforce the in-app affordance. partner = heart,
   // journal = book, journey = trending line.
   const iconName: Record<GuideFeature['icon'], keyof typeof Ionicons.glyphMap> = {
