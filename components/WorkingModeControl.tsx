@@ -39,17 +39,20 @@ export type WorkingMode = 'light' | 'process' | 'explore' | 'differentiation';
 // here because the row describes what IS happening; the opening question uses
 // the imperative because it asks what they WANT.
 export const MODE_LABEL: Record<WorkingMode, string> = {
-  light: 'Putting it down',
+  light: 'Saying it',
   process: 'Sitting with it',
   explore: 'Understanding it',
-  differentiation: 'Taking it apart',
+  differentiation: 'Leading it',
 };
 
 const MODE_BLURB: Record<WorkingMode, string> = {
   light: 'You talk, I listen. Nothing gets pulled apart, nothing gets mapped at you.',
   process: 'Staying with what is already here — in the body, without going anywhere.',
   explore: 'The pattern. What the parts are, what they protect, what sits underneath.',
-  differentiation: 'One belief at a time: where it came from, and whether it actually holds.',
+  // "Leading it" is the YOU framework's word, not a description of technique:
+  // the belief stops driving and you do. The blurb has to carry that, or the
+  // label reads as "leading the conversation", which is not what it means.
+  differentiation: 'Standing somewhere else with a belief — where it came from, whether it holds.',
 };
 
 // Order matters: lightest to deepest, left as a vertical list so the movement
