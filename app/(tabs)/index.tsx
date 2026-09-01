@@ -153,8 +153,7 @@ const STANDARD_OPENER =
   // person asked anyway. That is ignorance, not absence — so the app says it.
   // The other three placements are the control's own label, the sheet's
   // footnote, and the end of the first reply.
-  "However we start, you can change it whenever you like — slower, lighter, " +
-  "deeper. Just say so.";
+  "You can change how we work at any point — just say so.";
 
 // THE ONLY OPENER SELECTOR IN THIS FILE. Four call sites place an opening
 // bubble — boot (Process), the Explore seed effect, the End Session reset and
@@ -252,10 +251,13 @@ export default function ChatScreen() {
   //
   // Light is the default, per founder ruling. First-session routing is
   // untouched: FIRST_SESSION_PROMPT still overrides mode entirely server-side.
-  const [workingMode, setWorkingMode] = useState<WorkingMode>('light');
+  // DEFAULT IS "Understanding it" (founder ruling 2026-09-01, after using it).
+  // Mapping is what the app is. Someone who wants lighter has a visible control
+  // at the top of the screen and a line telling them they can just say so.
+  const [workingMode, setWorkingMode] = useState<WorkingMode>('explore');
   // Mirrored into a ref for the same reason chatModeRef had one: a turn that
   // starts now must read the mode as it is now, not through a stale closure.
-  const workingModeRef = useRef<WorkingMode>('light');
+  const workingModeRef = useRef<WorkingMode>('explore');
   useEffect(() => { workingModeRef.current = workingMode; }, [workingMode]);
 
   // THE BRIDGE IS GONE FROM THE STATE MACHINE. workingMode is the only axis the
@@ -1834,6 +1836,24 @@ export default function ChatScreen() {
           AttentionIndicator triangle owns the slot during generation, the
           part-confidence ring owns it the rest of the time — and neither ever
           depended on which mode was active. So the bar stays, minus the pills. */}
+      {/* MODE LIVES AT THE TOP (founder ruling 2026-09-01). It is a STATE, not
+          an action: it says what is happening right now, and a state belongs
+          where you look to find out, not where your thumb rests to act. It
+          was above the input for one build; using it made the case. */}
+      {firstSessionPending === true ? null : (
+        <WorkingModeControl
+          mode={workingMode}
+          disabled={sending}
+          onChange={(next) => {
+            // Changing how we work does not touch the conversation, the session
+            // id, or the scroll position — see handleModeChange. The ref is set
+            // synchronously so a turn started in the same tick reads the new mode.
+            workingModeRef.current = next;
+            setWorkingMode(next);
+            handleModeChange(wireModeFor(next));
+          }}
+        />
+      )}
       <View style={styles.indicatorBar}>
         {isGenerating ? (
           <AttentionIndicator />
@@ -1952,21 +1972,6 @@ export default function ChatScreen() {
                 arc is server-routed through FIRST_SESSION_PROMPT regardless of
                 mode, so offering a choice there would be offering one that
                 does nothing. */}
-            {firstSessionPending === true ? null : (
-              <WorkingModeControl
-                mode={workingMode}
-                disabled={sending}
-                onChange={(next) => {
-                  // The whole handler. Changing how we work does not touch the
-                  // conversation, the session id, or the scroll position — see
-                  // the note on handleModeChange. The ref is set synchronously
-                  // so a turn started in the same tick reads the new mode.
-                  workingModeRef.current = next;
-                  setWorkingMode(next);
-                  handleModeChange(wireModeFor(next));
-                }}
-              />
-            )}
             <ChatInput
               disabled={sending}
               streaming={sending}
@@ -2126,9 +2131,9 @@ export default function ChatScreen() {
               // The new session opens in the DEFAULT working mode, which is
               // Light — not Explore. Ending a session and starting another
               // should not silently put someone into active mapping.
-              setWorkingMode('light');
-              setChatMode('process');
-              chatModeRef.current = 'process';
+              setWorkingMode('explore');
+              setChatMode('explore');
+              chatModeRef.current = 'explore';
               setMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
               historyRef.current = [{ role: 'assistant', content: greeting }];
               scrollToBottom();

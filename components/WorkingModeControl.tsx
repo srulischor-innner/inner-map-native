@@ -1,4 +1,4 @@
-// HOW WE'RE WORKING — the always-available control, above the input.
+// MODE — the always-available control, at the top of the screen.
 //
 // This is the load-bearing piece of the four-mode design, and the reason is
 // measurement rather than taste. Across 5,489 real user turns, requests to work
@@ -9,17 +9,18 @@
 //
 // So the control is LABELLED WITH THE CURRENT STATE, never a bare icon:
 //
-//     How we're working:  Sitting with it  ▾
+//     Mode:  Sitting with it  ▾
 //
 // A hidden icon teaches nothing. A row that says what is happening right now
 // teaches that modes exist, that this one is chosen, and that it can be
 // changed — to someone who never reads a word of onboarding. The label doing
 // double duty as the affordance is the whole design.
 //
-// WHY IT LIVES HERE AND NOT IN ChatModeToggle. The old two-pill toggle sits at
-// the TOP of the screen, above the transcript. It is a header. This is a
-// control you reach for mid-conversation, so it belongs where the hand already
-// is — directly above the input, in the dock.
+// WHERE IT LIVES. At the top, above the transcript, where the two-pill toggle
+// used to be. It spent exactly one build above the input, on the theory that a
+// control is reached for mid-conversation; using it settled the question the
+// other way. Mode is a STATE — it says what is happening right now — and a
+// state belongs where you look to find out, not where your thumb rests to act.
 //
 // It carries no timing risk at all, which is what makes it worth building
 // first: the fork has to choose a moment and can get it wrong; this one waits.
@@ -87,10 +88,10 @@ export function WorkingModeControl({ mode, onChange, disabled }: Props) {
         accessibilityRole="button"
         // The label is the whole point, so it is also the accessible name —
         // a screen-reader user gets the same teaching a sighted one does.
-        accessibilityLabel={`How we're working: ${MODE_LABEL[mode]}. Tap to change.`}
+        accessibilityLabel={`Mode: ${MODE_LABEL[mode]}. Tap to change.`}
         accessibilityHint="Opens the four ways we can work"
       >
-        <Text style={styles.rowLead}>How we're working: </Text>
+        <Text style={styles.rowLead}>Mode: </Text>
         <Text style={styles.rowValue}>{MODE_LABEL[mode]}</Text>
         <Text style={styles.caret}> ▾</Text>
       </Pressable>
