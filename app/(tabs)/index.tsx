@@ -75,6 +75,7 @@ import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { SessionSummaryModal, SessionSummary, DeepenedPart } from '../../components/session/SessionSummaryModal';
 import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
+import { WorkingModeControl, type WorkingMode } from '../../components/WorkingModeControl';
 import { ConversationStarters } from '../../components/ConversationStarters';
 import { EndSessionButton } from '../../components/EndSessionButton';
 import { CrisisResourcesCard } from '../../components/safety/CrisisResourcesCard';
@@ -216,6 +217,31 @@ export default function ChatScreen() {
   // re-initializes to 'explore' too — every fresh session starts
   // in the mode most likely to surface real map content.
   const [chatMode, setChatMode] = useState<ChatMode>('explore');
+
+  // FOUR-MODE STATE (dev, step 1 of the build). workingMode is what the person
+  // chose and what the labelled control above the input displays. chatMode is
+  // the legacy two-thread axis that still drives which transcript renders and
+  // which prompt the server picks.
+  //
+  // They are separate on purpose and only for now. The end state is ONE chat
+  // with four prompts, at which point the two-thread split and chatMode both
+  // go away and workingMode is the only axis. Collapsing the threads is a
+  // real refactor — resume locks, per-thread seeding, End Session reset — and
+  // doing it in the same step as the control would make a UI change and a
+  // state-machine change indistinguishable if something broke.
+  //
+  // Light is the default, per founder ruling. First-session routing is
+  // untouched: FIRST_SESSION_PROMPT still overrides mode entirely server-side.
+  const [workingMode, setWorkingMode] = useState<WorkingMode>('light');
+
+  // TEMPORARY BRIDGE, deleted in step 3. Light and Process both sit on the
+  // Process thread because neither builds the map actively; Explore and
+  // Differentiation both sit on the Explore thread because both do. Once the
+  // four prompts exist server-side this mapping is replaced by sending
+  // workingMode itself.
+  function chatModeFor(w: WorkingMode): ChatMode {
+    return w === 'explore' || w === 'differentiation' ? 'explore' : 'process';
+  }
   // chatModeRef mirrors chatMode so the thread helpers below can
   // resolve the active thread synchronously from any callback,
   // without relying on stale closures over the chatMode state.
@@ -1904,13 +1930,35 @@ export default function ChatScreen() {
             </Pressable>
           </ScrollView>
         ) : (
-          <ChatInput
-            disabled={sending}
-            streaming={sending}
-            onStop={stopStreaming}
-            onSend={handleSend}
-            onSendVoice={handleSendVoice}
-          />
+          <>
+            {/* THE ALWAYS-AVAILABLE CONTROL. Above the input, labelled with the
+                current state, so it teaches that modes exist to someone who
+                never opens onboarding. Hidden during the first session: that
+                arc is server-routed through FIRST_SESSION_PROMPT regardless of
+                mode, so offering a choice there would be offering one that
+                does nothing. */}
+            {firstSessionPending === true ? null : (
+              <WorkingModeControl
+                mode={workingMode}
+                disabled={sending}
+                onChange={(next) => {
+                  setWorkingMode(next);
+                  // Route through the existing handler so resume locks, thread
+                  // seeding and session-id resets all still run. It no-ops when
+                  // the legacy mode is unchanged (light <-> process).
+                  const legacy = chatModeFor(next);
+                  if (legacy !== chatModeRef.current) handleModeChange(legacy);
+                }}
+              />
+            )}
+            <ChatInput
+              disabled={sending}
+              streaming={sending}
+              onStop={stopStreaming}
+              onSend={handleSend}
+              onSendVoice={handleSendVoice}
+            />
+          </>
         )}
         {/* End session: only appears once a real back-and-forth has happened.
             On commit, flush the transcript to /api/summary + /api/sessions so
