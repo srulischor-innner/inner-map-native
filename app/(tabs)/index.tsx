@@ -1422,6 +1422,21 @@ export default function ChatScreen() {
               // markers; finishTurn(stopped=false) strips them normally.
               finishTurn(full || rawAccum, false);
             },
+            // THEY ASKED FOR DIFFERENT WORK AND THE SERVER OBEYED. All this
+            // does is move the label at the top so the state is visible if they
+            // look. Nothing is announced in the thread, and the transcript is
+            // untouched — from their side they asked for something and got it.
+            //
+            // Guarded to the four known modes: an unrecognised value from the
+            // wire must not put the control into a state it has no label for.
+            onModeSwitch: (mode) => {
+              const known: WorkingMode[] = ['light', 'process', 'explore', 'differentiation'];
+              if (!known.includes(mode as WorkingMode)) return;
+              workingModeRef.current = mode as WorkingMode;
+              setWorkingMode(mode as WorkingMode);
+              chatModeRef.current = wireModeFor(mode as WorkingMode);
+              setChatMode(wireModeFor(mode as WorkingMode));
+            },
             onMessageIds: (ids) => {
               // Round 9 RAG — stamp serverMessageId onto the most
               // recent user bubble (matched by being the last user

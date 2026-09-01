@@ -333,6 +333,20 @@ export default function MapScreen() {
   const [micBarTopW, setMicBarTopW] = useState<number | null>(null);
   const canvasWrapRef = useRef<View>(null);
   const MIC_CLEARANCE = 12; // breathing gap between diamond and mic stack
+  // THE READING STRIP TAKES ITS OWN HEIGHT OUT OF THE MAP.
+  //
+  // Phone round two: "THE WHOLE PICTURE" overlapped the YOU diamond and made the
+  // diamond's own label unreadable underneath it. The cause is in effectiveH
+  // below: the geometry was sized to end exactly where the strip's BOTTOM edge
+  // sits, so the strip extended upward into the diamond, which lives at
+  // 0.86 x height and is the lowest thing on the canvas.
+  //
+  // The band's previous occupant (the belief ground) was given room by
+  // compressing the geometry above it -- see the note under THE FREED STRIP. The
+  // reading element inherited the band but never inherited that. Measured, not
+  // assumed, for the same reason the mic bar is measured.
+  const [readingStripH, setReadingStripH] = useState<number>(0);
+  const READING_GAP = 10; // breathing gap between the diamond and the strip
 
   // The mic bar's top edge in canvasWrap-LOCAL coordinates. Both inputs are
   // window measurements, so this already accounts for safe-area insets, the
@@ -356,7 +370,7 @@ export default function MapScreen() {
     if (!size) return null;
     let h = size.h;
     if (micTopLocal != null) {
-      const measured = micTopLocal - MIC_CLEARANCE;
+      const measured = micTopLocal - MIC_CLEARANCE - (readingStripH > 0 ? readingStripH + READING_GAP : 0);
       // Defensive clamp on the MEASUREMENT ONLY — a bogus value (tiny or past
       // the wrap's own bottom) falls back to the full canvas rather than
       if (measured >= size.h * 0.55 && measured < size.h) h = measured;
@@ -366,7 +380,7 @@ export default function MapScreen() {
     // stack the wound off the top of the canvas. 22% covers the worst
     // realistic band (3 lines at 1.4x font scaling) with room to spare.
     return h;
-  }, [size, micTopLocal]);
+  }, [size, micTopLocal, readingStripH]);
 
   const geom: MapGeometry | null = size && effectiveH ? computeMapGeometry(size.w, effectiveH) : null;
 
@@ -768,6 +782,13 @@ export default function MapScreen() {
           <View
             style={[styles.readingStripWrap, { bottom: Math.max(0, size.h - micTopLocal + MIC_CLEARANCE) }]}
             pointerEvents="box-none"
+            onLayout={(e) => {
+              const h = e.nativeEvent.layout.height;
+              // Only grow the reservation, and only on a real change — a
+              // measurement that feeds back into the geometry it is measured
+              // against can otherwise oscillate by a pixel forever.
+              if (Number.isFinite(h) && Math.abs(h - readingStripH) > 1) setReadingStripH(h);
+            }}
           >
             <ReadingElement
               onOpen={(b, at) => { setReadingBody(b); setReadingAt(at); setReadingOpen(true); }}

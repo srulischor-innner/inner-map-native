@@ -373,6 +373,9 @@ export type StreamCallbacks = {
    *  to reference. Absent on legacy paths where the server didn't
    *  surface ids — bubbles without an id hide the menu option. */
   onMessageIds?: (ids: { user: string; ai: string }) => void;
+  /** The server obeyed an explicit request to work differently. The label at the
+   *  top updates so the state is visible; nothing is announced in the thread. */
+  onModeSwitch?: (mode: string) => void;
   /** Crisis enforcement (June 2026) — fires when the server gated this turn
    *  (crisis_detected on the /api/chat response). The `reply` already
    *  arrived via onDelta/onDone as the referral text; this signals the chat
@@ -925,6 +928,9 @@ export const api = {
           finished = true;
           const full = (typeof evt.text === 'string' && evt.text) ? evt.text : acc;
           cb.onDone(full);
+          if (typeof evt.modeSwitch === 'string' && evt.modeSwitch) {
+            cb.onModeSwitch?.(evt.modeSwitch);
+          }
           if (evt.messageIds && typeof evt.messageIds.user === 'string' && typeof evt.messageIds.ai === 'string') {
             cb.onMessageIds?.({ user: evt.messageIds.user, ai: evt.messageIds.ai });
           }

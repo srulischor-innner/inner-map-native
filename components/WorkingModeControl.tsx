@@ -46,14 +46,19 @@ export const MODE_LABEL: Record<WorkingMode, string> = {
   differentiation: 'Leading it',
 };
 
+// WHAT HAPPENS, NOT WHERE YOU ARE. The first version read as four rooms —
+// "Staying with what is already here", "The pattern" — which is the same mistake
+// that let a reply tell someone to go to a place that does not exist from their
+// side. There are no rooms. There is one conversation, and these are the things
+// it would do differently. Hence the verbs, and hence "we".
 const MODE_BLURB: Record<WorkingMode, string> = {
-  light: 'You talk, I listen. Nothing gets pulled apart, nothing gets mapped at you.',
-  process: 'Staying with what is already here — in the body, without going anywhere.',
-  explore: 'The pattern. What the parts are, what they protect, what sits underneath.',
+  light: 'I listen. Nothing gets pulled apart and nothing gets mapped at you.',
+  process: 'We stay with how it feels, in the body, without going anywhere.',
+  explore: 'We look at the pattern — what the parts are and what they protect.',
   // "Leading it" is the YOU framework's word, not a description of technique:
   // the belief stops driving and you do. The blurb has to carry that, or the
   // label reads as "leading the conversation", which is not what it means.
-  differentiation: 'Standing somewhere else with a belief — where it came from, whether it holds.',
+  differentiation: 'We take a belief apart: where it came from, whether it holds.',
 };
 
 // Order matters: lightest to deepest, left as a vertical list so the movement
