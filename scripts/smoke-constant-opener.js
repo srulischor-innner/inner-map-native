@@ -212,12 +212,17 @@ if (selectorSrc && ORIENTATION && STANDARD) {
 // PART 2 — EVERY OPENER PLACEMENT GOES THROUGH THE SELECTOR
 // ===========================================================================
 // The invariant is only worth anything if no call site builds its own string.
-// There are four places that push an opening assistant bubble: boot (Process),
-// the Explore seed effect, the End Session reset, and the resume-lock break.
+// There are THREE places that push an opening assistant bubble: boot, the
+// blank-screen backstop, and the End Session reset.
+//
+// The fourth is gone on purpose. The resume-lock break used to reseed both
+// threads when someone switched mode inside a resumed session — correct when a
+// mode WAS a conversation, and a data-loss bug once mode became a style of
+// reply. Changing how we work must never wipe what was said.
 
 const openerForCalls = (idxCode.replace(/function openerFor\(/, '').match(/openerFor\(/g) || []).length;
-step(3, 'the selector is called at all four placement sites', openerForCalls === 4,
-  `openerFor( × ${openerForCalls} calls (expected 4: boot, explore seed, end session, resume-lock break)`);
+step(3, 'the selector is called at all three placement sites', openerForCalls === 3,
+  `openerFor( × ${openerForCalls} calls (expected 3: boot, backstop, end session)`);
 
 // Every assignment feeding an opening bubble must be `= openerFor(...)`. If a
 // call site ever reintroduces a ladder — a ternary, a `||` fallback, a ref —
@@ -225,7 +230,8 @@ step(3, 'the selector is called at all four placement sites', openerForCalls ===
 const openerAssignments = idxCode.match(/const\s+(?:opener|greeting|finalGreeting)\s*=\s*[^;]+;/g) || [];
 const badAssignments = openerAssignments.filter((a) => !/=\s*openerFor\(/.test(a));
 step(3.1, 'no opener assignment builds its own string — all are bare openerFor(...)',
-  openerAssignments.length >= 4 && badAssignments.length === 0,
+  // Three placement sites since the resume-lock break stopped reseeding.
+  openerAssignments.length >= 3 && badAssignments.length === 0,
   badAssignments.length ? badAssignments.join(' | ') : `${openerAssignments.length} assignments, all via the selector`);
 
 // ===========================================================================
@@ -311,13 +317,13 @@ step(5, 'the Explore seed effect is located', !!seedEffect && !!seedWindow,
 if (seedEffect) {
   const guards = (seedEffect.match(/if \([^)]*\) return;/g) || []).map(norm);
   step(5.1, 'the first-session guard returns BEFORE the latch is set',
-    seedEffect.indexOf('firstSessionPending === undefined') < seedEffect.indexOf('exploreGreetedRef.current = true')
+    seedEffect.indexOf('firstSessionPending === undefined') < seedEffect.indexOf('greetedRef.current = true')
       && /if \(firstSessionPending === undefined\) return;/.test(norm(seedEffect)),
     `${guards.length} guards, latch after all of them`);
 
-  step(5.2, 'the effect re-runs when the flag lands — firstSessionPending is a dep',
-    /\}, \[chatMode, firstSessionPending\]\)/.test(norm(codeOnly(seedWindow))),
-    'deps = [chatMode, firstSessionPending]');
+  step(5.2, 'the backstop re-runs when the flag lands — firstSessionPending is a dep',
+    /\}, \[firstSessionPending, messages\.length\]\)/.test(norm(codeOnly(seedWindow))),
+    'deps = [firstSessionPending, messages.length]');
 
   step(5.3, 'the effect awaits nothing and fetches nothing',
     !/\bawait\b/.test(seedEffect) && !/\bapi\./.test(seedEffect) && !/async/.test(seedEffect),
@@ -341,10 +347,10 @@ if (seedEffect) {
 // chatMode to the value it already had, no dep changes, the effect never fires
 // and the thread stays empty for the whole next session. Both boundary resets
 // therefore seed both threads by hand and leave this true.
-step(5.5, 'the seed latch is never re-armed — every emptier of the thread refills it',
-  !/exploreGreetedRef\.current = false/.test(idxCode)
-    && (idxCode.match(/exploreGreetedRef\.current = true/g) || []).length === 4,
-  `${(idxCode.match(/exploreGreetedRef\.current = true/g) || []).length} set-true sites (seed effect, resume consumer, End Session, resume-lock break), 0 re-arms`);
+step(5.5, 'the seed latch is never re-armed — every emptier of the transcript refills it',
+  !/greetedRef\.current = false/.test(idxCode)
+    && (idxCode.match(/greetedRef\.current = true/g) || []).length === 4,
+  `${(idxCode.match(/greetedRef\.current = true/g) || []).length} set-true sites (boot, backstop, resume consumer, End Session), 0 re-arms`);
 
 // ===========================================================================
 // PART 5 — THE BOUNDARY RESETS ARE SYNCHRONOUS
@@ -368,8 +374,8 @@ step(6, 'the End Session continuation is located', !!continuation,
 // (bubbles AND wire history), and do it with nothing awaited in between.
 function assertBoundaryReset(n, label, block) {
   const openerAt = block.indexOf('openerFor(');
-  const lastFill = Math.max(block.lastIndexOf('exploreHistoryRef.current = ['),
-    block.lastIndexOf('processHistoryRef.current = ['));
+  // One transcript now, so one fill to look for.
+  const lastFill = block.lastIndexOf('historyRef.current = [');
   const between = openerAt >= 0 && lastFill > openerAt ? block.slice(openerAt, lastFill) : null;
   step(n, `${label}: nothing is awaited between the opener and the last thread fill`,
     between !== null && !/\bawait\b/.test(between),
@@ -381,21 +387,23 @@ function assertBoundaryReset(n, label, block) {
   // on the seed effect to refill it. The effect's deps cannot be trusted to
   // change at a boundary (End Session re-sets chatMode to 'explore' when the
   // session already ended in Explore), so both threads are filled here.
-  step(`${n}b`, `${label}: BOTH threads get a bubble AND wire history`,
-    /setProcessMessages\(\[\{ id: uuidv4\(\), role: 'assistant', text: greeting \}\]\)/.test(block)
-      && /setExploreMessages\(\[\{ id: uuidv4\(\), role: 'assistant', text: greeting \}\]\)/.test(block)
-      && /processHistoryRef\.current = \[\{ role: 'assistant', content: greeting \}\]/.test(block)
-      && /exploreHistoryRef\.current = \[\{ role: 'assistant', content: greeting \}\]/.test(block),
-    'process + explore, messages + history');
+  step(`${n}b`, `${label}: the transcript gets a bubble AND wire history`,
+    /setMessages\(\[\{ id: uuidv4\(\), role: 'assistant', text: greeting \}\]\)/.test(block)
+      && /historyRef\.current = \[\{ role: 'assistant', content: greeting \}\]/.test(block),
+    'the one transcript gets a bubble AND wire history');
   step(`${n}c`, `${label}: the latch is left TRUE (the thread it guards is non-empty)`,
-    /exploreGreetedRef\.current = true/.test(block) && !/exploreGreetedRef\.current = false/.test(block));
+    /greetedRef\.current = true/.test(block) && !/greetedRef\.current = false/.test(block));
 }
 
 if (continuation) assertBoundaryReset(6.1, 'End Session', continuation);
 
 const modeChange = codeOnly(sliceBlock(idxSrc, 'function handleModeChange(') || '');
 step(7, 'the resume-lock break is located', !!modeChange);
-if (modeChange) assertBoundaryReset(7.1, 'resume-lock break', modeChange);
+// 7.1 REMOVED (2026-09-01). The resume-lock break used to reseed both threads
+// when someone changed mode inside a resumed session. That path is deliberately
+// gone -- changing how we work must never wipe what was said -- so asserting it
+// would assert a bug. scripts/check-single-thread.js guards the replacement
+// property: handleModeChange must not write to the transcript at all.
 
 // ===========================================================================
 // PART 6 — BOOT (carried over from the old PARTS 7 + 10)
@@ -607,8 +615,8 @@ if (resumeConsumer) {
 
   const consumeAt = resumeConsumer.indexOf('consumePendingSessionResume()');
   const returnAt = resumeConsumer.indexOf('return;');
-  const clearAt = resumeConsumer.indexOf('setProcessMessages([])');
-  const latchAt = resumeConsumer.indexOf('exploreGreetedRef.current = true');
+  const clearAt = resumeConsumer.indexOf('setMessages([])');
+  const latchAt = resumeConsumer.indexOf('greetedRef.current = true');
   const lockAt = resumeConsumer.indexOf('resumeLockedModeRef.current = mode');
   step(11.2, 'the bail precedes every irreversible write it would otherwise cause',
     consumeAt >= 0 && returnAt > consumeAt

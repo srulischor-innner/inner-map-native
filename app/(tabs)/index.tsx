@@ -96,10 +96,16 @@ import { WarmRadialBackground } from '../../components/WarmRadialBackground';
 // opener set — see the block directly under this one.
 const ORIENTATION_MESSAGE =
   "Welcome. Quick orientation:\n\n" +
-  "Two modes up top. Explore is for active inner work — naming patterns, " +
-  "identifying parts. Process is for being heard, working through something, " +
-  "or just talking it out. Both build your map; Process just doesn't make " +
-  "that the focus.\n\n" +
+  // FOUR MODES, in the person's words, never ours. The example sentences are
+  // the load-bearing part: naming that modes exist teaches nothing, but showing
+  // someone the actual words that work is what turns "there are modes" into
+  // "I can ask". Two of these three are real sentences from real transcripts.
+  "There are a few ways we can work. You can put something down and be heard. " +
+  "We can stay with a feeling. We can look at the pattern underneath it. Or we " +
+  "can take a belief apart and see whether it's actually true.\n\n" +
+  "You don't have to choose now — I'll ask. And you can change it whenever: " +
+  "\"can we slow down\", \"I just want to talk\", \"why does this keep happening\" " +
+  "all work. Say it however it comes out. I'll follow.\n\n" +
   "I'll be more directive at first while we build your starter map. What we " +
   "build in this session is a rough sketch — it'll become sharper and more " +
   "accurate as we go. If something I name doesn't fit, say so. 'That's not " +
@@ -141,8 +147,14 @@ const ORIENTATION_MESSAGE =
 // codified generic that every ladder in the old design fell through to, so it
 // is not new copy — it is the rung that was always true.
 const STANDARD_OPENER =
-  "I'm here to help you explore what's happening inside. " +
-  "What would you like to understand better about yourself today?";
+  "What's on your mind today?\n\n" +
+  // THE INVITATION, placement 2 of 4. Measured before anything told people they
+  // could ask: requests to work differently ran at 0.04% of 5,489 turns, and one
+  // person asked anyway. That is ignorance, not absence — so the app says it.
+  // The other three placements are the control's own label, the sheet's
+  // footnote, and the end of the first reply.
+  "However we start, you can change it whenever you like — slower, lighter, " +
+  "deeper. Just say so.";
 
 // THE ONLY OPENER SELECTOR IN THIS FILE. Four call sites place an opening
 // bubble — boot (Process), the Explore seed effect, the End Session reset and
@@ -257,8 +269,17 @@ export default function ChatScreen() {
   // the kind of quiet mis-routing that is worse than an explicit map.
   //
   // Delete this function when the four prompts land and send workingMode raw.
+  // THE COLLAPSE IS GONE. workingMode now goes to the server verbatim, because
+  // the four prompts exist there and promptForMode understands all four names.
+  // It was mapped before for a specific reason: sending "differentiation" to a
+  // server that only knew process|explore fell through to Process SILENTLY, and
+  // a quiet mis-route is worse than an explicit map.
+  //
+  // Safe for everyone else: with the four-mode flag off — which is everyone —
+  // the server still resolves light and differentiation to holdingSpace exactly
+  // as it did before, and smoke-four-mode-flag.js asserts that.
   function wireModeFor(w: WorkingMode): ChatMode {
-    return w === 'explore' || w === 'differentiation' ? 'explore' : 'process';
+    return w as unknown as ChatMode;
   }
   // chatModeRef mirrors chatMode so the thread helpers below can
   // resolve the active thread synchronously from any callback,
