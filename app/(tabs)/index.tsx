@@ -48,7 +48,11 @@ import { emitBeliefChanged } from '../../utils/beliefEvents';
 // and carries no client-side conversation history. The two
 // session-boundary spots that used to call it are now no-ops.
 const clearMapVoiceHistory = () => {};
-import { ChatModeToggle, ChatMode } from '../../components/ChatModeToggle';
+// The ChatModeToggle COMPONENT is no longer rendered — it switched between two
+// transcripts and there is one. Its ChatMode type survives as the wire vocabulary
+// the server still speaks; see wireModeFor. The component file is left in place
+// rather than deleted, because the four-prompt step decides its fate.
+import type { ChatMode } from '../../components/ChatModeToggle';
 import { PartConfidenceIndicator, PartConfidence } from '../../components/PartConfidenceIndicator';
 import { colors, spacing } from '../../constants/theme';
 import { AttentionIndicator } from '../../components/AttentionIndicator';
@@ -75,6 +79,7 @@ import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { SessionSummaryModal, SessionSummary, DeepenedPart } from '../../components/session/SessionSummaryModal';
 import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
+import { WorkingModeControl, type WorkingMode } from '../../components/WorkingModeControl';
 import { ConversationStarters } from '../../components/ConversationStarters';
 import { EndSessionButton } from '../../components/EndSessionButton';
 import { CrisisResourcesCard } from '../../components/safety/CrisisResourcesCard';
@@ -91,10 +96,16 @@ import { WarmRadialBackground } from '../../components/WarmRadialBackground';
 // opener set — see the block directly under this one.
 const ORIENTATION_MESSAGE =
   "Welcome. Quick orientation:\n\n" +
-  "Two modes up top. Explore is for active inner work — naming patterns, " +
-  "identifying parts. Process is for being heard, working through something, " +
-  "or just talking it out. Both build your map; Process just doesn't make " +
-  "that the focus.\n\n" +
+  // FOUR MODES, in the person's words, never ours. The example sentences are
+  // the load-bearing part: naming that modes exist teaches nothing, but showing
+  // someone the actual words that work is what turns "there are modes" into
+  // "I can ask". Two of these three are real sentences from real transcripts.
+  "There are a few ways we can work. You can put something down and be heard. " +
+  "We can stay with a feeling. We can look at the pattern underneath it. Or we " +
+  "can take a belief apart and see whether it's actually true.\n\n" +
+  "You don't have to choose now — I'll ask. And you can change it whenever: " +
+  "\"can we slow down\", \"I just want to talk\", \"why does this keep happening\" " +
+  "all work. Say it however it comes out. I'll follow.\n\n" +
   "I'll be more directive at first while we build your starter map. What we " +
   "build in this session is a rough sketch — it'll become sharper and more " +
   "accurate as we go. If something I name doesn't fit, say so. 'That's not " +
@@ -136,8 +147,14 @@ const ORIENTATION_MESSAGE =
 // codified generic that every ladder in the old design fell through to, so it
 // is not new copy — it is the rung that was always true.
 const STANDARD_OPENER =
-  "I'm here to help you explore what's happening inside. " +
-  "What would you like to understand better about yourself today?";
+  "What's on your mind today?\n\n" +
+  // THE INVITATION, placement 2 of 4. Measured before anything told people they
+  // could ask: requests to work differently ran at 0.04% of 5,489 turns, and one
+  // person asked anyway. That is ignorance, not absence — so the app says it.
+  // The other three placements are the control's own label, the sheet's
+  // footnote, and the end of the first reply.
+  "However we start, you can change it whenever you like — slower, lighter, " +
+  "deeper. Just say so.";
 
 // THE ONLY OPENER SELECTOR IN THIS FILE. Four call sites place an opening
 // bubble — boot (Process), the Explore seed effect, the End Session reset and
@@ -182,10 +199,14 @@ export default function ChatScreen() {
   // never have to remember which thread they're in. Streaming
   // turns capture the target thread at start so a mid-stream mode
   // switch never strands a reply in the wrong thread.
-  const [processMessages, setProcessMessages] = useState<ChatMsg[]>([]);
-  const [exploreMessages, setExploreMessages] = useState<ChatMsg[]>([]);
-  const processHistoryRef = useRef<ChatMessage[]>([]);
-  const exploreHistoryRef = useRef<ChatMessage[]>([]);
+  // ONE THREAD. Until 2026-09-01 there were two — a Process transcript and an
+  // Explore transcript, each with its own bubble list and its own wire history,
+  // swapped by a top-of-screen toggle. Four working modes cannot sit on a
+  // two-thread split, and the split had already produced a screen showing two
+  // different mode vocabularies at once. Mode is now a STYLE OF REPLY, not a
+  // different conversation, so there is one transcript and one history.
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const historyRef = useRef<ChatMessage[]>([]);
   const [typing, setTyping] = useState(false);
   // Mode for /api/chat — onboarding for brand-new users, ongoing once any core node is filled.
   const [mode, setMode] = useState<'onboarding' | 'ongoing'>('onboarding');
@@ -216,6 +237,50 @@ export default function ChatScreen() {
   // re-initializes to 'explore' too — every fresh session starts
   // in the mode most likely to surface real map content.
   const [chatMode, setChatMode] = useState<ChatMode>('explore');
+
+  // FOUR-MODE STATE (dev, step 1 of the build). workingMode is what the person
+  // chose and what the labelled control above the input displays. chatMode is
+  // the legacy two-thread axis that still drives which transcript renders and
+  // which prompt the server picks.
+  //
+  // They are separate on purpose and only for now. The end state is ONE chat
+  // with four prompts, at which point the two-thread split and chatMode both
+  // go away and workingMode is the only axis. Collapsing the threads is a
+  // real refactor — resume locks, per-thread seeding, End Session reset — and
+  // doing it in the same step as the control would make a UI change and a
+  // state-machine change indistinguishable if something broke.
+  //
+  // Light is the default, per founder ruling. First-session routing is
+  // untouched: FIRST_SESSION_PROMPT still overrides mode entirely server-side.
+  const [workingMode, setWorkingMode] = useState<WorkingMode>('light');
+  // Mirrored into a ref for the same reason chatModeRef had one: a turn that
+  // starts now must read the mode as it is now, not through a stale closure.
+  const workingModeRef = useRef<WorkingMode>('light');
+  useEffect(() => { workingModeRef.current = workingMode; }, [workingMode]);
+
+  // THE BRIDGE IS GONE FROM THE STATE MACHINE. workingMode is the only axis the
+  // app reasons about; nothing branches on chatMode any more.
+  //
+  // What survives is a TRANSPORT DETAIL, and only at the single point where the
+  // request is built: the server still speaks 'process' | 'explore', because the
+  // four prompts do not exist yet — that is the next step. Translating once, at
+  // the wire, is not a second source of truth. Sending 'differentiation' today
+  // would silently fall through to the Process prompt on the server, which is
+  // the kind of quiet mis-routing that is worse than an explicit map.
+  //
+  // Delete this function when the four prompts land and send workingMode raw.
+  // THE COLLAPSE IS GONE. workingMode now goes to the server verbatim, because
+  // the four prompts exist there and promptForMode understands all four names.
+  // It was mapped before for a specific reason: sending "differentiation" to a
+  // server that only knew process|explore fell through to Process SILENTLY, and
+  // a quiet mis-route is worse than an explicit map.
+  //
+  // Safe for everyone else: with the four-mode flag off — which is everyone —
+  // the server still resolves light and differentiation to holdingSpace exactly
+  // as it did before, and smoke-four-mode-flag.js asserts that.
+  function wireModeFor(w: WorkingMode): ChatMode {
+    return w as unknown as ChatMode;
+  }
   // chatModeRef mirrors chatMode so the thread helpers below can
   // resolve the active thread synchronously from any callback,
   // without relying on stale closures over the chatMode state.
@@ -224,7 +289,7 @@ export default function ChatScreen() {
 
   // "The Explore thread has its opening bubble." Kept, and NOT part of the
   // greeting machinery: it is the synchronous guard against double-seeding.
-  // setExploreMessages is async, so the length check in the seed effect can
+  // setMessages is async, so the length check in the seed effect can
   // still read stale on a re-run that happens before the state commits (the
   // firstSessionPending flip is exactly such a re-run).
   //
@@ -233,7 +298,7 @@ export default function ChatScreen() {
   // both threads by hand, and the resume consumer hydrates the transcript
   // instead of seeding. Nothing can leave this true over an empty thread, so
   // there is no state to re-arm.
-  const exploreGreetedRef = useRef<boolean>(false);
+  const greetedRef = useRef<boolean>(false);
   // Resume mode-lock (conversation continuation). Set when a past session
   // is reopened via pendingSessionResume; holds the locked mode. Non-null
   // also tells the boot effect to skip its opening greeting (we hydrate the
@@ -242,31 +307,15 @@ export default function ChatScreen() {
   // into — and clobber — the reopened row (both threads share sessionIdRef).
   const resumeLockedModeRef = useRef<ChatMode | null>(null);
 
-  // ===== THREAD HELPERS =====
-  // Resolve the (messages, setMessages, historyRef) triple for a
-  // specific mode. Used by streaming turns to lock onto a target
-  // thread at start so a mid-stream mode switch can't redirect a
-  // reply to the wrong thread.
-  function threadFor(modeKey: ChatMode) {
-    if (modeKey === 'process') {
-      return {
-        messages: processMessages,
-        setMessages: setProcessMessages,
-        historyRef: processHistoryRef,
-      };
-    }
-    return {
-      messages: exploreMessages,
-      setMessages: setExploreMessages,
-      historyRef: exploreHistoryRef,
-    };
-  }
-  // Active thread shorthands — read by the render layer + by
-  // callbacks that should always target whatever thread the user
-  // is currently looking at (e.g. error retry button cleanup).
-  const activeMessages = chatMode === 'process' ? processMessages : exploreMessages;
-  const setActiveMessages = chatMode === 'process' ? setProcessMessages : setExploreMessages;
-  const activeHistoryRef = chatMode === 'process' ? processHistoryRef : exploreHistoryRef;
+  // threadFor() is gone with the second thread. It existed to lock a streaming
+  // turn onto the transcript it started in, so that a mid-stream mode switch
+  // could not redirect a reply into the other one. With a single transcript
+  // there is no wrong destination, and every call site now writes straight to
+  // `setMessages` / `historyRef`.
+  //
+  // The `messages` / `historyRef` shorthands are gone for the same
+  // reason: there is no inactive thread to distinguish them from.
+  const threadFor = () => ({ setMessages, historyRef });
 
   // Live part-confidence indicator state (Explore mode only). Updated
   // when MAP_UPDATE markers fire on the assistant stream. Auto-clears
@@ -375,7 +424,7 @@ export default function ChatScreen() {
   // Always points at the ACTIVE thread's messages, since the audio
   // toggle is a per-active-thread concern.
   const messagesRef = useRef<ChatMsg[]>([]);
-  useEffect(() => { messagesRef.current = activeMessages; });
+  useEffect(() => { messagesRef.current = messages; });
   function toggleAudio() {
     const wasOn = audioEnabledRef.current;
     console.log('[tts] toggleAudio fired —', wasOn ? 'ON→OFF' : 'OFF→ON', '(prev audioEnabledRef=' + wasOn + ')');
@@ -697,19 +746,20 @@ export default function ChatScreen() {
       setMode(chosenMode);
 
       // Seed ONLY the Process thread here. This is NOT the landing thread:
-      // chatMode initializes to 'explore' (see the useState above), so the user
-      // lands in Explore and the Explore thread is seeded by its own effect
-      // below — which, because chatMode is ALREADY 'explore' at mount, fires as
-      // soon as firstSessionPending resolves rather than on a user toggle.
-      // Process is seeded here so it is never found empty when the user does
-      // switch. The SAME two constants, chosen by the same flag, on both.
+      // THE ONLY SEED PATH AT BOOT. There used to be two — this one filled the
+      // Process thread by hand while an effect filled Explore — and keeping two
+      // mechanisms honest across four session boundaries is what produced the
+      // blank-screen bugs the comments below and in the End Session reset
+      // describe. One transcript, seeded here, and the seed effect that used to
+      // fill the other one is gone.
       const finalGreeting = openerFor(isFirstSession);
-      // Skip the opener if a session resume already hydrated the threads
+      // Skip the opener if a session resume already hydrated the transcript
       // (cold-start race: the resume focus-effect can land mid-boot). The
       // lock ref is set synchronously by the resume consumer.
       if (!resumeLockedModeRef.current) {
-        addAssistantMessageToProcess(finalGreeting);
-        processHistoryRef.current.push({ role: 'assistant', content: finalGreeting });
+        greetedRef.current = true;
+        addAssistantMessage(finalGreeting);
+        historyRef.current.push({ role: 'assistant', content: finalGreeting });
       }
       setTyping(false);
 
@@ -782,13 +832,11 @@ export default function ChatScreen() {
       // built on, and an empty resume payload was the one path out of it.
       if (!resume || !resume.sessionId || !Array.isArray(resume.messages) || resume.messages.length === 0) return;
       const mode: ChatMode = resume.mode === 'process' ? 'process' : 'explore';
-      // Reset BOTH threads so a boot greeting or prior content can't bleed
-      // into the reopened conversation; hydrate only the resumed mode.
-      setProcessMessages([]);
-      setExploreMessages([]);
-      processHistoryRef.current = [];
-      exploreHistoryRef.current = [];
-      exploreGreetedRef.current = true; // we hydrate instead of auto-seeding Explore
+      // Clear the transcript so a boot greeting or prior content can't bleed
+      // into the reopened conversation, then hydrate it from the saved rows.
+      setMessages([]);
+      historyRef.current = [];
+      greetedRef.current = true; // we hydrate instead of seeding an opener
 
       const bubbles: ChatMsg[] = [];
       const wire: ChatMessage[] = [];
@@ -799,7 +847,7 @@ export default function ChatScreen() {
         bubbles.push({ id: uuidv4(), role, text });
         wire.push({ role, content: text });
       }
-      const t = threadFor(mode);
+      const t = threadFor();
       t.setMessages(bubbles);
       t.historyRef.current = wire;
       // A resumed session that already contains the user's own turns is an
@@ -840,20 +888,24 @@ export default function ChatScreen() {
   // Returning early WITHOUT latching means the effect re-runs and seeds once
   // the status lands.
   useEffect(() => {
-    if (chatMode !== 'explore') return;
-    if (exploreGreetedRef.current) return;
-    if (exploreMessages.length > 0) return;
+    // BLANK-SCREEN BACKSTOP, not the seed path. Boot seeds the transcript and
+    // the resume consumer hydrates it; this only fires if neither did, which is
+    // the one failure a person actually feels — a chat with nothing in it and
+    // no way back. It cannot double-seed: both other paths set greetedRef
+    // synchronously before they write.
+    if (greetedRef.current) return;
+    if (messages.length > 0) return;
     if (firstSessionPending === undefined) return;
-    exploreGreetedRef.current = true;
+    greetedRef.current = true;
     const opener = openerFor(firstSessionPending);
     console.log(
-      `[chat] seeding Explore thread — ${firstSessionPending === true ? 'first-session orientation' : 'standard'} opener`,
+      `[chat] BACKSTOP seeded the transcript — boot and resume both left it empty (${firstSessionPending === true ? 'first-session orientation' : 'standard'} opener)`,
     );
     const id = uuidv4();
-    setExploreMessages((prev) => [...prev, { id, role: 'assistant', text: opener }]);
-    exploreHistoryRef.current.push({ role: 'assistant', content: opener });
+    setMessages((prev) => [...prev, { id, role: 'assistant', text: opener }]);
+    historyRef.current.push({ role: 'assistant', content: opener });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatMode, firstSessionPending]);
+  }, [firstSessionPending, messages.length]);
 
   // Manual keyboard-height lift — replaces the prior KeyboardAvoidingView
   // approach (build 13 Android-keyboard fix). KAV's behavior='height'
@@ -896,7 +948,7 @@ export default function ChatScreen() {
   // the mode-suffixed variants (addAssistantMessageToProcess, etc.).
   function addAssistantMessage(text: string, meta?: { detectedPart?: string; partLabel?: string | null }): string {
     const id = uuidv4();
-    const t = threadFor(chatModeRef.current);
+    const t = threadFor();
     t.setMessages((prev) => [
       ...prev,
       {
@@ -911,23 +963,14 @@ export default function ChatScreen() {
     return id;
   }
 
-  // Mode-targeted variant — guarantees the message lands in the
-  // Process thread regardless of current state. Used by boot, where
-  // we always seed Process even though we haven't computed chatMode
-  // changes yet, and by the end-session reset path.
-  function addAssistantMessageToProcess(text: string): string {
-    const id = uuidv4();
-    setProcessMessages((prev) => [
-      ...prev,
-      { id, role: 'assistant', text },
-    ]);
-    scrollToBottom();
-    return id;
-  }
+  // The mode-targeted variant is gone. It existed to guarantee a message landed
+  // in the Process thread specifically, which is not a thing that can be true
+  // any more — boot and the end-session reset both use addAssistantMessage
+  // above, because there is only one place a message can land.
 
   function addUserMessage(text: string) {
     hasEngagedRef.current = true;
-    const t = threadFor(chatModeRef.current);
+    const t = threadFor();
     t.setMessages((prev) => [...prev, { id: uuidv4(), role: 'user', text }]);
     scrollToBottom();
   }
@@ -940,27 +983,26 @@ export default function ChatScreen() {
   // id, so nothing bleeds between them. (Programmatic mode sets — resume,
   // pending-message, end-session — call setChatMode directly and bypass
   // this on purpose.)
+  // CHANGING MODE NO LONGER TOUCHES THE CONVERSATION. This is the single most
+  // important consequence of collapsing the threads, and it is a deliberate
+  // reversal.
+  //
+  // What this function used to do: if you were in a RESUMED session and picked
+  // the other mode, it concluded that conversation — new session id,
+  // hasEngaged reset, both transcripts wiped and reseeded with the opener. That
+  // was correct when a mode WAS a conversation: the two threads held different
+  // material and carrying a resumed transcript across meant writing turns into
+  // a row that belonged to the other one.
+  //
+  // With one transcript, mode is a style of reply. Wiping the screen because
+  // someone asked to be spoken to differently is precisely the failure this
+  // refactor exists to prevent: a person mid-session taps "Sitting with it" and
+  // their conversation disappears. So the mode change now changes the mode and
+  // nothing else — same session id, same transcript, same scroll position.
+  //
+  // resumeLockedModeRef survives ONLY as the boot-seed suppressor (see the boot
+  // effect); it no longer gates anything about mode.
   function handleModeChange(nextMode: ChatMode) {
-    if (resumeLockedModeRef.current && nextMode !== resumeLockedModeRef.current) {
-      resumeLockedModeRef.current = null;
-      sessionIdRef.current = uuidv4();
-      hasEngagedRef.current = false;     // fresh conversation → greeting rests at top
-      // Fully SYNCHRONOUS now, and both threads seeded here rather than one
-      // here and one from the effect. This used to run through the opener
-      // gate: shut it, publish the thread clears, await a returning-greeting
-      // refresh, reopen — and the gate existed because that await always
-      // yielded, letting the seed effect run and latch onto stale refs. There
-      // is no fetch left to sequence. Mirrors the End Session reset exactly;
-      // see the longer note there for why the Explore thread is filled on this
-      // line instead of being left to its effect.
-      const greeting = openerFor(firstSessionPending);
-      exploreGreetedRef.current = true; // seeded on this line, not by the effect
-      setProcessMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
-      setExploreMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
-      processHistoryRef.current = [{ role: 'assistant', content: greeting }];
-      exploreHistoryRef.current = [{ role: 'assistant', content: greeting }];
-      scrollToBottom();
-    }
     chatModeRef.current = nextMode;
     setChatMode(nextMode);
   }
@@ -977,8 +1019,8 @@ export default function ChatScreen() {
     cancelTTSStream();
     // Lock the voice note to the thread the user is currently in —
     // a mid-transcribe mode switch shouldn't relocate the bubble.
-    const turnMode = chatModeRef.current;
-    const turnThread = threadFor(turnMode);
+    const turnMode = wireModeFor(workingModeRef.current);
+    const turnThread = threadFor();
     const bubbleId = uuidv4();
     hasEngagedRef.current = true;
     turnThread.setMessages((prev) => [
@@ -1086,7 +1128,7 @@ export default function ChatScreen() {
       // Lock the target thread for this whole turn — every setMessages
       // and history push below targets THIS thread, regardless of what
       // chatMode the user is on by the time deltas arrive.
-      const turnThread = threadFor(turnMode);
+      const turnThread = threadFor();
       // Attention indicator: user just sent → flip to the fast-pulse
       // 'thinking' state so the user sees the system has received and
       // is processing.
@@ -1583,8 +1625,8 @@ export default function ChatScreen() {
       // one fires from handleSend (USER-initiated), which is exactly
       // when interrupt is the desired behavior.
       cancelTTSStream();
-      const turnMode = chatModeRef.current;
-      const t = threadFor(turnMode);
+      const turnMode = wireModeFor(workingModeRef.current);
+      const t = threadFor();
       const id = uuidv4();
       hasEngagedRef.current = true;
       t.setMessages((prev) => [...prev, { id, role: 'user', text }]);
@@ -1672,7 +1714,7 @@ export default function ChatScreen() {
   // RETRY), then re-submits the original user text. Wired into
   // MessageBubble's onRetry prop.
   const handleRetry = useCallback((text: string) => {
-    setActiveMessages((prev) => prev.filter((m) => !(m.role === 'assistant' && m.errorRetryText)));
+    setMessages((prev) => prev.filter((m) => !(m.role === 'assistant' && m.errorRetryText)));
     handleSend(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1684,13 +1726,13 @@ export default function ChatScreen() {
   // success is a lightweight Alert so we don't ship a new toast
   // surface for one feature.
   const handleFlagKeyMoment = useCallback((messageId: string) => {
-    // Find the bubble in either thread and flip isKeyMoment.
+    // One transcript to search now, so one setter. This used to apply to both
+    // thread lists because a flagged message could be in either.
     const flipFlag = (next: boolean) => {
       const apply = (msgs: ChatMsg[]) => msgs.map((m) =>
         m.serverMessageId === messageId ? { ...m, isKeyMoment: next } : m
       );
-      setProcessMessages((prev) => apply(prev));
-      setExploreMessages((prev) => apply(prev));
+      setMessages((prev) => apply(prev));
     };
     flipFlag(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -1705,7 +1747,7 @@ export default function ChatScreen() {
   }, []);
 
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
-    () => activeMessages.map((m) => (
+    () => messages.map((m) => (
       <MessageBubble
         key={m.id}
         msg={m}
@@ -1717,10 +1759,10 @@ export default function ChatScreen() {
         // screen's anchor. Reverts to normal the moment the conversation
         // grows. Presentation-only — derived from the existing thread, not
         // new state.
-        isOpening={activeMessages.length === 1 && m.role === 'assistant'}
+        isOpening={messages.length === 1 && m.role === 'assistant'}
       />
     )),
-    [activeMessages],
+    [messages],
   );
 
   return (
@@ -1781,25 +1823,24 @@ export default function ChatScreen() {
           </Text>
         </View>
       ) : null}
-      <ChatModeToggle
-        mode={chatMode}
-        onChange={handleModeChange}
-        // Both modes share the centerSlot now (previously the ring was
-        // Explore-only and Process showed the triangle permanently —
-        // which made Process-mode mapping invisible). The split is
-        // TEMPORAL, not modal: the AttentionIndicator triangle owns the
-        // slot during generation ('thinking' / 'streaming' / 'detected'),
-        // and the part-confidence ring owns it the rest of the time, in
-        // BOTH modes. The ring's MAP_UPDATE-driven live state was already
-        // wired mode-agnostically; it just never rendered in Process.
-        centerSlot={
-          isGenerating ? (
-            <AttentionIndicator />
-          ) : (
-            <PartConfidenceIndicator part={livePart} confidence={liveConfidence} />
-          )
-        }
-      />
+      {/* THE TWO-PILL MODE TOGGLE IS GONE. It switched between two transcripts,
+          and there is one. Leaving it would also have left the screen showing
+          two different mode vocabularies at once — Explore/Process at the top
+          and the four working modes above the input — where two of the four
+          labels described behaviour no prompt implements.
+
+          What the toggle also HOSTED has to survive it: the ambient indicator
+          that occupies its centre. The split there is temporal, not modal — the
+          AttentionIndicator triangle owns the slot during generation, the
+          part-confidence ring owns it the rest of the time — and neither ever
+          depended on which mode was active. So the bar stays, minus the pills. */}
+      <View style={styles.indicatorBar}>
+        {isGenerating ? (
+          <AttentionIndicator />
+        ) : (
+          <PartConfidenceIndicator part={livePart} confidence={liveConfidence} />
+        )}
+      </View>
       {/* KeyboardAvoidingView replaced with a manual kbHeight lift
           (build 13 Android-keyboard fix). The KAV with behavior='height'
           left the input bar hidden behind the system keyboard on Android
@@ -1842,7 +1883,7 @@ export default function ChatScreen() {
                 turn is added. Each thread tracks its own user-turn count, so
                 switching modes shows the chips again on the new thread until
                 the user has spoken there too. */}
-            {activeMessages.length > 0 && activeHistoryRef.current.every((m) => m.role !== 'user') ? (
+            {messages.length > 0 && historyRef.current.every((m) => m.role !== 'user') ? (
               <ConversationStarters onPick={handleSend} />
             ) : null}
           </ScrollView>
@@ -1904,13 +1945,36 @@ export default function ChatScreen() {
             </Pressable>
           </ScrollView>
         ) : (
-          <ChatInput
-            disabled={sending}
-            streaming={sending}
-            onStop={stopStreaming}
-            onSend={handleSend}
-            onSendVoice={handleSendVoice}
-          />
+          <>
+            {/* THE ALWAYS-AVAILABLE CONTROL. Above the input, labelled with the
+                current state, so it teaches that modes exist to someone who
+                never opens onboarding. Hidden during the first session: that
+                arc is server-routed through FIRST_SESSION_PROMPT regardless of
+                mode, so offering a choice there would be offering one that
+                does nothing. */}
+            {firstSessionPending === true ? null : (
+              <WorkingModeControl
+                mode={workingMode}
+                disabled={sending}
+                onChange={(next) => {
+                  // The whole handler. Changing how we work does not touch the
+                  // conversation, the session id, or the scroll position — see
+                  // the note on handleModeChange. The ref is set synchronously
+                  // so a turn started in the same tick reads the new mode.
+                  workingModeRef.current = next;
+                  setWorkingMode(next);
+                  handleModeChange(wireModeFor(next));
+                }}
+              />
+            )}
+            <ChatInput
+              disabled={sending}
+              streaming={sending}
+              onStop={stopStreaming}
+              onSend={handleSend}
+              onSendVoice={handleSendVoice}
+            />
+          </>
         )}
         {/* End session: only appears once a real back-and-forth has happened.
             On commit, flush the transcript to /api/summary + /api/sessions so
@@ -1921,7 +1985,10 @@ export default function ChatScreen() {
           // counts because the End Session pill is global; we don't want
           // a long Process conversation to be hidden just because the
           // user happens to be looking at an empty Explore thread.
-          visible={(processHistoryRef.current.some((m) => m.role === 'user') || exploreHistoryRef.current.some((m) => m.role === 'user')) && !endingTransition}
+          // One transcript, so one check. The old OR existed only because a
+          // long conversation in one thread had to keep the button visible
+          // while the user was looking at the empty other one.
+          visible={historyRef.current.some((m) => m.role === 'user') && !endingTransition}
           onEnd={async () => {
             // === END-OF-SESSION NOTICED GATHERING (one-shot) ===
             // Before any ending transition: if the AI parked NOTICED
@@ -1937,7 +2004,7 @@ export default function ChatScreen() {
               gatheredNoticedRef.current = true;
               try {
                 const gMode = chatModeRef.current;
-                const gThread = threadFor(gMode);
+                const gThread = threadFor();
                 const g = await api.gatherNoticed(
                   sessionIdRef.current,
                   gThread.historyRef.current.slice(),
@@ -1968,8 +2035,8 @@ export default function ChatScreen() {
             // session"). The map state and parts data persist on the
             // server underneath both threads regardless.
             setEndingTransition(true);
-            const turnMode = chatModeRef.current;
-            const turnThread = threadFor(turnMode);
+            const turnMode = wireModeFor(workingModeRef.current);
+            const turnThread = threadFor();
             const transcriptForSave = turnThread.historyRef.current.slice();
             const sessionIdForSave = sessionIdRef.current;
             Animated.timing(messagesOpacity, {
@@ -2055,12 +2122,15 @@ export default function ChatScreen() {
               // cohort. Keep it synchronous: an await between the reset and
               // these assignments is the exact shape the gate existed to police.
               const greeting = openerFor(firstSessionPending);
-              exploreGreetedRef.current = true; // seeded on this line, not by the effect
-              setChatMode('explore');   // new session starts in active map-building mode
-              setProcessMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
-              setExploreMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
-              processHistoryRef.current = [{ role: 'assistant', content: greeting }];
-              exploreHistoryRef.current = [{ role: 'assistant', content: greeting }];
+              greetedRef.current = true; // seeded on this line, not by the backstop
+              // The new session opens in the DEFAULT working mode, which is
+              // Light — not Explore. Ending a session and starting another
+              // should not silently put someone into active mapping.
+              setWorkingMode('light');
+              setChatMode('process');
+              chatModeRef.current = 'process';
+              setMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
+              historyRef.current = [{ role: 'assistant', content: greeting }];
               scrollToBottom();
               // Reveal messages again behind the dismissing summary modal.
               Animated.timing(messagesOpacity, {
@@ -2077,7 +2147,7 @@ export default function ChatScreen() {
         summary={summary}
         failed={summaryFailed}
         deepened={deepened}
-        messages={activeMessages.map((m) => ({ role: m.role, text: m.text }))}
+        messages={messages.map((m) => ({ role: m.role, text: m.text }))}
         onContinue={async () => {
           // Hide the modal first so the dismiss animation overlaps with
           // the messages-fade-back-in. Then run the captured continuation
@@ -2122,6 +2192,18 @@ const styles = StyleSheet.create({
   // not a heavy header. Renders only while firstSessionPending===true;
   // disappears on [STARTER_MAP_COMPLETE] or when the next mount sees
   // a non-null firstSessionCompletedAt from the server.
+  // Replaces the removed ChatModeToggle bar. Same vertical metrics and the
+  // same hairline divider, so the transcript below does not shift when the
+  // pills came out.
+  indicatorBar: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 3,
+    paddingBottom: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "rgba(230,180,122,0.1)",
+  },
   firstSessionBanner: {
     alignSelf: 'center',
     // Round 5 — margins trimmed to 0/2 + paddingVertical 3 so the
