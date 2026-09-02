@@ -74,6 +74,16 @@ export default function MapScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      // Re-ask the reading element on every focus. Without this the "your map
+      // has moved" announcement can never appear in the session that moved it:
+      // this tab does not re-mount on a tab switch (see the belief-bus note
+      // below), ReadingElement only re-reads on mount or on this key, and the
+      // key was otherwise bumped in exactly one place — AFTER a regeneration
+      // had already been requested. So the offer to rewrite could only ever
+      // surface on a later app launch, which is the one moment the person is
+      // least likely to care. One cheap GET /api/reading per focus buys the
+      // announcement landing when it is true.
+      setReadingRefreshKey((k) => k + 1);
       refreshMapSeenStatus()
         .then((st) => { if (active) setSeenBaselineAt(st?.lastSeenMapAt ?? null); })
         .catch(() => {})
