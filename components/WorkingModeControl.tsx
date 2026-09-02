@@ -58,7 +58,7 @@ const MODE_BLURB: Record<WorkingMode, string> = {
   // "Leading it" is the YOU framework's word, not a description of technique:
   // the belief stops driving and you do. The blurb has to carry that, or the
   // label reads as "leading the conversation", which is not what it means.
-  differentiation: 'We take a belief apart: where it came from, whether it holds.',
+  differentiation: 'We look at one belief: where it came from, whether it still holds.',
 };
 
 // Order matters: lightest to deepest, left as a vertical list so the movement
@@ -154,15 +154,22 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
+    // TOP RIGHT (founder ruling, phone round three). A state belongs where the
+    // eye rests after reading, not where a back button lives.
+    alignSelf: 'flex-end',
     paddingHorizontal: 16,
     paddingTop: 6,
     paddingBottom: 4,
   },
   rowPressed: { opacity: 0.6 },
-  rowLead: { color: 'rgba(240,237,232,0.35)', fontSize: 12 },
-  rowValue: { color: 'rgba(230,180,122,0.75)', fontSize: 12, fontWeight: '600' },
-  caret: { color: 'rgba(230,180,122,0.5)', fontSize: 12 },
+  // QUIET, NOT DISABLED. The lead was cream at 35% opacity, which on this ground
+  // reads as greyed-out rather than understated -- a control nobody taps because
+  // it looks like it cannot be tapped. Tinting it with the app's own gold keeps
+  // it low-contrast while placing it in the live palette: dim gold reads as part
+  // of the interface, grey reads as switched off.
+  rowLead: { color: 'rgba(230,180,122,0.45)', fontSize: 12 },
+  rowValue: { color: 'rgba(230,180,122,0.9)', fontSize: 12, fontWeight: '600' },
+  caret: { color: 'rgba(230,180,122,0.55)', fontSize: 12 },
 
   backdrop: {
     flex: 1,

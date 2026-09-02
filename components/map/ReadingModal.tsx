@@ -97,12 +97,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingBottom: 8,
   },
-  body: { paddingHorizontal: 24, paddingTop: 8 },
-  docTitle: { color: 'rgba(230,180,122,0.92)', fontSize: 22, letterSpacing: 0.3 },
-  docDate: { color: 'rgba(255,255,255,0.38)', fontSize: 12, marginTop: 4, marginBottom: 18 },
+  // width:100% on the content container, and stretch on every text block
+  // below, for the same reason as MessageBubble.text: under Fabric a Text with
+  // no explicit width is measured at its single-line intrinsic width and then
+  // clipped by the parent. The reading is long-form prose, so it is the surface
+  // where that shows up most.
+  body: { paddingHorizontal: 24, paddingTop: 8, width: "100%" },
+  docTitle: { color: 'rgba(230,180,122,0.92)', fontSize: 22, letterSpacing: 0.3, alignSelf: 'stretch' },
+  docDate: { color: 'rgba(255,255,255,0.38)', fontSize: 12, marginTop: 4, marginBottom: 18, alignSelf: 'stretch' },
   heading: {
     color: 'rgba(230,180,122,0.85)', fontSize: 15, letterSpacing: 0.6,
-    textTransform: 'uppercase', marginTop: 26, marginBottom: 8,
+    textTransform: 'uppercase', marginTop: 26, marginBottom: 8, alignSelf: 'stretch',
   },
-  para: { color: 'rgba(255,255,255,0.82)', fontSize: 15.5, lineHeight: 25, marginBottom: 14 },
+  para: { color: 'rgba(255,255,255,0.82)', fontSize: 15.5, lineHeight: 25, marginBottom: 14, alignSelf: 'stretch' },
 });

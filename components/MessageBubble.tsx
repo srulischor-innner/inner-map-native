@@ -773,6 +773,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     letterSpacing: 0.15,
+    // WIDTH MUST BE CONSTRAINED, NOT INFERRED. Under the new architecture
+    // (newArchEnabled: true, RN 0.81) Fabric measures a Text with no explicit
+    // width at its SINGLE-LINE intrinsic width, and the parent then clips it
+    // mid-word. flexShrink on the bubble above fixes the common case; it does
+    // not fix a Text that is measured before the bubble has settled, which is
+    // what a streaming reply does on every delta.
+    //
+    // The note on .bubble says this was Android-only. That is out of date:
+    // newArchEnabled is true for iOS as well, and the same signature was
+    // reported on iPhone ("That doesn't get er"), matching the earlier
+    // Android report ("even though she se") exactly.
+    alignSelf: "stretch",
+    width: "100%",
   },
   // Opening greeting — a warm opener, only slightly larger than the regular
   // 13/19 body (device testing showed 20 ran oversized). Applied only to the
