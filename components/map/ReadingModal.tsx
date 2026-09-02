@@ -24,6 +24,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { confirmReadingShare, shareReadingText } from '../../utils/sessionExport';
+import {
+  READING_UPDATE_ACTION, READING_UPDATE_NOTE,
+} from '../../utils/readingCopy';
 
 type Block = { kind: 'heading' | 'para'; text: string };
 
@@ -38,12 +41,15 @@ function parseReading(body: string): Block[] {
 }
 
 export function ReadingModal({
-  visible, body, createdAt, onClose,
+  visible, body, createdAt, onClose, newMaterialSince = 0, onUpdate,
 }: {
   visible: boolean;
   body: string | null;
   createdAt?: string;
   onClose: () => void;
+  /** How many map events have landed since this was written. */
+  newMaterialSince?: number;
+  onUpdate?: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const blocks = useMemo(() => (body ? parseReading(body) : []), [body]);
@@ -84,6 +90,23 @@ export function ReadingModal({
               ? <Text key={i} style={styles.heading}>{b.text}</Text>
               : <Text key={i} style={styles.para}>{b.text}</Text>
           ))}
+          {/* PLACEMENT B: the ACTION, where you have just finished reading the
+              document it would replace -- which is the only place you can judge
+              whether it is out of date. The element upstairs does the
+              announcing. Threshold is one event, shipped deliberately. */}
+          {newMaterialSince > 0 && onUpdate ? (
+            <View style={styles.updateWrap}>
+              <Pressable
+                onPress={() => { Haptics.selectionAsync().catch(() => {}); onUpdate(); }}
+                style={({ pressed }) => [styles.updateBtn, pressed && { opacity: 0.7 }]}
+                accessibilityRole="button"
+                accessibilityLabel={READING_UPDATE_ACTION}
+              >
+                <Text style={styles.updateBtnText}>{READING_UPDATE_ACTION}</Text>
+              </Pressable>
+              <Text style={styles.updateNote}>{READING_UPDATE_NOTE}</Text>
+            </View>
+          ) : null}
           <View style={{ height: 40 }} />
         </ScrollView>
       </View>
@@ -110,4 +133,11 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', marginTop: 26, marginBottom: 8, alignSelf: 'stretch',
   },
   para: { color: 'rgba(255,255,255,0.82)', fontSize: 15.5, lineHeight: 25, marginBottom: 14, alignSelf: 'stretch' },
+  updateWrap: { marginTop: 30, alignItems: 'flex-start', alignSelf: 'stretch' },
+  updateBtn: {
+    borderWidth: 0.5, borderColor: 'rgba(230,180,122,0.5)', borderRadius: 10,
+    paddingHorizontal: 16, paddingVertical: 10,
+  },
+  updateBtnText: { color: 'rgba(230,180,122,0.92)', fontSize: 14, fontWeight: '600' },
+  updateNote: { color: 'rgba(255,255,255,0.38)', fontSize: 12, marginTop: 8, alignSelf: 'stretch' },
 });

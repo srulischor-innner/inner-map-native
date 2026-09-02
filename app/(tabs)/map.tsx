@@ -55,6 +55,10 @@ export default function MapScreen() {
   // the server has no /api/reading, so an old server is silent, not broken.
   const [readingOpen, setReadingOpen] = useState(false);
   const [readingBody, setReadingBody] = useState<string | null>(null);
+  const [readingNewMaterial, setReadingNewMaterial] = useState(0);
+  // Bumped after a regeneration is requested so the element re-reads its state
+  // rather than waiting for the next focus.
+  const [readingRefreshKey, setReadingRefreshKey] = useState(0);
   const [readingAt, setReadingAt] = useState<string | undefined>(undefined);
   // Mark the user's map as seen every time this tab gains focus.
   // services/mapSeen.ts handles the optimistic broadcast + the
@@ -791,7 +795,10 @@ export default function MapScreen() {
             }}
           >
             <ReadingElement
-              onOpen={(b, at) => { setReadingBody(b); setReadingAt(at); setReadingOpen(true); }}
+              refreshKey={readingRefreshKey}
+              onOpen={(b, at, n) => {
+                setReadingBody(b); setReadingAt(at); setReadingNewMaterial(n); setReadingOpen(true);
+              }}
             />
           </View>
         ) : null}
@@ -959,7 +966,17 @@ export default function MapScreen() {
         visible={readingOpen}
         body={readingBody}
         createdAt={readingAt}
+        newMaterialSince={readingNewMaterial}
         onClose={() => setReadingOpen(false)}
+        onUpdate={async () => {
+          // Close first: generation takes about a minute and the element is
+          // where that minute is shown. The old reading is kept server-side,
+          // so nothing is lost by leaving this view.
+          setReadingOpen(false);
+          setReadingNewMaterial(0);
+          await api.generateReading().catch(() => {});
+          setReadingRefreshKey((k) => k + 1);
+        }}
       />
     </SafeAreaView>
   );

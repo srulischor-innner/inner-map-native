@@ -1331,6 +1331,10 @@ export const api = {
     stale?: boolean;
     body?: string | null;
     createdAt?: string;
+    /** How many map events have landed since this reading was written. The
+     *  server has always known; it only started saying so on 2026-09-02. Zero
+     *  unless the row is ready. */
+    newMaterialSince?: number;
     /** The gate, in full. The server has always sent every one of these
      *  fields; the type used to declare only the first two, which is why
      *  the locked copy could talk about requirements but never about THIS

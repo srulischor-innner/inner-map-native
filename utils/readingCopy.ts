@@ -139,6 +139,27 @@ export const READING_UNLOCKED_SUB = 'The whole map, read as one thing. About a m
 export const READING_GOT_IT = 'GOT IT';
 
 // ---------------------------------------------------------------------------
+// A NEWER READING IS POSSIBLE (2026-09-02)
+// ---------------------------------------------------------------------------
+// Regeneration was open on the server from the start, gated on the map having
+// gained something. The app never asked, so a reading stayed frozen no matter
+// what anyone mapped: tapping opened the old one and nothing offered a new one.
+//
+// PLACEMENT, and it is deliberate. The ELEMENT announces; the SHEET carries the
+// action. Tapping the element still does what it has always done -- opens what
+// you have -- and the offer lands where you have just finished reading it,
+// which is the moment you can judge whether it is out of date. That also keeps
+// one tap target on a strip that has room for one.
+//
+// Threshold is ONE event, shipped deliberately: a floor is easy to add later if
+// it proves too eager, and impossible to tune without seeing how often it fires.
+export const READING_UPDATE_AVAILABLE_SUB = 'Your map has moved since this was written.';
+export const READING_UPDATE_ACTION = 'Write an updated reading';
+// "Update" implies replacement. It is not one: the server keeps every reading
+// as a dated document, so saying so removes the only reason to hesitate.
+export const READING_UPDATE_NOTE = 'About a minute. This one is kept.';
+
+// ---------------------------------------------------------------------------
 // WAITING (generation takes 50-60s) — unchanged, founder ruling 2026-08-21k.
 // The element breathes; these advance on their own timing, never loop, and
 // the last one HOLDS so a slow generation never implies a stuck timer.

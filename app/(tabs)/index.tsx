@@ -153,7 +153,10 @@ const STANDARD_OPENER =
   // person asked anyway. That is ignorance, not absence — so the app says it.
   // The other three placements are the control's own label, the sheet's
   // footnote, and the end of the first reply.
-  "You can change how we work at any point — just say so.";
+  // STYLE, not mode. The second line of the opening turn already asks how they
+  // want to be met; this one was gesturing at the same thing in vaguer words.
+  // It names the three dials instead, and says the change persists.
+  "You can ask for shorter, slower, or less explaining any time — I'll keep it that way.";
 
 // THE ONLY OPENER SELECTOR IN THIS FILE. Four call sites place an opening
 // bubble — boot (Process), the Explore seed effect, the End Session reset and

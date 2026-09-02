@@ -61,14 +61,24 @@ import {
   READING_LABEL, READING_LEAD, readingWaitingLine, type ReadingEligibility,
   READING_LOCKED_TITLE,
   READING_UNLOCKED_TITLE, READING_UNLOCKED_SUB,
+  READING_UPDATE_AVAILABLE_SUB,
   READING_WAITING_LINES, READING_GOT_IT,
   READING_ERROR_TITLE, READING_ERROR_BODY, READING_ERROR_ACTION,
 } from '../../utils/readingCopy';
 
 type Phase = 'hidden' | 'locked' | 'ready' | 'generating' | 'has-reading' | 'error';
 
-export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: string) => void }) {
+export function ReadingElement(
+  { onOpen, refreshKey = 0 }:
+  {
+    onOpen: (body: string, createdAt: string | undefined, newMaterialSince: number) => void;
+    /** Bumped by the screen after a regeneration is requested, so the element
+     *  re-reads its own state instead of waiting for the next focus. */
+    refreshKey?: number;
+  },
+) {
   const [phase, setPhase] = useState<Phase>('hidden');
+  const [newMaterial, setNewMaterial] = useState(0);
   const [body, setBody] = useState<string | null>(null);
   const [createdAt, setCreatedAt] = useState<string | undefined>(undefined);
   const [lineIdx, setLineIdx] = useState(0);
@@ -92,6 +102,10 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
     if (r.exists && r.status === 'ready' && r.body) {
       setBody(r.body);
       setCreatedAt(r.createdAt);
+      // >0 means the map has gained something since this reading was written.
+      // An older server that does not send the field reads as 0 — no offer,
+      // never a guess.
+      setNewMaterial(typeof r.newMaterialSince === 'number' ? r.newMaterialSince : 0);
       setPhase('has-reading');
       return;
     }
@@ -117,7 +131,7 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
       if (lineRef.current) clearTimeout(lineRef.current);
       cancelAnimation(breath);
     };
-  }, [refresh, breath]);
+  }, [refresh, breath, refreshKey]);
 
   // Breathing + the self-advancing line, both only while generating.
   useEffect(() => {
@@ -158,7 +172,7 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
     }
     if (phase === 'has-reading' && body) {
       Haptics.selectionAsync().catch(() => {});
-      onOpen(body, createdAt);
+      onOpen(body, createdAt, newMaterial);
       return;
     }
     if (phase !== 'ready' && phase !== 'error') return;
@@ -187,6 +201,11 @@ export function ReadingElement({ onOpen }: { onOpen: (body: string, createdAt?: 
     ? READING_WAITING_LINES[lineIdx]?.text ?? READING_WAITING_LINES[0].text
     : failed ? READING_ERROR_TITLE
     : locked ? null
+    // PLACEMENT A: the element ANNOUNCES that the map has moved. The action
+    // lives in the sheet (see ReadingModal), so the strip keeps one tap target
+    // and the offer lands after you have read what you already have.
+    : (phase === 'has-reading' && newMaterial > 0) ? READING_UPDATE_AVAILABLE_SUB
+    : phase === 'has-reading' ? null
     : READING_UNLOCKED_SUB;
 
   const a11y = locked
