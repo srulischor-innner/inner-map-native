@@ -78,7 +78,12 @@ show("WRAPPING DISABLED", findings.noWrap);
 
 // The reading document specifically: it must carry none of these.
 const READING = path.join(ROOT, "components", "map", "ReadingModal.tsx");
-const rsrc = fs.readFileSync(READING, "utf8");
+// Strip comments first. The per-line scan above already skips them; this
+// file-level check did not, and flagged the sentence "// width:100% on the
+// content container" as if it were a numeric width. A checker that reports its
+// own documentation is a checker people learn to ignore.
+const rsrc = fs.readFileSync(READING, "utf8")
+  .split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 const readingProblems = [];
 if (/numberOfLines/.test(rsrc)) readingProblems.push("ReadingModal truncates with numberOfLines");
 if (/width:\s*\d/.test(rsrc)) readingProblems.push("ReadingModal sets a numeric width");
