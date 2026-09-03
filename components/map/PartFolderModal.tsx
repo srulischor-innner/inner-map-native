@@ -455,7 +455,12 @@ function BeliefSection({ part, color, onClose }: { part: any; color: string; onC
     Haptics.selectionAsync().catch(() => {});
     const text =
       "I want to work on my own belief — what I stand on that's separate from my parts.";
-    armPendingChatMessage(text, 'explore');
+    // LEADING IT, not Explore (founder ruling 2026-09-03). Tapping this button
+    // is someone asking, as explicitly as the app allows, to arrive at ground of
+    // their own — which is Leading it's work. It armed 'explore' for months,
+    // sending the clearest possible request for belief-building to the mode that
+    // only reads an existing belief.
+    armPendingChatMessage(text, 'differentiation');
     // Close the folder BEFORE navigating — otherwise the sheet stays
     // open behind the chat handoff and the map is in a confusing state
     // when the user comes back. (Mirrors the Self folder's

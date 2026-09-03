@@ -811,8 +811,21 @@ export default function ChatScreen() {
     React.useCallback(() => {
       const pending = consumePendingChatMessage();
       if (pending && pending.text) {
-        chatModeRef.current = pending.mode;
-        setChatMode(pending.mode);
+        // SETS workingMode, WHICH IS THE POINT (fixed 2026-09-03). This set only
+        // chatMode, and chatMode is legacy: every turn sends
+        // wireModeFor(workingModeRef.current), so the mode a handoff asked for
+        // was computed, stored, and then never read. The folder button could
+        // name any mode it liked and the conversation stayed in whichever one
+        // was already active.
+        //
+        // The ref is assigned directly as well as through setState because
+        // handleSend fires from a setTimeout(0) below, which can run before the
+        // effect that mirrors workingMode into its ref — and the send path reads
+        // the ref, not the state.
+        setWorkingMode(pending.mode);
+        workingModeRef.current = pending.mode;
+        chatModeRef.current = wireModeFor(pending.mode);
+        setChatMode(wireModeFor(pending.mode));
         setTimeout(() => { handleSend(pending.text); }, 0);
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
