@@ -419,12 +419,19 @@ export const HEALING_SLIDES: GuideSlide[] = [
 ];
 
 // ===== SECTION 3: USING IT =====
-// Card icon variants. The 4-card April spec (chat / map / self / journey)
-// expanded to 7 once the app grew Process+Explore modes, Map Voice with
-// two mics, the Partner tab, and the Journal. Each variant gets a
-// matching Ionicons glyph in FeatureCard.
+// Card icon variants. The 4-card April spec (chat / map / self / journey) grew
+// with the app: two Map Voice mics, the Partner tab, the Journal, and (2026-09)
+// the reading. Each variant gets a matching Ionicons glyph in FeatureCard.
+//
+// ONE STORY (2026-09-02). This file, prompts/askGuide.js and public/index.html
+// each described the app differently, and two of the three still called it a
+// two-mode app. The four ways of working are named here exactly as the mode
+// sheet names them (components/WorkingModeControl.tsx MODE_LABEL / MODE_BLURB)
+// and as the opening orientation names them, because a person who reads one and
+// then meets another cannot tell whether they are the same thing.
+// scripts/check-one-story.js fails if they drift apart again.
 export type GuideFeature = {
-  icon: 'chat' | 'map' | 'self' | 'self-like' | 'partner' | 'journal' | 'journey';
+  icon: 'chat' | 'map' | 'self' | 'self-like' | 'partner' | 'journal' | 'journey' | 'reading';
   title: string;
   body: string[];
 };
@@ -434,7 +441,9 @@ export const USING_FEATURES: GuideFeature[] = [
     icon: 'chat',
     title: 'Chat',
     body: [
-      "Chat is where most of the work happens. Two modes: Explore for active inner work — naming patterns, identifying parts, building your map. Process for being heard, working through something, or just talking it out. Both build your map; Process just doesn't make that the focus.",
+      "Chat is where most of the work happens. It is one conversation, and what changes is how it is being with you. Four ways, and you can ask for any of them at any time:",
+      "\u2022 Saying it \u2014 it listens. Nothing gets pulled apart and nothing gets mapped at you.\n\u2022 Sitting with it \u2014 you stay with how something feels, in the body, without going anywhere.\n\u2022 Understanding it \u2014 you look at the pattern: what the parts are and what they protect.\n\u2022 Leading it \u2014 you look at one belief: where it came from, whether it still holds.",
+      "You never have to name any of that. \u201ccan we slow down\u201d, \u201cI just want to talk\u201d, \u201cwhy does this keep happening\u201d all work, and it will follow. The control above the message box does the same thing if you would rather tap than ask.",
       "You can type, or press and hold the mic to send a voice note. End a session anytime to get a summary and a few things to try.",
     ],
   },
@@ -479,6 +488,15 @@ export const USING_FEATURES: GuideFeature[] = [
     title: 'Journal',
     body: [
       "Free space for whatever needs to come out. Share an entry and the AI can draw on it to understand you; keep it private and it stays on your device, unread.",
+    ],
+  },
+  {
+    icon: 'reading',
+    title: 'The whole picture',
+    body: [
+      "A reading is a page written back to you about your whole map \u2014 everything at once, instead of a part at a time. It is the one thing the conversation cannot do: chat stays with whatever is in front of you, and this stands back and reads all of it together.",
+      "It waits until there is enough to read. It needs the belief at the centre \u2014 what your wound actually says \u2014 both sides that answer it, the Fixer and the Skeptic, and at least one protector with something filled in. Until then the card on the Map tab tells you which of those pieces your map is still missing.",
+      "When it is ready, tap it on the Map tab. It takes about a minute to write. Readings are kept as a dated series, so you can read an old one beside a new one. When your map moves afterwards, the card says so and you can ask for an updated one \u2014 the old one is never overwritten.",
     ],
   },
   {

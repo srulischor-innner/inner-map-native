@@ -66,7 +66,11 @@ export function readingWaitingLine(e: ReadingEligibility | null | undefined): st
   const fixer = !!e?.fixerPattern;
   const skeptic = !!e?.skepticPattern;
   const prot = typeof e?.protCount === 'number' ? e.protCount : 0;
-  const floor = typeof e?.protectorFloor === 'number' ? e.protectorFloor : 3;
+  // FLOOR 1 (founder ruling 2026-09-02). The server always sends protectorFloor;
+  // this fallback only fires against an older server, and it read 3 while the
+  // gate read 1 — so the copy would have told someone they needed two protectors
+  // they did not need.
+  const floor = typeof e?.protectorFloor === 'number' ? e.protectorFloor : 1;
 
   // 1. The belief at the centre. Everything else on the map answers it, so
   //    there is no reading to write without it — and no point naming any

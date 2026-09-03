@@ -335,6 +335,7 @@ function FeatureCard({ feature }: { feature: GuideFeature }) {
     partner: 'heart-outline',
     journal: 'book-outline',
     journey: 'trending-up-outline',
+  reading: 'document-text-outline',
   };
   return (
     <View style={styles.card}>

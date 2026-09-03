@@ -102,7 +102,12 @@ const ORIENTATION_MESSAGE =
   // "I can ask". Two of these three are real sentences from real transcripts.
   "There are a few ways we can work. You can put something down and be heard. " +
   "We can stay with a feeling. We can look at the pattern underneath it. Or we " +
-  "can take a belief apart and see whether it's actually true.\n\n" +
+  // SOFTENED 2026-09-02. This still read "take a belief apart" long after the
+  // ruling that it is too strong -- nobody wants to take themselves apart. The
+  // mode sheet was softened at the time and this line was not, so the first
+  // thing a new person reads and the control they then tap described the same
+  // work in two registers, the harsher one first.
+  "can look at one belief \u2014 where it came from, and whether it still holds.\n\n" +
   "You don't have to choose now — I'll ask. And you can change it whenever: " +
   "\"can we slow down\", \"I just want to talk\", \"why does this keep happening\" " +
   "all work. Say it however it comes out. I'll follow.\n\n" +

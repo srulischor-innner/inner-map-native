@@ -7,6 +7,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, radii, spacing } from '../../constants/theme';
 import { continuedLabel } from '../../utils/sessionDisplay';
+import { MODE_LABEL, type WorkingMode } from '../WorkingModeControl';
 
 export type PathItem = {
   id: string;
@@ -65,11 +66,13 @@ export function PathTimeline({
                   {formatDate(it.date)}
                   {it.time ? <Text style={styles.time}>{' · ' + it.time}</Text> : null}
                 </Text>
-                {/* Mode chip — small Process / Explore label so the
-                    user can tell at a glance which thread the saved
-                    session captured. Hidden for legacy rows where
-                    chatMode is NULL. */}
-                {it.chatMode === 'process' || it.chatMode === 'explore' ? (
+{/* How the session was worked. Printed EXPLORE / PROCESS until
+                    2026-09-02 — our internal names for our prompts, shown
+                    uppercase to the person, and blind to two of the four ways
+                    of working so those sessions carried no chip at all. Now the
+                    person's own labels, from the one canonical list the mode
+                    sheet reads. Legacy rows with a NULL chatMode stay bare. */}
+                {MODE_LABEL[it.chatMode as WorkingMode] ? (
                   <View
                     style={[
                       styles.modeChip,
@@ -82,7 +85,7 @@ export function PathTimeline({
                         it.chatMode === 'explore' ? styles.modeChipTextExplore : styles.modeChipTextProcess,
                       ]}
                     >
-                      {it.chatMode === 'explore' ? 'EXPLORE' : 'PROCESS'}
+                      {MODE_LABEL[it.chatMode as WorkingMode]}
                     </Text>
                   </View>
                 ) : null}

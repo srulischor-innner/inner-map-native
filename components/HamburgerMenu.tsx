@@ -33,6 +33,7 @@ import { PART_COLOR } from '../utils/markers';
 import { continuedLabel } from '../utils/sessionDisplay';
 import { SessionDetailModal } from './session/SessionDetailModal';
 import { RelationshipSessionSummaryModal } from './relationships/RelationshipSessionSummaryModal';
+import { MODE_LABEL, type WorkingMode } from './WorkingModeControl';
 
 const FEEDBACK_TO  = 'support@my-inner-map.com';
 
@@ -298,11 +299,14 @@ function SessionRow({
   const dotColor = isPartner
     ? '#E0879A'
     : (mostActivePart ? (PART_COLOR[mostActivePart] || colors.amber) : 'rgba(255,255,255,0.2)');
-  const showMode = chatMode === 'process' || chatMode === 'explore' || chatMode === 'partner_private';
-  const modeLabel =
-    chatMode === 'explore' ? 'Explore' :
-    chatMode === 'partner_private' ? '💗 Partner' :
-    'Process';
+  // Printed 'Explore' / 'Process' until 2026-09-02 — our names for our prompts,
+  // shown to the person, and blind to two of the four ways of working, which
+  // therefore got no label at all. One canonical list now, the same one the mode
+  // sheet reads, so a person cannot meet two different names for one thing.
+  const partnerMode = chatMode === 'partner_private';
+  const workLabel = MODE_LABEL[chatMode as WorkingMode] || null;
+  const showMode = partnerMode || !!workLabel;
+  const modeLabel = partnerMode ? '💗 Partner' : (workLabel || '');
   const cont = continuedLabel(date, updatedAt);
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.sessionRow, pressed && { opacity: 0.65 }]}>
