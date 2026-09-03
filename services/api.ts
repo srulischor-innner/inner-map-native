@@ -316,7 +316,10 @@ export type SavedBelief = {
  *  context }] }. Other kinds render read-only. */
 export type InboxMessage = {
   id: string;
-  kind: 'pending_parts' | 'enrichment' | 'system_note' | 'release_note';
+  // 'middle_ground' added 2026-09-02. The server has written this kind since
+  // ruling 2026-08-19e; the type never listed it, so the client narrowed it away
+  // and it fell through to NoteCard, which cannot read its payload.
+  kind: 'pending_parts' | 'enrichment' | 'middle_ground' | 'system_note' | 'release_note';
   payload: {
     /** Present on session-sourced cards. */
     sessionId?: string;

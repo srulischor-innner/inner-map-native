@@ -158,6 +158,8 @@ export default function MessagesScreen() {
               <PendingPartsCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
             ) : m.kind === 'enrichment' ? (
               <EnrichmentCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
+            ) : m.kind === 'middle_ground' ? (
+              <PendingPartsCard key={m.id} message={m} onEditFocus={ensureEditVisible} variant={MIDDLE_GROUND_VARIANT} />
             ) : (
               <NoteCard key={m.id} message={m} />
             ),
@@ -177,7 +179,63 @@ type ItemState = 'pending' | 'sending' | 'accepted' | 'declined';
 
 type EditFocusHandler = (node: { measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void } | null) => void;
 
-function PendingPartsCard({ message, onEditFocus }: { message: InboxMessage; onEditFocus?: EditFocusHandler }) {
+// TWO CARDS, ONE MECHANISM (2026-09-02). middle_ground cards were being written
+// by the server, replicated, and pushed -- and then rendered by NoteCard, which
+// reads only payload.title and payload.body. A middle_ground payload has neither;
+// it has {items:[{label,note,status}]}. So every one displayed as a card reading
+// "NOTE" with an empty body, and the accept branch at server.js:13773 -- the
+// filing consent for ruling 2026-08-19e -- could never be reached. A consent
+// surface nobody can tap is not a consent surface.
+//
+// The accept / edit / decline flow is identical for both kinds; only the field
+// name and the copy differ. Parameterised rather than duplicated, so the two
+// cards cannot drift into two different consent behaviours.
+type CardVariant = {
+  kicker: (m: InboxMessage) => string;
+  lede: string;
+  labelOf: (it: any) => string;
+  editedOf: (it: any) => string | undefined;
+  subOf: (it: any) => string | null;
+  categoryOf: (it: any) => string | null;
+  acceptText: string;
+  acceptingText: string;
+  acceptedText: string;
+  editA11y: string;
+};
+
+const PENDING_PARTS_VARIANT: CardVariant = {
+  kicker: (m) =>
+    m.payload.source === 'journal'
+      ? `FROM A JOURNAL ENTRY${m.payload.entryDate ? ` \u00b7 ${m.payload.entryDate}` : ''}`
+      : `FROM A PAST SESSION${m.payload.sessionDate ? ` \u00b7 ${m.payload.sessionDate}` : ''}`,
+  lede: 'A few things surfaced that might belong on your map:',
+  labelOf: (it) => it.name || '',
+  editedOf: (it) => it.editedName,
+  subOf: (it) => it.context || null,
+  categoryOf: (it) => it.part || null,
+  acceptText: 'ADD TO MAP',
+  acceptingText: 'ADDING\u2026',
+  acceptedText: 'Added to your map.',
+  editA11y: 'Edit the part name',
+};
+
+// Middle ground is a place the person described standing, in their own words --
+// not a part. So: no category chip, and copy about keeping something they said
+// rather than adding something we noticed.
+const MIDDLE_GROUND_VARIANT: CardVariant = {
+  kicker: (m) => `FROM A PAST SESSION${m.payload.sessionDate ? ` \u00b7 ${m.payload.sessionDate}` : ''}`,
+  lede: 'You described somewhere you can stand that isn\u2019t either side:',
+  labelOf: (it) => it.label || '',
+  editedOf: (it) => it.editedLabel,
+  subOf: (it) => it.note || null,
+  categoryOf: () => null,
+  acceptText: 'KEEP THIS',
+  acceptingText: 'KEEPING\u2026',
+  acceptedText: 'Kept on your map.',
+  editA11y: 'Edit the wording',
+};
+
+function PendingPartsCard({ message, onEditFocus, variant = PENDING_PARTS_VARIANT }: { message: InboxMessage; onEditFocus?: EditFocusHandler; variant?: CardVariant }) {
   const editInputRef = useRef<TextInput>(null);
   const items = message.payload.items || [];
   const [states, setStates] = useState<ItemState[]>(
@@ -185,7 +243,7 @@ function PendingPartsCard({ message, onEditFocus }: { message: InboxMessage; onE
       it.status === 'accepted' || it.status === 'declined' ? it.status : 'pending',
     ),
   );
-  const [names, setNames] = useState<string[]>(items.map((it) => it.editedName || it.name || ''));
+  const [names, setNames] = useState<string[]>(items.map((it) => variant.editedOf(it) || variant.labelOf(it)));
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
 
   function setItemState(i: number, s: ItemState) {
@@ -197,7 +255,7 @@ function PendingPartsCard({ message, onEditFocus }: { message: InboxMessage; onE
     setItemState(i, 'sending');
     Haptics.selectionAsync().catch(() => {});
     const trimmed = names[i].trim();
-    const edits = trimmed && trimmed !== items[i].name ? { [i]: trimmed } : undefined;
+    const edits = trimmed && trimmed !== variant.labelOf(items[i]) ? { [i]: trimmed } : undefined;
     const res = await api.actOnMessage(message.id, [i], edits);
     setItemState(i, res.ok ? 'accepted' : 'pending');
     if (res.ok) {
@@ -221,12 +279,8 @@ function PendingPartsCard({ message, onEditFocus }: { message: InboxMessage; onE
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardKicker}>
-        {message.payload.source === 'journal'
-          ? `FROM A JOURNAL ENTRY${message.payload.entryDate ? ` · ${message.payload.entryDate}` : ''}`
-          : `FROM A PAST SESSION${message.payload.sessionDate ? ` · ${message.payload.sessionDate}` : ''}`}
-      </Text>
-      <Text style={styles.cardLede}>A few things surfaced that might belong on your map:</Text>
+      <Text style={styles.cardKicker}>{variant.kicker(message)}</Text>
+      <Text style={styles.cardLede}>{variant.lede}</Text>
       {items.map((it, i) => {
         const st = states[i];
         const editing = editingIdx === i;
@@ -243,20 +297,22 @@ function PendingPartsCard({ message, onEditFocus }: { message: InboxMessage; onE
                 returnKeyType="done"
                 onSubmitEditing={() => setEditingIdx(null)}
                 onFocus={() => onEditFocus?.(editInputRef.current)}
-                accessibilityLabel="Edit the part name"
+                accessibilityLabel={variant.editA11y}
               />
             ) : (
               <Text style={[styles.itemName, st === 'declined' && styles.itemNameDim]}>
                 {names[i]}
-                <Text style={styles.itemCategory}>  ·  {it.part}</Text>
+                {variant.categoryOf(it) ? (
+                  <Text style={styles.itemCategory}>  ·  {variant.categoryOf(it)}</Text>
+                ) : null}
               </Text>
             )}
-            {it.context ? <Text style={styles.itemContext}>{it.context}</Text> : null}
+            {variant.subOf(it) ? <Text style={styles.itemContext}>{variant.subOf(it)}</Text> : null}
 
             {st === 'accepted' ? (
               <View style={styles.itemResolvedRow}>
                 <Ionicons name="checkmark-circle" size={15} color={colors.amber} />
-                <Text style={styles.itemResolvedText}>Added to your map.</Text>
+                <Text style={styles.itemResolvedText}>{variant.acceptedText}</Text>
               </View>
             ) : st === 'declined' ? (
               <View style={styles.itemResolvedRow}>
@@ -269,15 +325,15 @@ function PendingPartsCard({ message, onEditFocus }: { message: InboxMessage; onE
                   onPress={() => accept(i)}
                   disabled={st === 'sending'}
                   style={[styles.itemBtnAccept, st === 'sending' && styles.itemBtnDim]}
-                  accessibilityLabel={`Add ${names[i]} to your map`}
+                  accessibilityLabel={`${variant.acceptText} — ${names[i]}`}
                 >
-                  <Text style={styles.itemBtnAcceptText}>{st === 'sending' ? 'ADDING…' : 'ADD TO MAP'}</Text>
+                  <Text style={styles.itemBtnAcceptText}>{st === 'sending' ? variant.acceptingText : variant.acceptText}</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => setEditingIdx(editing ? null : i)}
                   disabled={st === 'sending'}
                   style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
-                  accessibilityLabel="Edit the part name"
+                  accessibilityLabel={variant.editA11y}
                 >
                   <Text style={styles.itemBtnText}>{editing ? 'DONE' : 'EDIT'}</Text>
                 </Pressable>

@@ -157,25 +157,40 @@ check('iOS will accept the API URL (HTTPS or ATS exemption)',
 // `eas env:list` replaces it and has no JSON output at all (--format is
 // long|short), so the names are parsed from the text. --environment is required
 // or the command tries to prompt and dies on a non-interactive stdin.
+// The secrets this pre-flight actually asks about. The fallback path below is
+// only allowed to answer if it can see these — see FALSE-ABORT note.
+const REQUIRED_EAS_NAMES = [
+  'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID',
+  'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID',
+  'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID',
+];
+
 function listEasSecrets(profile) {
   const { execSync } = require('child_process');
-  const run = (cmd) => {
+  // FALSE-ABORT FIX (2026-09-02). Was 20000. A warm `eas env:list` takes ~4.6s;
+  // a cold one — npx resolution, the version check, the upgrade banner — can
+  // exceed 20s, and the timeout was being read as "no secrets" rather than as
+  // "no answer". This only absorbs the cold start; it does not slow a good run.
+  const run = (cmd, ms) => {
     try {
       return execSync(cmd, {
         cwd: path.join(__dirname, '..'),
         stdio: ['ignore', 'pipe', 'pipe'],
         encoding: 'utf8',
-        timeout: 20000,
+        timeout: ms || 90000,
       });
     } catch (e) {
       return null;
     }
   };
 
-  // Current path: env:list, text output, NAME=value per line.
+  // Current path: env:list, text output, NAME=value per line. Tried twice —
+  // the first invocation is the one that pays for the cold start.
   const env = String(profile || 'production').toLowerCase();
-  const out = run(`eas env:list --scope project --environment ${env} --format short`);
-  if (out) {
+  const cmd = `eas env:list --scope project --environment ${env} --format short`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const out = run(cmd);
+    if (!out) continue;
     const names = [];
     for (const line of out.split(/\r?\n/)) {
       const m = /^([A-Z0-9_]+)=/.exec(line.trim());
@@ -185,6 +200,13 @@ function listEasSecrets(profile) {
   }
 
   // Fallback: the deprecated command, parsed as text rather than JSON.
+  //
+  // A PARTIAL ANSWER MUST NOT READ AS AN ABSENCE. `eas secret:list` is
+  // deprecated and does not list environment-scoped variables, so it can return
+  // a short list that contains none of the names we ask about. Returning that
+  // list made the caller report every real secret as MISSING and abort a build
+  // that was fine. It now only counts when it can actually see what is being
+  // asked about; otherwise null, and the caller skips with a warning.
   const legacy = run('eas secret:list');
   if (legacy) {
     const names = [];
@@ -192,10 +214,11 @@ function listEasSecrets(profile) {
       const m = /^Name\s+([A-Z0-9_]+)\s*$/.exec(line.trim());
       if (m) names.push({ name: m[1] });
     }
-    if (names.length) return names;
+    const seen = new Set(names.map((n) => n.name));
+    if (names.length && REQUIRED_EAS_NAMES.some((n) => seen.has(n))) return names;
   }
 
-  return null; // CLI genuinely unavailable or not authenticated
+  return null; // CLI unavailable, unauthenticated, or unable to answer
 }
 // ---- package.json vs package-lock.json (2026-08-25) ----
 // The EAS builder's first real step is `npm ci`, and `npm ci` REFUSES to run
