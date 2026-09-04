@@ -48,7 +48,7 @@ import { api } from '../../services/api';
 import { subscribeBeliefChanged } from '../../utils/beliefEvents';
 import { CrisisResourcesCard } from '../safety/CrisisResourcesCard';
 import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
-import { ensureRecordingMode } from '../../utils/ttsStream';
+import { ensureRecordingMode, verifyCaptureLive, METERED_HIGH_QUALITY } from '../../utils/ttsStream';
 
 type VoiceState = 'idle' | 'recording' | 'thinking' | 'speaking';
 type ModalKind = null | 'explainer' | 'selfInfo' | 'selfLikeInfo' | 'selfLikeDisabled';
@@ -227,7 +227,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
   // Recording infra — same expo-audio hook the chat tab voice-note
   // path uses. HIGH_QUALITY gives m4a on iOS / mp4 on Android, both
   // of which Cartesia accepts.
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorder = useAudioRecorder(METERED_HIGH_QUALITY);
   const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const wantRecordingRef = useRef(false);
   const pressStartTimeRef = useRef<number>(0);
@@ -409,6 +409,14 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
         return;
       }
       recorder.record();
+      // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
+      // route flipped; on some devices the first second is digital silence and
+      // the transcript comes back empty. This samples the recorder's own
+      // metering and logs what it sees. Fire-and-forget on purpose: it must
+      // never delay capture, and it REPORTS rather than restarting -- a restart
+      // would discard whatever was already said, and the silence floor is still
+      // a guess until a real device has produced real numbers.
+      void verifyCaptureLive(() => recorder.getStatus());
       // recordingModeRef.current is the AUTHORITATIVE signal that a
       // recording is in flight — set the moment recorder.record() has
       // been called. The release handler reads THIS (not React state)
@@ -459,7 +467,15 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       encoding: FileSystem.EncodingType.Base64,
     });
     try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
-    const player = createAudioPlayer({ uri: tmpUri });
+    // keepAudioSessionActive (iOS, expo-audio 1.1.1 AudioPlayerOptions, default
+    // false). Its own doc: "The audio session for this player will not be
+    // deactivated automatically when the player finishes playback."
+    //
+    // Without it, iOS tears the session down the moment playback ends, and the
+    // next capture races that teardown -- which is the every-other-message
+    // silent-dictation bug. resetAudioSessionForRecording and the awaited
+    // ensureRecordingMode are a net UNDER that race; this removes the race.
+    const player = createAudioPlayer({ uri: tmpUri }, { keepAudioSessionActive: true });
     playerRef.current = player;
     setState('speaking');
     player.play();

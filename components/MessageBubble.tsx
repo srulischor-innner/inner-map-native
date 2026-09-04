@@ -473,7 +473,15 @@ function VoiceNoteBubble({
         interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
       });
     } catch {}
-    const p = createAudioPlayer({ uri });
+    // keepAudioSessionActive (iOS, expo-audio 1.1.1 AudioPlayerOptions, default
+    // false). Its own doc: "The audio session for this player will not be
+    // deactivated automatically when the player finishes playback."
+    //
+    // Without it, iOS tears the session down the moment playback ends, and the
+    // next capture races that teardown -- which is the every-other-message
+    // silent-dictation bug. resetAudioSessionForRecording and the awaited
+    // ensureRecordingMode are a net UNDER that race; this removes the race.
+    const p = createAudioPlayer({ uri }, { keepAudioSessionActive: true });
     playerRef.current = p;
     return p;
   }

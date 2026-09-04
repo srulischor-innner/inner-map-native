@@ -41,7 +41,7 @@ import { api } from '../../services/api';
 import { JournalKind, getJournalShareDefault } from '../../services/journal';
 import { useRecorderWatch } from '../../utils/recorderWatch';
 import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
-import { ensureRecordingMode } from '../../utils/ttsStream';
+import { ensureRecordingMode, verifyCaptureLive, METERED_HIGH_QUALITY } from '../../utils/ttsStream';
 
 const FREE_FLOW_GUIDANCE = [
   'This works best when you bypass your inner editor entirely — the part of you that shapes what you say before you say it.',
@@ -106,7 +106,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   const guidanceOpacity = useRef(new Animated.Value(1)).current;
   const [guidanceCollapsed, setGuidanceCollapsed] = useState(false);
 
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorder = useAudioRecorder(METERED_HIGH_QUALITY);
   const startTimeRef = useRef<number>(0);
   // Red-dot pulse during recording.
   const pulse = useRef(new Animated.Value(1)).current;
@@ -287,6 +287,14 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   function resumeRecording() {
     try {
       recorder.record();
+      // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
+      // route flipped; on some devices the first second is digital silence and
+      // the transcript comes back empty. This samples the recorder's own
+      // metering and logs what it sees. Fire-and-forget on purpose: it must
+      // never delay capture, and it REPORTS rather than restarting -- a restart
+      // would discard whatever was already said, and the silence floor is still
+      // a guess until a real device has produced real numbers.
+      void verifyCaptureLive(() => recorder.getStatus());
       const st = recorder.getStatus();
       if (st.isRecording) {
         interruptedRef.current = false;
@@ -340,6 +348,14 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
           return false;
         }
         recorder.record();
+        // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
+        // route flipped; on some devices the first second is digital silence and
+        // the transcript comes back empty. This samples the recorder's own
+        // metering and logs what it sees. Fire-and-forget on purpose: it must
+        // never delay capture, and it REPORTS rather than restarting -- a restart
+        // would discard whatever was already said, and the silence floor is still
+        // a guess until a real device has produced real numbers.
+        void verifyCaptureLive(() => recorder.getStatus());
         recordingRef.current = true;
         setRecording(true);
         setSeconds(0);

@@ -40,7 +40,7 @@ import { getTopUpProduct, purchase } from '../../services/purchases';
 import { BudgetRefusalSheet } from '../billing/BudgetRefusalSheet';
 import { renderInlineMarkdown } from '../../utils/inlineMarkdown';
 import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
-import { ensureRecordingMode } from '../../utils/ttsStream';
+import { ensureRecordingMode, verifyCaptureLive, METERED_HIGH_QUALITY } from '../../utils/ttsStream';
 
 // Per-word reveal cadence — same value as the regular Chat tab so the
 // two surfaces feel identical to the eye. See app/(tabs)/index.tsx.
@@ -158,7 +158,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
     scrollRef.current?.scrollToEnd({ animated });
   }, []);
 
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorder = useAudioRecorder(METERED_HIGH_QUALITY);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
 
@@ -468,6 +468,14 @@ export function GuideAskModal({ visible, onClose }: Props) {
       }
       await recorder.prepareToRecordAsync();
       recorder.record();
+      // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
+      // route flipped; on some devices the first second is digital silence and
+      // the transcript comes back empty. This samples the recorder's own
+      // metering and logs what it sees. Fire-and-forget on purpose: it must
+      // never delay capture, and it REPORTS rather than restarting -- a restart
+      // would discard whatever was already said, and the silence floor is still
+      // a guess until a real device has produced real numbers.
+      void verifyCaptureLive(() => recorder.getStatus());
       setRecording(true);
       setSeconds(0);
       startTimeRef.current = Date.now();

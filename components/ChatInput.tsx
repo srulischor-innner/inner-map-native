@@ -104,7 +104,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
 import { colors, fonts, spacing } from '../constants/theme';
-import { ensureRecordingMode } from '../utils/ttsStream';
+import { ensureRecordingMode, verifyCaptureLive, METERED_HIGH_QUALITY } from '../utils/ttsStream';
 import { useRecorderWatch } from '../utils/recorderWatch';
 import { useRecordingWakeLock, WAKE_TAG } from '../utils/recordingWakeLock';
 
@@ -183,7 +183,7 @@ export function ChatInput({
   const tapHintHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tapHintFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tapHintStyle = useAnimatedStyle(() => ({ opacity: tapHintOpacity.value }));
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorder = useAudioRecorder(METERED_HIGH_QUALITY);
 
   const startTimeRef = useRef<number>(0);
 
@@ -247,6 +247,14 @@ export function ChatInput({
   function resumeRecording() {
     try {
       recorder.record();
+      // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
+      // route flipped; on some devices the first second is digital silence and
+      // the transcript comes back empty. This samples the recorder's own
+      // metering and logs what it sees. Fire-and-forget on purpose: it must
+      // never delay capture, and it REPORTS rather than restarting -- a restart
+      // would discard whatever was already said, and the silence floor is still
+      // a guess until a real device has produced real numbers.
+      void verifyCaptureLive(() => recorder.getStatus());
       const st = recorder.getStatus();
       if (st.isRecording) {
         interruptedRef.current = false;
@@ -558,6 +566,14 @@ export function ChatInput({
           return false;
         }
         recorder.record();
+        // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
+        // route flipped; on some devices the first second is digital silence and
+        // the transcript comes back empty. This samples the recorder's own
+        // metering and logs what it sees. Fire-and-forget on purpose: it must
+        // never delay capture, and it REPORTS rather than restarting -- a restart
+        // would discard whatever was already said, and the silence floor is still
+        // a guess until a real device has produced real numbers.
+        void verifyCaptureLive(() => recorder.getStatus());
         // Fresh take — clear the reconciliation signals, THEN claim it. The
         // timer is driven by the recorder watch (native durationMillis), not
         // wall clock. Deliberately NOT resetTake(): this is an ENTRY.

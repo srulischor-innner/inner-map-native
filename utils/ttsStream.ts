@@ -31,7 +31,7 @@
 //    minimum (~80 chars) OR the stream finishes. This avoids per-word
 //    fetches that produce unnatural one-syllable audio.
 
-import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { createAudioPlayer, setAudioModeAsync, RecordingPresets } from 'expo-audio';
 // expo-file-system legacy entry — class-based File API is in the
 // new top-level export, but the path-based writeAsStringAsync we
 // need still ships under /legacy and is the simplest call for
@@ -591,6 +591,87 @@ export async function ensureRecordingMode(): Promise<boolean> {
   return false;
 }
 
+/** HIGH_QUALITY, plus the one flag that makes the detector able to see.
+ *
+ *  expo-audio's RecordingPresets.HIGH_QUALITY does NOT set isMeteringEnabled
+ *  (checked in the package, not assumed), so recorder.getStatus().metering is
+ *  undefined and verifyCaptureLive below can only ever return 'unknown'.
+ *  Every recording surface that wants the check uses this instead.
+ *
+ *  Metering costs nothing meaningful -- iOS is already computing input levels;
+ *  the flag only decides whether they are handed back.
+ */
+export const METERED_HIGH_QUALITY = {
+  ...RecordingPresets.HIGH_QUALITY,
+  isMeteringEnabled: true,
+};
+
+/** THE SILENT-CAPTURE DETECTOR.
+ *
+ *  setAudioModeAsync resolving does not mean the microphone route flipped.
+ *  On some devices the promise settles while the input is still parked on the
+ *  playback route, and the first second of the recording is digital silence --
+ *  the person speaks, the waveform animates (it is timer-driven, not level-
+ *  driven), and the transcript comes back empty. ensureRecordingMode cannot see
+ *  this, because it only knows the promise resolved.
+ *
+ *  This samples the recorder's own metering for a short window after capture
+ *  starts and reports whether anything is arriving. Metering requires the
+ *  recorder to have been created with `isMeteringEnabled: true` --
+ *  RecordingPresets.HIGH_QUALITY does not set it, so each surface opts in via
+ *  METERED_HIGH_QUALITY below.
+ *
+ *  IT REPORTS; IT DOES NOT RESTART. A restart would discard whatever the person
+ *  had already said, and a false positive would then eat real speech. Until a
+ *  real device has produced real numbers here, the honest thing is to measure.
+ *  The silence floor below is a STARTING GUESS and is logged on every capture
+ *  precisely so it can be replaced with a measured one.
+ *
+ *  @returns 'live' | 'silent' | 'unknown' — 'unknown' when metering is absent,
+ *           which must never be treated as failure.
+ */
+export const SILENCE_FLOOR_DB = -55;   // GUESS. iOS metering is dBFS; true
+                                       // digital silence reads about -160.
+export async function verifyCaptureLive(
+  getState: () => { metering?: number; isRecording?: boolean } | null,
+  { windowMs = 400, sampleEveryMs = 50 }: { windowMs?: number; sampleEveryMs?: number } = {},
+): Promise<'live' | 'silent' | 'unknown'> {
+  const samples: number[] = [];
+  const deadline = Date.now() + windowMs;
+  let sawMetering = false;
+  while (Date.now() < deadline) {
+    let st: { metering?: number; isRecording?: boolean } | null = null;
+    try { st = getState(); } catch { st = null; }
+    if (st && typeof st.metering === 'number' && Number.isFinite(st.metering)) {
+      sawMetering = true;
+      samples.push(st.metering);
+      // Anything clearly above the floor means the route is live; stop early so
+      // a working capture pays almost nothing for this check.
+      if (st.metering > SILENCE_FLOOR_DB) {
+        console.log(`[audio] capture LIVE — metering=${st.metering.toFixed(1)}dB after ${samples.length} sample(s)`);
+        return 'live';
+      }
+    }
+    await new Promise((r) => setTimeout(r, sampleEveryMs));
+  }
+  if (!sawMetering) {
+    console.log('[audio] capture verify UNKNOWN — no metering (recorder not created with isMeteringEnabled?)');
+    return 'unknown';
+  }
+  const peak = Math.max(...samples);
+  console.warn(`[audio] capture SILENT — ${samples.length} sample(s), peak=${peak.toFixed(1)}dB, floor=${SILENCE_FLOOR_DB}dB. Re-arming the session.`);
+  try {
+    await setAudioModeAsync({
+      allowsRecording: true, playsInSilentMode: true,
+      interruptionMode: 'doNotMix', shouldPlayInBackground: false,
+    });
+    console.log('[audio] session re-armed after silent capture');
+  } catch (e) {
+    console.warn('[audio] re-arm after silent capture failed:', (e as Error)?.message);
+  }
+  return 'silent';
+}
+
 /** Play a single MP3 buffer to completion. Resolves only after the
  *  player reports didJustFinish (or isLoaded becomes false, or the
  *  watchToken is bumped). The worker awaits this so the next
@@ -644,7 +725,15 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
     player = null;
   }
   console.log(`[tts] playOneBuffer creating player from file URI: ${TTS_CACHE_FILE}`);
-  const p = createAudioPlayer({ uri: TTS_CACHE_FILE });
+    // keepAudioSessionActive (iOS, expo-audio 1.1.1 AudioPlayerOptions, default
+    // false). Its own doc: "The audio session for this player will not be
+    // deactivated automatically when the player finishes playback."
+    //
+    // Without it, iOS tears the session down the moment playback ends, and the
+    // next capture races that teardown -- which is the every-other-message
+    // silent-dictation bug. resetAudioSessionForRecording and the awaited
+    // ensureRecordingMode are a net UNDER that race; this removes the race.
+  const p = createAudioPlayer({ uri: TTS_CACHE_FILE }, { keepAudioSessionActive: true });
   player = p;
   console.log('[tts] playOneBuffer player created, setting volume=1.0');
   // Belt-and-braces volume reset, mirroring map voice's playArrayBuffer.
