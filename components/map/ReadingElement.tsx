@@ -199,6 +199,13 @@ export function ReadingElement(
   // itself and holds the explanation behind a tap.
   const sub = generating
     ? READING_WAITING_LINES[lineIdx]?.text ?? READING_WAITING_LINES[0].text
+    // UNUSED CONSTANT, FLAGGED NOT FIXED (2026-09-03). READING_ERROR_BODY is
+    // imported at the top of this file and rendered NOWHERE, so the reassuring
+    // half of the failure state -- "Nothing on your map changed" -- has never
+    // been on screen. I changed this line to render it and reverted: the label
+    // above is READING_LABEL, not the error title, so swapping this to the body
+    // removes the title from the UI entirely. Showing both needs a second line
+    // on a deliberately one-line strip, which is a design decision, not a fix.
     : failed ? READING_ERROR_TITLE
     : locked ? null
     // PLACEMENT A: the element ANNOUNCES that the map has moved. The action

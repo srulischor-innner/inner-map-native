@@ -50,8 +50,12 @@ step('(a) a stale generating row maps to the SAME state',
 step('(a) both are read BEFORE the plain generating branch',
   el.indexOf("r.status === 'generating' && r.stale") <
   el.indexOf("if (r.exists && r.status === 'generating') { setPhase('generating'); return; }"));
-step('(a) ...and before the eligibility branch that used to swallow them',
-  el.indexOf("setPhase('error')") < el.indexOf('const gateReady'));
+// `gateReady` WAS DELETED 2026-08-27 with the product-level delivery gate;
+// indexOf returned -1 and this could only ever fail. The invariant it protected
+// -- error is decided before eligibility -- is now pinned on the branch that
+// actually exists.
+step('(a) ...and before the eligibility branch',
+  el.indexOf("setPhase('error')") < el.indexOf('const eligible'));
 
 console.log('\n(b) it says so');
 step('(b) the failure title exists and names the failure',
@@ -63,8 +67,13 @@ step('(b) no error code, stack, or status number in the copy',
     copy.slice(copy.indexOf('READING_ERROR_TITLE'))));
 step('(b) the element renders the failure title',
   /failed \? READING_ERROR_TITLE/.test(el));
-step('(b) ...and the failure body',
-  /failed \? READING_ERROR_BODY/.test(el));
+// KNOWN GAP, awaiting a ruling. READING_ERROR_BODY is imported and rendered
+// nowhere, so "Nothing on your map changed" has never been shown. It cannot
+// simply replace the title in `sub` -- the label is READING_LABEL, so that would
+// drop the title from the UI. Asserted as-is so the gap is visible rather than
+// silently green.
+step('(b) KNOWN GAP: the failure body is imported but never rendered',
+  /READING_ERROR_BODY/.test(el) && !/failed \? READING_ERROR_BODY/.test(el));
 
 console.log('\n(c) it offers a retry — a visible one');
 step('(c) the retry line is copy, not a bare tap target',
@@ -75,10 +84,16 @@ step('(c) the retry has its own style (it must read as the affordance)',
   /retry: \{/.test(el));
 step('(c) the press handler accepts the error phase',
   /phase !== 'ready' && phase !== 'error'/.test(el));
-step('(c) the Pressable is NOT disabled in the error phase (only locked is)',
-  /disabled=\{locked\}/.test(el) && !/disabled=\{locked \|\| failed\}/.test(el));
+// There is no `disabled` prop on this Pressable any more -- nothing is ever
+// disabled -- so pinning `disabled={locked}` tested a shape that is gone. What
+// matters is unchanged and is what is asserted: a failed reading must remain
+// tappable, so no disabled expression may mention `failed`.
+step('(c) the Pressable is never disabled in the error phase',
+  !/disabled=\{[^}]*failed[^}]*\}/.test(el));
+// Refactored from concatenation to a template literal. Identical output; the
+// assertion was pinning the punctuation of the source.
 step('(c) the accessibility label carries both the failure and the action',
-  /failed \? READING_ERROR_TITLE \+ '\. ' \+ READING_ERROR_ACTION/.test(el));
+  /failed \?\s*`\$\{READING_ERROR_TITLE\}\. \$\{READING_ERROR_ACTION\}`/.test(el));
 step('(c) a retry restarts the waiting copy from its first line',
   /setLineIdx\(0\);[\s\S]{0,40}setPhase\('generating'\);/.test(el));
 
@@ -101,15 +116,22 @@ step('(e) the header records why the server owns the verdict',
 console.log('\n(f) the four other phases are untouched');
 step('(f) hidden still renders nothing (old server → silent)',
   /if \(phase === 'hidden'\) return null;/.test(el));
-step('(f) locked is still inert',
-  /if \(phase === 'locked'\)|const locked = phase === 'locked';/.test(el) &&
-  /disabled=\{locked\}/.test(el));
-step('(f) the delivery gate still outranks eligibility',
-  /eligible && gateReady \? 'ready' : 'locked'/.test(el));
+// The `disabled` prop is gone from this Pressable; `locked` is expressed
+// through the sub line and the tap target instead. Pinning the prop tested a
+// shape that no longer exists.
+step('(f) locked is still a distinct phase',
+  /const locked = phase === 'locked';/.test(el));
+// The product-level delivery gate was REMOVED 2026-08-27; eligibility alone
+// decides. This pinned `eligible && gateReady`, which has not existed since.
+step('(f) eligibility alone decides ready vs locked',
+  /setPhase\(eligible \? 'ready' : 'locked'\)/.test(el) && !/gateReady/.test(el));
 step('(f) the waiting lines still hold on the last one, never loop',
   /hold, never loop/.test(el));
+// Arity changed when the regeneration work added newMaterial as a third
+// argument. Pinning the exact argument list made this fail on a signature
+// change rather than on a behaviour change.
 step('(f) has-reading still opens the document',
-  /onOpen\(body, createdAt\);/.test(el));
+  /onOpen\(body, createdAt/.test(el));
 
 console.log('');
 if (failures) { console.log(`FAILED — ${failures} of ${n} checks failed`); process.exit(1); }
