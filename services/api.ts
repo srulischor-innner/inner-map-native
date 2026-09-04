@@ -542,6 +542,58 @@ export function parseBudgetRefusal(raw: unknown): BudgetRefusal | null {
   }
 }
 
+/** THE TRIAL FREEZE REFUSAL.
+ *
+ *  Deliberately the SAME SHAPE as a budget refusal (error / title / body) so
+ *  the sheet, the parser and every call site stay one mechanism. A second
+ *  payload shape would mean a second parser to keep in step, and the pair
+ *  drifting apart is how these things rot.
+ *
+ *  Arrives on the same two transports for the same reason: HTTP 402 with the
+ *  payload as the body on a non-streaming call, and — because the freeze runs
+ *  before any header is written — a plain 402 rather than an event-stream
+ *  frame on a streaming one. There is no `trial_expired` SSE frame to parse,
+ *  and that is on purpose: nothing has been written to the response yet, so
+ *  there is no half-open stream to rescue.
+ */
+export type TrialFreezeRefusal = {
+  title: string;
+  body: string;
+  trialEndsAt: string | null;
+};
+
+export function parseTrialFreeze(raw: unknown): TrialFreezeRefusal | null {
+  try {
+    if (!raw || typeof raw !== 'object') return null;
+    const r = raw as any;
+    if (r.error !== 'trial-expired' && r.type !== 'trial_expired') return null;
+    return {
+      title: typeof r.title === 'string' && r.title ? r.title : 'Your free week is up.',
+      body: typeof r.body === 'string' && r.body
+        ? r.body
+        : "Everything you've made is still here — your map, your journal, past conversations and your reading are all still yours to read.",
+      trialEndsAt: typeof r.trialEndsAt === 'string' ? r.trialEndsAt : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** One helper for the four money endpoints that had NO error path at all —
+ *  map voice, self voice, reading generation and the journal write. Each of
+ *  them failed silently: a dead mic, a spinner that stopped, a save that did
+ *  nothing. Under a freeze that would have been the whole experience of the
+ *  app ending, with no sentence anywhere saying why.
+ *
+ *  Returns the refusal to show, or null if this was an ordinary failure.
+ */
+export async function refusalFromResponse(res: Response): Promise<TrialFreezeRefusal | BudgetRefusal | null> {
+  if (res.status !== 402) return null;
+  let body: unknown = null;
+  try { body = await res.clone().json(); } catch { return null; }
+  return parseTrialFreeze(body) || parseBudgetRefusal(body);
+}
+
 export const api = {
   baseUrl: BASE_URL,
 
