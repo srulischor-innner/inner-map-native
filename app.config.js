@@ -280,6 +280,22 @@ const base = {
       //   App Store app id: app59d360e6a1
       //   Play Store app id: app1d14531c80  (key not yet fetched — iOS first)
       revenueCatApiKeyIos: 'appl_ewysvfFZFWSmDXeLyHqTgXxXscf',
+      // ANDROID KEY — PASTE THE VALUE FROM RevenueCat -> Project -> API keys ->
+      // the Google Play app's PUBLIC SDK key. It starts with `goog_`.
+      //
+      // Publishable, like the iOS key above: it ships inside the binary by
+      // design and is not a secret. It is empty here only because reading it
+      // requires signing into the RevenueCat dashboard.
+      //
+      // WHILE IT IS EMPTY, ANDROID DOES NOT CONFIGURE AT ALL and says so in the
+      // log (services/purchases.ts). It never configures with a placeholder --
+      // that would mint an anonymous id against a project that cannot serve it,
+      // which is worse than not configuring.
+      //
+      // Or set EXPO_PUBLIC_REVENUECAT_ANDROID_KEY and leave this empty; the
+      // env value wins, which is what EAS builds should use.
+      revenueCatApiKeyAndroid:
+        process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY || '',
       eas: {
         projectId: '14bce05f-41e2-42f3-aa6c-3c153023894f',
       },

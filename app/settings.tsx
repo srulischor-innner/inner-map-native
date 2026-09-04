@@ -1329,10 +1329,15 @@ function YourPlanSection() {
   // face. Returning null here (after all hooks, so hook order is stable) drops
   // the amber YOUR PLAN label with the rows — no empty header.
   //
-  // REMOVE THIS GATE when the Play Store billing key lands and
-  // configurePurchases() configures on Android; then restore the per-row
-  // `isIOS` check on Manage subscription, which is Apple-specific for good.
-  if (!isIOS) return null;
+  // GATE REMOVED 2026-09-04, as its own note instructed: configurePurchases()
+  // now configures on Android when a goog_ key is present. The per-row isIOS
+  // check on "Manage subscription" is restored below instead, because that row
+  // deep-links to Apple's subscription management and is Apple-specific for
+  // good -- Android's equivalent lives in the Play Store app.
+  //
+  // With no Android key pasted yet, purchases stay unconfigured and the rows
+  // render their normal not-available state rather than disappearing, which is
+  // the honest thing to show: the section exists, it just cannot transact.
 
   // Nothing to say is better than saying the wrong thing: null subtitle =
   // the status read failed, so we render the row bare (see planSubtitle).
@@ -1373,17 +1378,25 @@ function YourPlanSection() {
         )}
       </Pressable>
 
-      <Pressable
-        onPress={handleManage}
-        style={styles.linkRow}
-        accessibilityLabel="Manage subscription"
-      >
-        <View style={{ flex: 1 }}>
-          <Text style={styles.rowTitle}>Manage subscription</Text>
-          <Text style={styles.rowSub}>Change or cancel in your Apple Account.</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
-      </Pressable>
+      {/* PER-ROW iOS CHECK, restored 2026-09-04 when the section-wide gate came
+          off. This row deep-links to Apple's subscription management and its
+          subtitle names the Apple Account, so it is Apple-specific for good --
+          on Android the equivalent lives in the Play Store app, which is a
+          different destination with different copy. Showing it on Android would
+          point people at an account they are not subscribed through. */}
+      {isIOS ? (
+        <Pressable
+          onPress={handleManage}
+          style={styles.linkRow}
+          accessibilityLabel="Manage subscription"
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Manage subscription</Text>
+            <Text style={styles.rowSub}>Change or cancel in your Apple Account.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
+        </Pressable>
+      ) : null}
     </>
   );
 }

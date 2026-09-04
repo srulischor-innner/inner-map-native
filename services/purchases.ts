@@ -125,20 +125,38 @@ export async function configurePurchases(): Promise<void> {
 
   const run = (async () => {
     try {
-      // PLATFORM GUARD — there is no Android key yet. Configuring with an
-      // empty/absent key mints a bogus anonymous id against a project that
-      // can't serve it, so we simply don't configure.
-      if (Platform.OS !== 'ios') {
+      // PLATFORM GUARD, now per-platform. Android was refused outright
+      // because there was no key for it; there is a slot for one now, and the
+      // guard moved from "which platform is this" to "is there a key".
+      //
+      // The reason the old guard existed still holds and is why the key check
+      // below is unchanged: configuring with an empty or placeholder key mints
+      // a bogus anonymous id against a project that cannot serve it, which is
+      // worse than not configuring. So an Android build with no key pasted
+      // behaves exactly as Android did before this change.
+      const extra = (Constants.expoConfig?.extra as any) || {};
+      const keyForPlatform =
+        Platform.OS === 'ios' ? (extra.revenueCatApiKeyIos as string)
+        : Platform.OS === 'android' ? (extra.revenueCatApiKeyAndroid as string)
+        : '';
+      if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
         _configureImpossible = true;
-        console.warn(`[purchases] skipping configure — no RevenueCat key for platform "${Platform.OS}"`);
+        console.warn(`[purchases] skipping configure — unsupported platform "${Platform.OS}"`);
         return;
       }
 
-      const apiKey = ((Constants.expoConfig?.extra as any)?.revenueCatApiKeyIos as string) || '';
-      if (!apiKey) {
+      const apiKey = keyForPlatform || '';
+      // A key that is present but obviously not a key is treated as absent.
+      // RevenueCat keys are prefixed by platform, so this is checkable without
+      // ever logging the value.
+      const expectedPrefix = Platform.OS === 'ios' ? 'appl_' : 'goog_';
+      if (!apiKey || !apiKey.startsWith(expectedPrefix)) {
         _configureImpossible = true;
-        // Presence only. The value is never logged.
-        console.warn('[purchases] skipping configure — extra.revenueCatApiKeyIos is empty');
+        // Presence and shape only. The value is never logged.
+        console.warn(
+          `[purchases] skipping configure — extra.revenueCatApiKey${Platform.OS === 'ios' ? 'Ios' : 'Android'} ` +
+          `is ${apiKey ? `not a ${expectedPrefix}… key` : 'empty'}`,
+        );
         return;
       }
 
