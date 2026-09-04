@@ -159,9 +159,18 @@ export const READING_GOT_IT = 'GOT IT';
 // it proves too eager, and impossible to tune without seeing how often it fires.
 export const READING_UPDATE_AVAILABLE_SUB = 'Your map has moved since this was written.';
 export const READING_UPDATE_ACTION = 'Write an updated reading';
-// "Update" implies replacement. It is not one: the server keeps every reading
-// as a dated document, so saying so removes the only reason to hesitate.
-export const READING_UPDATE_NOTE = 'About a minute. This one is kept.';
+// CORRECTED 2026-09-03. This read "About a minute. This one is kept." and its
+// comment said the note existed to remove "the only reason to hesitate". The
+// sentence was true about the DATABASE and false about the product: the server
+// stores every reading, but GET /api/reading is ORDER BY createdAt DESC LIMIT 1,
+// there is no list endpoint, and ReadingElement/ReadingModal are the only
+// reading UI -- so the page a person was reading became permanently unreachable
+// the moment they tapped, and it is not in the account export either. A
+// reassurance placed directly under the button, written to stop someone
+// hesitating, was telling them the opposite of what would happen.
+//
+// It now says what happens. A reading history is a separate build, not shipped.
+export const READING_UPDATE_NOTE = 'About a minute. This replaces the one you have.';
 
 // ---------------------------------------------------------------------------
 // WAITING (generation takes 50-60s) — unchanged, founder ruling 2026-08-21k.

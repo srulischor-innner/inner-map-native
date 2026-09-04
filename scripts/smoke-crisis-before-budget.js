@@ -9,7 +9,12 @@
 //     onCrisis must fire (which gates the composer and surfaces the
 //     resources card). A billing sheet can NEVER displace a crisis response.
 //
-// The server guarantees its crisis gate returns ahead of its budget gate.
+// SCOPE, STATED HONESTLY (2026-09-03). Steps 1-16 test the CLIENT: given both
+// frames, crisis wins. They cannot see whether the server sent a crisis frame
+// at all. This file used to assert the other half as a given -- "the server
+// guarantees its crisis gate returns ahead of its budget gate" -- and that was
+// false for the three classes answered by the model rather than by
+// deterministic text. Steps 17+ test the server directly.
 // The client does not get to rely on that. This test is the client-side
 // half of the guarantee.
 //
@@ -503,6 +508,87 @@ const WHY =
     const ok = budgetSites === 4 && crisisSites === 3;
     step(16, 'sweep: emission-site counts unchanged (4 budget, 3 crisis) — new transports must extend this test', ok,
       `onBudgetExhausted call sites=${budgetSites} (expected 4)\nonCrisis call sites=${crisisSites} (expected 3)\nA new budget emission site is a new transport that can displace a crisis, and a\nnew crisis site is a new path that must win. Either way: add a case above,\nthen update these counts. Do not just bump the numbers.\n${WHY}`);
+  }
+
+  // ============ SERVER COVERAGE — the half the name promised ============
+  // Steps 1-16 prove the client prefers crisis when BOTH frames arrive. They
+  // are silent about the case that actually shipped: the server sending no
+  // crisis frame and a 402 instead. These steps read the server directly.
+  {
+    const path = require('path');
+    const SERVER_DIR = path.join(__dirname, '..', '..', 'Inner world');
+    const serverPath = path.join(SERVER_DIR, 'server.js');
+    let srv = null;
+    try { srv = require('fs').readFileSync(serverPath, 'utf8'); } catch (e) { srv = null; }
+
+    if (!srv) {
+      console.log('  [17] SKIP  server coverage — ' + serverPath + ' not readable from here');
+    } else {
+      // ---- derive the class set from the function, never a hand list ----
+      // A hand-maintained list is exactly how the gap survived: the crisis
+      // smoke's own CRISIS_BEARING_PROMPTS is a four-entry hand list under the
+      // comment "EVERY PROMPT THAT CAN REACH A PERSON IN CRISIS".
+      let classes = null;
+      try {
+        const { crisisResponseClass } = require(path.join(SERVER_DIR, 'prompts', 'crisisBlock'));
+        const out = new Set();
+        for (const subject of ['self', 'other']) {
+          for (const temporal of ['current', 'historical', 'bereavement', undefined]) {
+            for (const tier of [1, 2]) {
+              for (const attempt of [true, false]) {
+                const c = crisisResponseClass({ subject, temporal, tier, attempt });
+                if (c) out.add(c);
+              }
+            }
+          }
+        }
+        classes = [...out].sort();
+      } catch (e) { classes = null; }
+
+      step(17, 'crisis classes are DERIVED from crisisResponseClass, not hand-listed',
+        Array.isArray(classes) && classes.length >= 6,
+        `derived: ${JSON.stringify(classes)}\nIf this is null the enumeration failed and every step below is vacuous.`);
+
+      // ---- anti-vacuity: the six we know must all be in the derived set ----
+      const KNOWN = ['acute', 'past_check_in', 'past_check_in_attempt', 'stand_down', 'support', 'third_party'];
+      const missing = (classes || []).length ? KNOWN.filter((k) => !classes.includes(k)) : KNOWN;
+      step(18, 'anti-vacuity: every known class appears in the derived set',
+        missing.length === 0, `missing from derivation: ${missing.join(', ')}`);
+
+      // ---- the carve-out exists and is read by BOTH budget gates ----
+      const chatCarve = /if \(!_budget\.allow && !crisisTurn && !pastSelfClass\)/.test(srv);
+      const guideCarve = /if \(!_budget\.allow && !guideCrisisTurn && !guidePastSelfClass\)/.test(srv);
+      step(19, '/api/chat budget gate is carved out for crisis turns', chatCarve,
+        'expected `if (!_budget.allow && !crisisTurn && !pastSelfClass)` in server.js');
+      step(20, '/api/guide-chat budget gate is carved out for crisis turns', guideCarve,
+        'expected `if (!_budget.allow && !guideCrisisTurn && !guidePastSelfClass)` in server.js');
+
+      // ---- the flag is set on ANY fire, not on an enumerated class list ----
+      const anyFire = /if \(_preLLM \|\| _class \|\| _activeGate\) crisisTurn = true;/.test(srv);
+      const pending = /crisisPastCheckInPending\(messages\)\) crisisTurn = true;/.test(srv);
+      step(21, 'the carve-out triggers on ANY fire and on an open check-in, not on a class list',
+        anyFire && pending,
+        `anyFire=${anyFire} pendingCheckIn=${pending}\nA class list here would need editing for every new class — which is the bug this replaces.`);
+
+      // ---- MUTATION GUARD: remove the carve-out, the assertions must fail ----
+      // Without this, steps 19-21 could pass against a file that merely
+      // MENTIONS the identifiers in a comment.
+      const mutated = srv
+        .replace('if (!_budget.allow && !crisisTurn && !pastSelfClass)', 'if (!_budget.allow)')
+        .replace('if (!_budget.allow && !guideCrisisTurn && !guidePastSelfClass)', 'if (!_budget.allow)');
+      const mutantCaught =
+        !/if \(!_budget\.allow && !crisisTurn && !pastSelfClass\)/.test(mutated) &&
+        !/if \(!_budget\.allow && !guideCrisisTurn && !guidePastSelfClass\)/.test(mutated);
+      step(22, 'mutation guard: stripping the carve-out makes steps 19-20 fail',
+        mutantCaught, 'the assertions match something other than the gate condition');
+
+      // ---- the comments no longer assert the invariant they used to break ----
+      const oldLie1 = srv.includes('A crisis turn never\n  // reaches here');
+      const oldLie2 = srv.includes('The crisis gate above ALWAYS returns first');
+      step(23, 'the two comments that asserted the false invariant are gone',
+        !oldLie1 && !oldLie2,
+        `Those comments claimed the gate could not be reached in crisis. It could. If they are back, either the carve-out was reverted or someone restored the claim without the mechanism.`);
+    }
   }
 
   console.log('');

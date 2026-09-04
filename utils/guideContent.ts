@@ -496,7 +496,7 @@ export const USING_FEATURES: GuideFeature[] = [
     body: [
       "A reading is a page written back to you about your whole map \u2014 everything at once, instead of a part at a time. It is the one thing the conversation cannot do: chat stays with whatever is in front of you, and this stands back and reads all of it together.",
       "It waits until there is enough to read. It needs the belief at the centre \u2014 what your wound actually says \u2014 both sides that answer it, the Fixer and the Skeptic, and at least one protector with something filled in. Until then the card on the Map tab tells you which of those pieces your map is still missing.",
-      "When it is ready, tap it on the Map tab. It takes about a minute to write. Readings are kept as a dated series, so you can read an old one beside a new one. When your map moves afterwards, the card says so and you can ask for an updated one \u2014 the old one is never overwritten.",
+      "When it is ready, tap it on the Map tab. It takes about a minute to write. When your map moves afterwards, the card says so and you can ask for an updated one. A new reading REPLACES the one you have \u2014 there is no history to go back to yet, so if there is something in it you want to keep, copy it out first.",
     ],
   },
   {
