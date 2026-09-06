@@ -132,7 +132,7 @@ const EXPLAINER_BODY = [
   // Mirrors the spec verbatim. The render path splits this into
   // paragraphs so the prose breathes.
   "Most of the time, when a part is loud — anxious, harsh, fearful — you don't notice. You ARE the anxiety. That's called blending. You're fused with the part. From the inside, it just feels like you.",
-  "When you tap a mic and speak, the AI listens for which part is talking through you. That part lights up on the map — you see it externally, separate from you. That's unblending happening in real time. The moment you see \"oh, that's a part — I'm not that,\" a small space opens.",
+  "When you tap a mic and speak, the AI listens for which part is talking through you. That part lights up on the map — you see it externally, separate from you. The moment you see \"oh, that's a part — I'm not that,\" a small space opens.",
   "Then a voice responds:",
 ];
 const EXPLAINER_SELF_LINE =

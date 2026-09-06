@@ -394,6 +394,21 @@ export type StreamCallbacks = {
    *  a caller can re-run parseBudgetRefusal on it if it wants the
    *  unnormalised form. */
   onBudgetExhausted?: (refusal: BudgetRefusal, raw: unknown) => void;
+  /** Trial freeze (2026-09-06) — fires when the server refused this turn
+   *  because the 7-day trial is over. SEPARATE from onBudgetExhausted on
+   *  purpose: they are different products with different remedies (top up a
+   *  spent pool vs. start a membership), and collapsing them would show
+   *  someone a "top up" action for a trial that has simply ended.
+   *
+   *  Before this existed, parseTrialFreeze had ZERO call sites: the 402 fell
+   *  through parseBudgetRefusal — which matches on `budget-exhausted` and
+   *  returns null for this payload — to cb.onError('chat 402'), and the person
+   *  saw "Something went wrong on my end… try again when you're ready" with a
+   *  retry pill, on a loop, with nothing anywhere naming the trial.
+   *
+   *  Same opt-in shape as onBudgetExhausted: callers that don't implement it
+   *  fall through to onError with the server's title, so nothing regresses. */
+  onTrialExpired?: (refusal: TrialFreezeRefusal, raw: unknown) => void;
 };
 
 // ============================================================================
@@ -788,6 +803,16 @@ export const api = {
         // server-authored refusal (title / body / reset / priced action).
         if (res.status === 402) {
           const rawBody: unknown = await res.json().catch(() => null);
+          // TRIAL FIRST (2026-09-06). Both refusals arrive as a 402 on this
+          // path, and parseBudgetRefusal returns null for the trial payload —
+          // so before this, an expired trial reached cb.onError('chat 402') and
+          // rendered as a generic "something went wrong" with a retry pill.
+          const trial = parseTrialFreeze(rawBody);
+          if (trial) {
+            if (cb.onTrialExpired) cb.onTrialExpired(trial, rawBody);
+            else cb.onError(trial.title);
+            return;
+          }
           const refusal = parseBudgetRefusal(rawBody);
           if (refusal) {
             if (cb.onBudgetExhausted) cb.onBudgetExhausted(refusal, rawBody);
@@ -1421,12 +1446,17 @@ export const api = {
    *  immediately with status 'generating'; the element polls getReading().
    *  An ineligible map is NOT an error here: the server answers 200 with
    *  eligible:false, because the gate is a path, not a refusal. */
-  async generateReading(): Promise<{ ok?: boolean; eligible?: boolean; id?: string; status?: string } | null> {
+  async generateReading(): Promise<{ ok?: boolean; eligible?: boolean; id?: string; status?: string; refusal?: TrialFreezeRefusal | BudgetRefusal } | null> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/reading/generate', {
         label: 'reading-generate', method: 'POST', headers,
       });
+      // A 402 used to fall into `return null`, which the element renders as an
+      // ordinary failure — a spinner that stops with no sentence anywhere. Hand
+      // the refusal back so the caller can say why nothing happened.
+      const refusal = await refusalFromResponse(res);
+      if (refusal) return { refusal };
       if (!res.ok) return null;
       return await res.json();
     } catch (e) {
@@ -1676,6 +1706,9 @@ export const api = {
        *  a caller omits it the refusal falls through to onError with the
        *  server's title, so no call site regresses. */
       onBudgetExhausted?: (refusal: BudgetRefusal, raw: unknown) => void;
+      /** Trial freeze -- separate from the budget cap; different remedy.
+       *  See the note on the chat callback type above. */
+      onTrialExpired?: (refusal: TrialFreezeRefusal, raw: unknown) => void;
     },
   ): Promise<() => void> {
     const headers = await authHeaders();
@@ -1726,6 +1759,13 @@ export const api = {
         // into a status-plus-preview string.
         let raw: unknown = null;
         try { raw = JSON.parse(xhr.responseText || ''); } catch { /* not JSON */ }
+        // TRIAL FIRST — same ordering and same reason as the chat 402 above.
+        const trial = parseTrialFreeze(raw);
+        if (trial) {
+          if (cb.onTrialExpired) cb.onTrialExpired(trial, raw);
+          else cb.onError(trial.title);
+          return;
+        }
         const refusal = parseBudgetRefusal(raw);
         if (refusal) {
           if (cb.onBudgetExhausted) cb.onBudgetExhausted(refusal, raw);

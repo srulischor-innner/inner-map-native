@@ -129,8 +129,9 @@ export function SupportResourcesScreen({ onContinue, continueLabel }: Props) {
         <Text style={styles.resCardLabel}>IF YOU CAN GET TO A THERAPIST</Text>
         <Text style={styles.resCardText}>
           A real therapist who knows you over time is the single most useful
-          resource for the kind of work this app touches. Inner Map can help
-          you go deeper in those sessions — it isn't a replacement.
+          resource for the kind of work this app touches. Inner Map isn't a
+          replacement for that — anything that comes up here is yours to take
+          into those sessions.
         </Text>
         <Text style={styles.resCardText}>
           openpathcollective.org and inclusivetherapists.com both list

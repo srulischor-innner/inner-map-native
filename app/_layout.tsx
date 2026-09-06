@@ -464,7 +464,43 @@ function RootLayout() {
           // sign-in forever."
           signInChoiceMade: true,
         };
-        const state = await withTimeout(getOnboardingState(), 3000, fallback, 'getOnboardingState');
+        // RETRY BEFORE GUESSING (2026-09-06). This was a single 3s read whose
+        // fallback claimed termsAccepted:true. On a fresh install with slow
+        // storage that made `complete` true, and the device fell straight
+        // through to the main tabs having never seen the terms screen OR the
+        // age question — isAgeGateBlocked() cannot catch that, because it is
+        // only true for a device that was explicitly DECLINED, and a
+        // never-asked device correctly reports false.
+        //
+        // So: ask again with a longer window before assuming anything. A merely
+        // slow read (the common case — Android's serial executor under first-
+        // launch load) resolves on the retry and nobody is bounced anywhere.
+        let state = await withTimeout<OnboardingState | null>(
+          getOnboardingState(), 3000, null, 'getOnboardingState');
+        if (state === null) {
+          // 2s, NOT 5s. These caps are SEQUENTIAL with the age read below, and
+          // the total is what a person stares at a splash screen for: 3 + 5 + 3
+          // is eleven seconds of nothing on a stalled device. 3 + 2 + 3 keeps
+          // the worst case at eight and still catches the case this retry is
+          // actually for — a read that was merely slow under first-launch load,
+          // not one that is never coming back.
+          state = await withTimeout<OnboardingState | null>(
+            getOnboardingState(), 2000, null, 'getOnboardingState(retry)');
+        }
+        if (state === null) {
+          // STILL UNKNOWN. The loop-breakers stay TRUE so nobody is trapped on
+          // /sign-in — but termsAccepted goes FALSE, because a legal gate must
+          // fail toward SHOWING the screen and never toward waiving it. That is
+          // the same ruling the age gate twenty lines below already applies to
+          // itself; this fallback was the one place that contradicted it.
+          //
+          // Cost is bounded and symmetric, exactly as it is there: /onboarding
+          // re-reads on mount, the user meets the live age gate at the 'age'
+          // phase, and an adult re-entering a date is returned to the app with
+          // their account, tokens and data untouched.
+          console.warn('[boot] onboarding state UNKNOWN after retry — routing to /onboarding (legal gates fail toward showing)');
+          state = { ...fallback, termsAccepted: false };
+        }
         console.log('[boot] step 1/3 done — state:', state);
 
         // Build 11 boot routing — TWO sequential gates:

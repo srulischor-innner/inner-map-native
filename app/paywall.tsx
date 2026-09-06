@@ -103,7 +103,7 @@ import {
 // Capabilities, not quantities. See the COPY RULE note above before editing.
 const CAPABILITIES = [
   'Mapping conversations that build your parts map',
-  "Healing work with the parts you've mapped",
+  "Conversations with the parts you've mapped",
   'Map Voice — speak to Self, and lead from your own ground',
   'Journal, Guide, and your full history',
 ];

@@ -46,7 +46,7 @@ import { ensureRecordingMode, verifyCaptureLive, METERED_HIGH_QUALITY } from '..
 const FREE_FLOW_GUIDANCE = [
   'This works best when you bypass your inner editor entirely — the part of you that shapes what you say before you say it.',
   "Start writing and don't stop. Don't correct, don't reread, don't make it make sense. If you don't know what to write, write that — until something else comes.",
-  "What surfaces when the filter is off is often closer to what's actually there. Writing this way can release energy that's been held — and helps your map reflect what's really underneath, not just what feels safe to say.",
+  "What surfaces when the filter is off is often closer to what's actually there. Writing this way helps your map reflect what's really underneath, not just what feels safe to say.",
   'Ready? Just start.',
 ];
 

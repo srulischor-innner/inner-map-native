@@ -37,7 +37,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useRouter, useFocusEffect } from 'expo-router';
 
 import { api, ChatMessage } from '../../services/api';
-import type { BudgetRefusal } from '../../services/api';
+import type { BudgetRefusal, TrialFreezeRefusal } from '../../services/api';
 import { getTopUpProduct, purchase } from '../../services/purchases';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete, holdBackBoundary } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState, useAttentionState } from '../../utils/attentionState';
@@ -80,6 +80,7 @@ import { SessionSummaryModal, SessionSummary, DeepenedPart } from '../../compone
 import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
 import { WorkingModeControl, type WorkingMode } from '../../components/WorkingModeControl';
+import { ModeBoxes } from '../../components/ModeBoxes';
 import { ConversationStarters } from '../../components/ConversationStarters';
 import { EndSessionButton } from '../../components/EndSessionButton';
 import { CrisisResourcesCard } from '../../components/safety/CrisisResourcesCard';
@@ -393,6 +394,17 @@ export default function ChatScreen() {
   // the captured `budgetRefusal` closure would still say otherwise.
   const budgetRefusalRef = useRef<BudgetRefusal | null>(null);
   useEffect(() => { budgetRefusalRef.current = budgetRefusal; }, [budgetRefusal]);
+
+  // THE TRIAL FREEZE (2026-09-06). Kept as its own state rather than folded
+  // into budgetRefusal: the remedy is different. A spent budget is topped up;
+  // an ended trial needs a membership, and showing someone a "Top up" button
+  // for a week that simply ran out is the wrong sentence at the wrong moment.
+  //
+  // Until this existed the 402 fell through to the generic send-error path and
+  // the whole experience of the app ending was "Something went wrong on my end
+  // — take a breath, and try again when you're ready", with a retry pill, on a
+  // loop, and no sentence anywhere naming the trial or how to continue.
+  const [trialRefusal, setTrialRefusal] = useState<TrialFreezeRefusal | null>(null);
   // Store round-trip state. TWO things, doing two different jobs:
   //   • topUpBusyRef — the SYNCHRONOUS re-entrancy guard. setState is async,
   //     so only a ref can block a second tap landing in the same tick.
@@ -1565,6 +1577,25 @@ export default function ChatScreen() {
               setTyping(false);
               setBudgetRefusal(refusal);
             },
+            // Mirrors onBudgetExhausted exactly, including the crisis latch:
+            // a billing sheet of any kind must never displace a crisis turn.
+            onTrialExpired: (refusal) => {
+              if (crisisFired) {
+                console.log('[chat] trial refusal suppressed — crisis owns this turn');
+                return;
+              }
+              console.log('[chat] trial expired — showing refusal sheet');
+              abortStreamRef.current = null;
+              stopTurnRef.current = null;
+              setAttentionState('idle');
+              turnThread.setMessages((prev) => prev.filter((m) => m.id !== streamId));
+              turnThread.historyRef.current = turnThread.historyRef.current.filter(
+                (h) => !(h.role === 'assistant' && h.content === ''),
+              );
+              setSending(false);
+              setTyping(false);
+              setTrialRefusal(refusal);
+            },
             onError: (err) => {
               console.warn('[chat] stream error:', err);
               abortStreamRef.current = null;
@@ -1784,6 +1815,22 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // THE OPENING MODE BOXES — shown once per session, under the second
+  // assistant message. Dismissed by a pick, and never re-shown after: it is an
+  // opening question, not a recurring prompt. The always-available control at
+  // the top of the screen is how a mode gets changed after this.
+  const [modeBoxesDismissed, setModeBoxesDismissed] = useState(false);
+  const showModeBoxes = useMemo(() => {
+    if (modeBoxesDismissed || crisisGated || typing || sending) return false;
+    let assistants = 0, users = 0;
+    for (const m of messages) {
+      if (m.role === 'assistant') assistants++;
+      else if (m.role === 'user') users++;
+    }
+    // Exactly: greeting + one reply, and the person has spoken at least once.
+    return users >= 1 && assistants === 2;
+  }, [modeBoxesDismissed, crisisGated, typing, sending, messages]);
+
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
     () => messages.map((m) => (
       <MessageBubble
@@ -1934,6 +1981,35 @@ export default function ChatScreen() {
                 first-session banner already says "building your map". */}
             {bubbleList}
             {typing ? <TypingIndicator /> : null}
+            {/* THE OPENING MODE QUESTION (founder ruling 2026-09-06).
+                Under the SECOND assistant message: the first is the greeting,
+                the second responds to what they actually said. Showing it any
+                earlier would ask someone to categorise how they want to be met
+                before they have said anything.
+
+                SKIPPABLE by ruling — there is no branch here that blocks the
+                composer or the reply. Ignoring it leaves the session in
+                whatever mode the control already shows, and the boxes fall
+                away on the next turn.
+
+                Suppressed while a crisis owns the screen, on the same rule as
+                the billing sheets: nothing that asks a person to choose how to
+                work may sit over a referral. */}
+            {showModeBoxes ? (
+              <ModeBoxes
+                current={workingMode}
+                onPick={(next) => {
+                  setModeBoxesDismissed(true);
+                  if (next === workingMode) return;
+                  // Same three writes as the control's own onChange — the ref
+                  // first, synchronously, so a turn started in this same tick
+                  // reads the new mode rather than the stale one.
+                  workingModeRef.current = next;
+                  setWorkingMode(next);
+                  handleModeChange(wireModeFor(next));
+                }}
+              />
+            ) : null}
             {/* Starter chips appear only before the user has said anything in
                 the active thread. They disappear the moment the first user
                 turn is added. Each thread tracks its own user-turn count, so
@@ -2211,6 +2287,26 @@ export default function ChatScreen() {
         onDismiss={() => setBudgetRefusal(null)}
         onTopUp={handleBudgetTopUp}
         busy={topUpBusy}
+      />
+      {/* THE TRIAL FREEZE. Same sheet, different remedy: its primary action
+          goes to /paywall rather than a top-up purchase, because a week that
+          ran out is not a pool that was spent. Gated on !crisisGated for the
+          same reason as the sheet above — nothing billing-shaped may sit over
+          a crisis response. The server sends title and body; they are shown
+          verbatim rather than restated here, so the one copy of that sentence
+          lives on the server and the client cannot drift from it. */}
+      <BudgetRefusalSheet
+        visible={!!trialRefusal && !crisisGated}
+        refusal={trialRefusal ? {
+          title: trialRefusal.title,
+          body: trialRefusal.body,
+          reset: '',
+          primaryAction: { label: 'See membership options', action: 'subscribe' },
+          secondaryAction: { label: 'Not now', action: 'dismiss' },
+          periodEnd: trialRefusal.trialEndsAt,
+        } : null}
+        onDismiss={() => setTrialRefusal(null)}
+        onTopUp={() => { setTrialRefusal(null); router.push('/paywall'); }}
       />
     </SafeAreaView>
   );

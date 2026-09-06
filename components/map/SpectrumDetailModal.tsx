@@ -303,8 +303,13 @@ const FRAGMENTED: SpectrumCopy = {
     {
       label: 'What this tracks',
       paragraphs: [
-        "This tracks your actual system health — how much Self energy is present, how well your parts are working together, whether genuine healing movement is happening.",
-        "Unlike the Outside-In spectrum, this one doesn't shift through understanding alone. It shifts through actual healing — moments of genuine unblending, parts feeling truly heard, Self energy emerging, burdens being released.",
+        // POSITIONING PASS 2026-09-06. Was "your actual system health" and
+        // "whether genuine healing movement is happening" — a clinical status
+        // readout and a healing-outcome claim, about a person this app cannot
+        // assess. Describes what shows up in the conversations instead, which
+        // is the only thing the score is actually derived from.
+        "This tracks what shows up across your conversations — how often Self energy appears, how your parts are relating to each other, and how much the system is still working to manage things.",
+        "Unlike the Outside-In spectrum, this one doesn't shift through understanding alone. It shifts with what actually shows up as you talk — moments of unblending, parts being heard, Self energy appearing, the system holding less tightly.",
         "Toward Fragmented doesn't mean you're doing something wrong. It means the system is still working hard to manage the wound. That's where most people are when they begin.",
       ],
     },

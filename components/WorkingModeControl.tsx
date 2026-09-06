@@ -51,7 +51,12 @@ export const MODE_LABEL: Record<WorkingMode, string> = {
 // that let a reply tell someone to go to a place that does not exist from their
 // side. There are no rooms. There is one conversation, and these are the things
 // it would do differently. Hence the verbs, and hence "we".
-const MODE_BLURB: Record<WorkingMode, string> = {
+// EXPORTED 2026-09-06 for the opening mode boxes. The labels have drifted twice
+// already (the sheet was softened and the orientation copy was not, so the first
+// thing a new person read and the control they then tapped described the same
+// work in two registers). The boxes therefore render THIS constant rather than
+// carrying their own wording — there is one copy of these four sentences.
+export const MODE_BLURB: Record<WorkingMode, string> = {
   light: 'I listen. Nothing gets pulled apart and nothing gets mapped at you.',
   process: 'We stay with how it feels, in the body, without going anywhere.',
   explore: 'We look at the pattern — what the parts are and what they protect.',

@@ -127,7 +127,7 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     title: 'A companion for the long journey',
     body: [
       "Open the app when something is activated and you can't quite name the feeling. Return when a pattern keeps repeating and you want to understand why. Use it when you need to be heard without advice or fixing. Mark the moments when something shifts. Sit with it between therapy sessions, when you need somewhere to land.",
-      "Over time, Inner Map learns who you are and what you're moving through. The more it knows you, the more its responses can meet you where you actually are — and the deeper the work can go.",
+      "Over time, Inner Map learns who you are and what you're moving through. The more it knows you, the more its responses can meet you where you actually are.",
     ],
   },
   {
@@ -512,6 +512,6 @@ export const USING_PRINCIPLES: string[] = [
   "Come regularly, not just when things are bad. The map builds over time. Twenty conversations give you a picture of yourself most people never get.",
   "Be honest about what you're avoiding. The most useful things to share are the ones you're slightly reluctant to say.",
   "Let it surprise you. The map sometimes sees things before you consciously do. Don't dismiss that.",
-  "Use it alongside therapy, not instead of it. Inner Map can help you go deeper in sessions — but the deep work is most safely done with a real person present.",
+  "Use it alongside therapy, not instead of it. What comes up here is yours to bring to your therapist — but the deep work is most safely done with a real person present.",
   "The map is not a verdict. Everything on it is provisional, revisable, and yours to interpret. If something doesn't land — say so.",
 ];
