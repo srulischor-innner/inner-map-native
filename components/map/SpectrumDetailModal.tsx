@@ -291,7 +291,13 @@ const FRAGMENTED: SpectrumCopy = {
   leftPlaceholders: [
     "intense blending language",
     "parts in conflict",
-    "no Self access detected",
+    // FRAMEWORK CORRECTION (founder ruling 2026-09-06). Was "no Self access
+    // detected", which is wrong on the framework rather than merely blunt:
+    // Self is always there. What varies is whether You can receive from it. The
+    // same phrase was also in the scoring prompt (spectrumReadings.js), so the
+    // model kept generating it as real data regardless of what this screen said
+    // — the placeholder was the visible half of a two-place error.
+    "little getting through from Self",
   ],
   rightPlaceholders: [
     "moments of Self energy",

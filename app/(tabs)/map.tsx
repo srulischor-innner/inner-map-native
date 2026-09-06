@@ -699,6 +699,16 @@ export default function MapScreen() {
       {/* Persistent header — only in circle (integration) view. A single
           quiet line of italic copy that tells the user the parts are
           tappable. Hidden when the triangle view is active. */}
+      {/* WHOSE READING THIS IS (founder ruling 2026-09-06). The map is the
+          AI's reading of patterns across conversations, not a measurement of
+          the person -- and nothing on this screen said so. Persistent rather
+          than one-time: the intro modal carries the fuller sentence but is
+          gated by MAP_INTRO_SEEN_KEY, so most viewings never show it, and a
+          disclaimer nobody sees is not a disclaimer.
+          Shown in BOTH views, above the circle-only header. */}
+      <Text style={styles.readingProvenance} pointerEvents="none">
+        My reading from our conversations — not a measurement of you.
+      </Text>
       {view === 'circle' ? (
         <View pointerEvents="none">
           <Text style={styles.circleTitle}>Integrated Map</Text>
@@ -1102,6 +1112,19 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     marginTop: 4,
   },
+  // Same quiet grammar as circleHeader -- small, italic, dimmed -- so it reads
+  // as provenance rather than a warning banner. It costs a line of vertical
+  // space in a view whose title was deliberately removed for space; that is the
+  // trade the ruling accepted.
+  readingProvenance: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 11,
+    color: 'rgba(240,237,232,0.38)',
+    textAlign: 'center',
+    letterSpacing: 0.3,
+    paddingHorizontal: 24,
+    marginBottom: 6,
+  },
   circleHeader: {
     fontFamily: fonts.serifItalic,
     fontSize: 12,
@@ -1327,6 +1350,11 @@ function MapIntroPanel({ visible, onClose }: { visible: boolean; onClose: () => 
             conversations, parts of your system will appear here. Tap any
             node to learn more. Your map gets more accurate the longer you
             use it.
+          </Text>
+          <Text style={styles.introParagraph}>
+            What you see here is my reading, drawn from patterns across our
+            conversations. It isn't a measurement, and it won't always be
+            right — tell me when something doesn't fit.
           </Text>
           <Pressable onPress={onClose} style={styles.introButton} accessibilityLabel="Got it">
             <Text style={styles.introButtonText}>Got it</Text>
