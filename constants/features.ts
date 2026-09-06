@@ -34,7 +34,20 @@ export const PARTNER_ENABLED: boolean = false;
 // guarantee the route flipped on every OEM device. Also note: the
 // pre-existing "last line not read aloud" bug is moot while this is off;
 // re-test it when read-aloud returns.
-export const CHAT_READ_ALOUD_ENABLED: boolean = false;
+// ON as of 2026-09-06 (founder ruling). The precondition this comment set --
+// "add a SETTLE/VERIFY step that confirms the mic route is actually capturing
+// (e.g. check input levels / re-arm if the first frames are silent)" -- was
+// built in 3f427c0: verifyCaptureLive() samples metering after the
+// playback->record switch and reports live / silent / unknown.
+//
+// WHAT IS PROVEN AND WHAT IS NOT. The DETECTOR measures: "[audio] capture LIVE
+// -- metering=..." means the route really is capturing. The RE-ARM that runs on
+// a silent result is UNPROVEN -- on iOS it sets a category the session already
+// holds, and on Android setAudioModeAsync ignores allowsRecording, so
+// "[audio] session re-armed after silent capture" prints whenever the call
+// resolves and is NOT evidence the route flipped. The on-device test settles
+// that half; do not read the re-arm log as a pass.
+export const CHAT_READ_ALOUD_ENABLED: boolean = true;
 
 // Boot-time push auto-registration stays off. This flag gates ONLY the
 // cold-boot registerForPushNotifications() call in app/_layout.tsx; with it

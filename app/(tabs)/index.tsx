@@ -79,6 +79,7 @@ import { MessageBubble, ChatMsg } from '../../components/MessageBubble';
 import { SessionSummaryModal, SessionSummary, DeepenedPart } from '../../components/session/SessionSummaryModal';
 import { TypingIndicator } from '../../components/TypingIndicator';
 import { ChatInput } from '../../components/ChatInput';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WorkingModeControl, type WorkingMode } from '../../components/WorkingModeControl';
 import { ModeBoxes } from '../../components/ModeBoxes';
 import { ConversationStarters } from '../../components/ConversationStarters';
@@ -152,6 +153,8 @@ const ORIENTATION_MESSAGE =
 // This string is the one 163 Explore sessions already opened on. It is the
 // codified generic that every ladder in the old design fell through to, so it
 // is not new copy — it is the rung that was always true.
+const READ_ALOUD_PREF_KEY = 'chat.readAloudEnabled';
+
 const STANDARD_OPENER =
   "What's on your mind today?\n\n" +
   // THE INVITATION, placement 2 of 4. Measured before anything told people they
@@ -358,6 +361,27 @@ export default function ChatScreen() {
   const audioEnabledRef = useRef(audioEnabled);
   useEffect(() => { audioEnabledRef.current = audioEnabled; }, [audioEnabled]);
 
+  // READ-ALOUD PERSISTS ACROSS SESSIONS (founder ruling 2026-09-06). It was
+  // deliberately session-scoped -- AudioToggle's own header said "we don't
+  // persist it across sessions, the user re-opts-in each time" -- which meant
+  // someone who wants replies read aloud had to re-arm it on every launch.
+  //
+  // STILL DEFAULTS OFF. The stored value only turns it on if the person turned
+  // it on before; a fresh install, a cleared store, or a read that throws all
+  // land on false. Audio that starts talking on its own because a read failed
+  // open is a worse failure than a toggle someone has to press twice.
+  useEffect(() => {
+    let alive = true;
+    AsyncStorage.getItem(READ_ALOUD_PREF_KEY)
+      .then((v) => {
+        if (!alive || v !== '1') return;
+        audioEnabledRef.current = true;
+        setAudioEnabled(true);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   // Transient inline notice for the daily TTS cap. When /api/speak
   // returns 429, services/api.ts fires a rate-limit notice on the
   // shared bus; we render a brief amber-bordered banner above the
@@ -453,6 +477,7 @@ export default function ChatScreen() {
     if (wasOn) {
       cancelTTSStream();
       setAudioEnabled(false);
+      AsyncStorage.setItem(READ_ALOUD_PREF_KEY, '0').catch(() => {});
       console.log('[tts] toggleAudio done — audioEnabledRef now=false');
       return;
     }
@@ -461,6 +486,7 @@ export default function ChatScreen() {
     // the user sends a message before React's re-render lands.
     audioEnabledRef.current = true;
     setAudioEnabled(true);
+    AsyncStorage.setItem(READ_ALOUD_PREF_KEY, '1').catch(() => {});
     console.log('[tts] toggleAudio done — audioEnabledRef now=true (synchronous)');
     // SELECTION RULE — play the last AI message that arrived BEFORE
     // the user's most recent turn. Anything the AI says AFTER the
