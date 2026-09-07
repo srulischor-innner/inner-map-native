@@ -4,11 +4,25 @@
 //   2. the frozen paywall — nothing parsed the trial 402
 //   3. the opening mode boxes
 //
-// EVERY ASSERTION IS WRITTEN TO FAIL WHEN ITS FIX IS REVERTED, and each was
-// checked by actually reverting it. The lesson being applied is the trial-freeze
-// smoke, whose headline check greped for a string that also appeared in nine
-// unrelated crisis-logging calls and so could not detect the deletion of the
-// three gates it claimed to guard.
+// Every assertion here is WRITTEN to fail when its fix is reverted. The lesson
+// being applied is the trial-freeze smoke, whose headline check greped for a
+// string that also appeared in nine unrelated crisis-logging calls and so could
+// not detect the deletion of the three gates it claimed to guard.
+//
+// WHAT HAS ACTUALLY BEEN REVERT-CHECKED, as opposed to written to be. This
+// header used to claim all of them and that was not true -- the audit found it,
+// which is the same defect the file exists to prevent, one level up.
+//
+//   checked  the anti-drift pair, two mutations. (a) Reword MODE_BLURB.light
+//            and paste the NEW wording into ModeBoxes: this file goes red,
+//            while the previous hardcoded-literal version found 0 copies and
+//            passed. (b) Rename the MODE_BLURB export: the parse guard goes
+//            red, so the pair can never silently measure an empty list.
+//   checked  the age-gate unknown-state default (2026-09-06).
+//   NOT YET  the remaining assertions in sections 1 and 2. They are written to
+//            be falsifiable and are believed to be, but believed is not
+//            measured. Do not read a green run here as proof of more than the
+//            two above until each has been reverted and seen to go red.
 //
 //   node scripts/smoke-audit-fixes-app.js
 const fs = require('fs');
@@ -143,15 +157,43 @@ ok('MODE_BLURB is exported so there is one copy of those four sentences',
 // THE ANTI-DRIFT CHECK, and the reason this file exists at all: the labels have
 // drifted twice. Assert the boxes contain NO literal mode wording of their own.
 {
-  const blurbs = ['I listen.', 'We stay with how it feels', 'We look at the pattern',
-                  'We look at one belief'];
-  const copied = blurbs.filter((b) => BOXES.includes(b));
-  ok('the boxes hardcode none of the four blurbs', copied.length === 0,
-    copied.length ? 'copied verbatim: ' + copied.join(' | ') : '');
-  const labels = ['Saying it', 'Sitting with it', 'Understanding it', 'Leading it'];
+  // READ THE LIVE COPY, DO NOT RESTATE IT. The first version of this check
+  // listed the four labels and the four blurbs as literals HERE -- which made
+  // it a check against one particular wording rather than against drift.
+  // Reword MODE_BLURB in WorkingModeControl.tsx and the literals below go
+  // stale silently: the check keeps passing, now proving only that the boxes
+  // have not copied the OLD text. That is the same shape as the bug it exists
+  // to catch. So both lists are lifted out of the constants themselves.
+  const lift = (name) => {
+    const head = `export const ${name}: Record<WorkingMode, string> = {`;
+    const i = CONTROL.indexOf(head);
+    if (i < 0) return [];
+    const body = CONTROL.slice(i + head.length, CONTROL.indexOf(`${'\n'}};`, i));
+    // One entry per line, `key: 'value',`. Comment lines carry no colon-quote
+    // pair and drop out on their own.
+    return body.split(/\r?\n/)
+      .map((l) => { const a = l.indexOf(": '"); return a < 0 ? null : l.slice(a + 3, l.lastIndexOf("'")); })
+      .filter((v) => v && v.length);
+  };
+  const labels = lift('MODE_LABEL');
+  const blurbs = lift('MODE_BLURB');
+
+  // A parse that finds nothing would make both assertions below vacuous -- the
+  // filter of an empty list is always empty, so 'nothing was copied' would pass
+  // loudest exactly when this check stopped reading anything.
+  ok('the four labels and four blurbs were read out of WorkingModeControl.tsx',
+    labels.length === 4 && blurbs.length === 4,
+    `parsed ${labels.length} labels, ${blurbs.length} blurbs -- the anti-drift `
+    + 'check below cannot run without them');
+
   const copiedL = labels.filter((l) => BOXES.includes(l));
-  ok('...and none of the four labels', copiedL.length === 0,
+  ok('the boxes hardcode none of the four labels', copiedL.length === 0,
     copiedL.length ? 'copied verbatim: ' + copiedL.join(' | ') : '');
+  // Blurbs are long enough that a partial copy is the realistic drift, so match
+  // on the opening clause as well as the whole sentence.
+  const copiedB = blurbs.filter((b) => BOXES.includes(b) || BOXES.includes(b.split(/[,.:—]/)[0].trim()));
+  ok('...and none of the four blurbs, whole or in part', copiedB.length === 0,
+    copiedB.length ? 'copied verbatim: ' + copiedB.join(' | ') : '');
 }
 
 ok('there are four boxes, in the sheet\'s order',
