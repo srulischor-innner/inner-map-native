@@ -1,23 +1,34 @@
 
 # Every check and smoke in the app repo, plus tsc, on every push.
+# 16 scripts + `tsc --noEmit`, ~42s.
 #
-# 16 scripts + `tsc --noEmit`. ~42s locally.
+# THIS RUN IS DELIBERATELY NOT THE COMPLETE GATE. Two halves do not run here,
+# and the runner prints both rather than letting a green tick imply them:
 #
-# ONE HALF OF ONE CHECK DOES NOT RUN HERE. check-production-build.js verifies
-# two separate things: the app.config.js shape (INTERNET permission, https
-# apiBaseUrl, ATS) and the existence of the EAS production secrets. The second
-# half shells out to the `eas` CLI, and without an authenticated session it
-# prints "⚠ EAS secret check skipped" and still exits 0 — deliberate, because a
-# partial answer must not read as an absence. The runner echoes a line whenever
-# that happens, so a green run here never quietly means more than it proved.
+#   1. smoke-crisis-before-budget.js has a server-coverage half — steps 17+,
+#      "the half the name promised", which reads ../Inner world/server.js to
+#      prove the server sends a crisis frame before a 402. That repo is
+#      private and this one is public, so it is not on disk here and the check
+#      prints "[17] SKIP". Putting a token that can read the private server
+#      repo into a PUBLIC repo's secrets would be the wrong trade for a test,
+#      so instead that half runs in the SERVER repo's workflow, which checks
+#      out both. The complete gate is over there; this one is the fast check
+#      for app-only work.
 #
-# To make that half run too: add an EXPO_TOKEN repository secret and uncomment
-# the two steps at the bottom. That is a credential decision, so it is left off
-# until someone makes it on purpose.
+#   2. check-production-build.js verifies two things: the app.config.js shape
+#      (INTERNET permission, https apiBaseUrl, ATS) and the existence of the
+#      EAS production secrets. The second half shells out to the `eas` CLI and,
+#      unauthenticated, prints "EAS secret check skipped" and exits 0 on
+#      purpose — a partial answer must not read as an absence. Wiring it needs
+#      an EXPO_TOKEN secret; the steps are below, commented out, because that
+#      is a credential decision. The half that DOES run unconditionally is the
+#      one that caused the May 2026 Android outage.
 #
-# THE CONFIG half — the one that runs unconditionally — is the half that caused
-# the May 2026 Android outage, where a build shipped with no INTERNET permission
-# and nobody found out until users could not sign in.
+# The CRLF step is there for the same reason as in the server repo: a large
+# number of checks lift code by searching for the literal boundary "\r\n}\r\n",
+# git stores these files with LF, and on a Linux checkout that lift silently
+# returns an empty string instead of a function body. See the long note in the
+# server repo's workflow.
 
 name: checks
 
@@ -43,6 +54,12 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+
+      - name: Give the suite the CRLF working copy it was written against
+        run: |
+          find . -path ./node_modules -prune -o -type f \
+            \( -name '*.js' -o -name '*.mjs' -o -name '*.ts' -o -name '*.tsx' -o -name '*.json' \) -print0 \
+            | xargs -0 -r perl -pi -e 's/\r?\n/\r\n/'
 
       - run: npm ci
 

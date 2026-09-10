@@ -82,6 +82,7 @@ function main() {
   console.log(`Running ${all.length} checks${process.argv.includes("--no-tsc") ? "" : " + tsc"}\n`);
 
   const results = [];
+  const skips = [];
   for (const f of all) {
     const r = run(process.execPath, [path.join(SCRIPTS_DIR, f)], f);
     results.push(r);
@@ -89,10 +90,25 @@ function main() {
     if (!r.ok) {
       console.log(r.out.split("\n").slice(-40).map((l) => "  | " + l).join("\n"));
     }
-    // Make the degraded half visible rather than letting a green line imply
-    // more than it proved.
-    if (f === "check-production-build.js" && /EAS secret check skipped/.test(r.out)) {
-      console.log("        ^ EAS secret half SKIPPED (no authenticated eas CLI). Config half ran.");
+    // Make every degraded half visible rather than letting a green line imply
+    // more than it proved. Two of these exist today and both are checks that
+    // pass while quietly not checking:
+    //   - check-production-build.js skips its EAS secret half unauthenticated.
+    //   - smoke-crisis-before-budget.js prints "[17] SKIP server coverage" when
+    //     ../Inner world is not on disk — which is every CI run in this repo,
+    //     because the server repo is private and this one is public. That half
+    //     runs in the SERVER repo's workflow, where both are checked out.
+    // Case-SENSITIVE on the SKIP marker on purpose: these scripts print
+    // "[17] SKIP  server coverage" in caps when a half declines to run, and
+    // use the lowercase word freely in ordinary assertion prose ("this skip
+    // used to jump straight to terms"). Matching case-insensitively turns a
+    // passing assertion into a false skip report, which is the same disease
+    // one level up.
+    for (const line of r.out.split("\n")) {
+      if (/(^|\s)(\[\d+\])?\s*SKIP(PED)?\b/.test(line) || /check skipped/i.test(line)) {
+        skips.push(`${f}: ${line.trim().slice(0, 160)}`);
+        console.log(`        ^ ${line.trim().slice(0, 140)}`);
+      }
     }
   }
 
@@ -106,6 +122,10 @@ function main() {
   const red = results.filter((r) => !r.ok);
   const totalMs = results.reduce((s, r) => s + r.ms, 0);
   console.log(`\n${results.length - red.length}/${results.length} green in ${(totalMs / 1000).toFixed(1)}s`);
+  if (skips.length) {
+    console.log(`${skips.length} half-check(s) skipped — this green does not cover them:`);
+    for (const s of skips) console.log(`  - ${s}`);
+  }
 
   let shrank = false;
   if (all.length < EXPECTED_TOTAL) {
@@ -126,6 +146,11 @@ function main() {
       lines.push("");
     }
     if (shrank) lines.push(`> **Suite shrank**: found ${all.length}, expected ${EXPECTED_TOTAL}.`, "");
+    if (skips.length) {
+      lines.push(`### ${skips.length} half-checks skipped — green here does not cover these`, "");
+      for (const s of skips) lines.push(`- ${s}`);
+      lines.push("");
+    }
     lines.push("<details><summary>All checks</summary>", "");
     for (const r of results) lines.push(`${r.ok ? "ok" : "**RED**"} \`${r.file}\` ${r.ms}ms  `);
     lines.push("", "</details>");
