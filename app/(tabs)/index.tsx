@@ -418,6 +418,22 @@ export default function ChatScreen() {
   // the captured `budgetRefusal` closure would still say otherwise.
   const budgetRefusalRef = useRef<BudgetRefusal | null>(null);
   useEffect(() => { budgetRefusalRef.current = budgetRefusal; }, [budgetRefusal]);
+  // Resolve the store's price as soon as a refusal that wants one appears.
+  // Failure is silent and leaves the button reading "Add usage" with no
+  // figure: a price we cannot confirm is worse than no price, and the store
+  // states it again before charging anyone. Guarded against landing after
+  // unmount or after the user has already dismissed the sheet.
+  useEffect(() => {
+    if (!budgetRefusal?.primaryAction?.priceFromStore) return;
+    let alive = true;
+    getTopUpProduct()
+      .then((p) => {
+        const s = p?.priceString;
+        if (alive && topUpMountedRef.current && typeof s === 'string' && s) setTopUpPrice(s);
+      })
+      .catch(() => { /* no price shown; never blocks the sheet */ });
+    return () => { alive = false; };
+  }, [budgetRefusal]);
 
   // THE TRIAL FREEZE (2026-09-06). Kept as its own state rather than folded
   // into budgetRefusal: the remedy is different. A spent budget is topped up;
@@ -441,6 +457,18 @@ export default function ChatScreen() {
   // Both are cleared in handleBudgetTopUp's finally, on every path.
   const topUpBusyRef = useRef(false);
   const [topUpBusy, setTopUpBusy] = useState(false);
+  // THE STORE'S PRICE FOR THE TOP-UP (2026-09-10). The server used to send
+  // "Add usage — $19.99" as a literal, which is right in the US and wrong in
+  // the other 174 territories it sells in — the same mistake paywall.tsx has
+  // banned for the subscription since it was written. The server now sends the
+  // label without a price and this fetches the real one, so the button reads
+  // "$19.99" or "€22,99" or nothing at all, and never the wrong figure.
+  //
+  // Fetched when the refusal LANDS rather than on tap, because the price has
+  // to be on the button before the user decides. getTopUpProduct() is cheap
+  // after the first call (the SDK caches) and the tap path calls it again
+  // anyway — it is the purchase that needs the live product object, not this.
+  const [topUpPrice, setTopUpPrice] = useState<string | null>(null);
   // The sheet can be dismissed — and this screen torn down — while the
   // purchase is still in flight, so the finally block below must not setState
   // into an unmounted tree.
@@ -2313,6 +2341,7 @@ export default function ChatScreen() {
         onDismiss={() => setBudgetRefusal(null)}
         onTopUp={handleBudgetTopUp}
         busy={topUpBusy}
+        topUpPrice={topUpPrice}
       />
       {/* THE TRIAL FREEZE. Same sheet, different remedy: its primary action
           goes to /paywall rather than a top-up purchase, because a week that
@@ -2328,6 +2357,10 @@ export default function ChatScreen() {
           body: trialRefusal.body,
           reset: '',
           primaryAction: { label: 'See membership options', action: 'subscribe' },
+          // No note and no store price here: this action opens the paywall,
+          // which states its own price from StoreKit. Nothing is being bought
+          // on this sheet.
+          primaryActionNote: null,
           secondaryAction: { label: 'Not now', action: 'dismiss' },
           periodEnd: trialRefusal.trialEndsAt,
         } : null}

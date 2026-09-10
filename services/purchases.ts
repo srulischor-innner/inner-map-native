@@ -180,7 +180,10 @@ export async function configurePurchases(): Promise<void> {
 
       Purchases.configure({ apiKey });
       _configured = true;
-      console.log('[purchases] configured ✓ (ios)');
+      // Platform.OS, not a literal. This line read '(ios)' unconditionally,
+      // so the first keyed Android build would have printed "(ios)" during
+      // the exact test that build exists to run.
+      console.log(`[purchases] configured ✓ (${Platform.OS})`);
     } catch (e) {
       // A missing key, a dead native module, a malformed config — none of it
       // may crash boot.

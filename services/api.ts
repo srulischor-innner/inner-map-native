@@ -454,6 +454,12 @@ export type BillingStatus = {
      *  the server cannot honour. Do not render it as a count anywhere in
      *  the product surface. */
     displayMessages: number;
+    /** Whether the wall is REAL — server-side BUDGET_ENFORCEMENT. False means
+     *  the tier is being computed and logged but nothing is refused. Any
+     *  surface that tells a user their usage is spent must check this first:
+     *  saying so while the server still answers every turn is a false
+     *  statement about the product. Absent (older server) reads as false. */
+    enforced: boolean;
     periodEnd: string | null;
   } | null;
 };
@@ -489,6 +495,7 @@ export async function getBillingStatus(): Promise<BillingStatus | null> {
             allowanceCents: Number(b.allowanceCents || 0),
             tier: asBudgetTier(b.tier),
             displayMessages: Number(b.displayMessages || 0),
+            enforced: b.enforced === true,
             periodEnd: typeof b.periodEnd === 'string' ? b.periodEnd : null,
           }
         : null,
@@ -507,7 +514,17 @@ export type BudgetRefusal = {
   title: string;
   body: string;
   reset: string;
-  primaryAction: { label: string; action: string };
+  /** `priceFromStore` means the label arrives WITHOUT a price and the client
+   *  must append the store's own priceString. The server used to send
+   *  "Add usage — $19.99" as a literal, which is right in the US and wrong in
+   *  the other 174 territories the top-up sells in — the same mistake
+   *  paywall.tsx has forbidden for the subscription since it was written. */
+  primaryAction: { label: string; action: string; priceFromStore?: boolean };
+  /** What the money buys, in the one form that is honest here: a comparison,
+   *  never a count. The server meters cents, so there is no message figure to
+   *  give — but the top-up grant and the monthly pool are the same constant,
+   *  so "as much usage as a full month includes" is exactly true. */
+  primaryActionNote: string | null;
   secondaryAction: { label: string; action: string };
   periodEnd: string | null;
 };
@@ -548,7 +565,13 @@ export function parseBudgetRefusal(raw: unknown): BudgetRefusal | null {
         ? r.body
         : 'Your map and everything on it stays exactly as it is — nothing is lost.',
       reset: typeof r.reset === 'string' ? r.reset : '',
-      primaryAction: asAction(r.primaryAction, 'Add usage', 'topup'),
+      primaryAction: {
+        ...asAction(r.primaryAction, 'Add usage', 'topup'),
+        priceFromStore: r.primaryAction?.priceFromStore === true,
+      },
+      primaryActionNote: typeof r.primaryActionNote === 'string' && r.primaryActionNote
+        ? r.primaryActionNote
+        : null,
       secondaryAction: asAction(r.secondaryAction, 'Not now', 'dismiss'),
       periodEnd: typeof r.periodEnd === 'string' ? r.periodEnd : null,
     };
@@ -994,6 +1017,25 @@ export const api = {
       return true;
     };
 
+    /** A 402 on this transport is EITHER the budget cap OR the trial freeze,
+     *  and the streaming path only ever knew about the first one. The trial
+     *  payload does not match parseBudgetRefusal, so day 8 in main chat --
+     *  the most-used gated surface in the app -- fell through to
+     *  cb.onError('chat 402') and rendered "Something went wrong on my end"
+     *  with a retry pill. The JSON fallback path has parsed both since the
+     *  freeze landed (see :810); streaming, which is what actually runs
+     *  (STREAMING_ENABLED at :29), never did. Trial is checked FIRST because
+     *  a frozen user is not over budget -- they have no budget yet. */
+    const emitPaymentRequired = (raw: unknown): boolean => {
+      const trial = parseTrialFreeze(raw);
+      if (trial) {
+        if (cb.onTrialExpired) cb.onTrialExpired(trial, raw);
+        else cb.onError(trial.title);
+        return true;
+      }
+      return emitBudgetRefusal(raw);
+    };
+
     const handleFrame = (evt: any) => {
       if (!evt || typeof evt !== 'object') return;
       switch (evt.type) {
@@ -1112,9 +1154,10 @@ export const api = {
         return;
       }
       if (xhr.status === 402) {
-        // Budget cap on the streaming request itself. Never fall back — the
-        // JSON path would just 402 again. Body is JSON here (the SSE variant
-        // arrives as 200 + a budget_exhausted frame, handled in handleFrame).
+        // Budget cap OR trial freeze on the streaming request itself. Never
+        // fall back — the JSON path would just 402 again. Body is JSON here
+        // (the SSE variant arrives as 200 + a budget_exhausted frame, handled
+        // in handleFrame). emitPaymentRequired sorts the two apart.
         finished = true;
         let raw: unknown = null;
         try { raw = JSON.parse(xhr.responseText || ''); } catch { /* not JSON */ }
@@ -1124,7 +1167,7 @@ export const api = {
             try { raw = JSON.parse(line.slice(6)); break; } catch { /* skip */ }
           }
         }
-        if (!emitBudgetRefusal(raw)) cb.onError('chat 402');
+        if (!emitPaymentRequired(raw)) cb.onError('chat 402');
         return;
       }
       if (xhr.status >= 200 && xhr.status < 300) {

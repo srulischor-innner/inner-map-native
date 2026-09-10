@@ -52,11 +52,31 @@ type Props = {
    * can always leave — especially while a purchase is spinning.
    */
   busy?: boolean;
+  /**
+   * The STORE's localized price for the top-up, e.g. "$19.99" or "€22,99",
+   * from product.priceString. The server sends the button label WITHOUT a
+   * price and sets primaryAction.priceFromStore; this is what gets appended.
+   *
+   * Null while the product is still being fetched, or when the store cannot
+   * be reached at all — in which case the button reads "Add usage" with no
+   * figure. That is the correct failure: a price we cannot confirm is worse
+   * than no price, and the store will state it again before charging anyone.
+   */
+  topUpPrice?: string | null;
 };
 
-export function BudgetRefusalSheet({ visible, refusal, onDismiss, onTopUp, busy = false }: Props) {
+export function BudgetRefusalSheet({
+  visible, refusal, onDismiss, onTopUp, busy = false, topUpPrice = null,
+}: Props) {
   const insets = useSafeAreaInsets();
   if (!refusal) return null;
+
+  // The price lives ON the action — that rule has not changed. What changed is
+  // whose price it is: the server used to hardcode "$19.99" into this label,
+  // correct in one territory of 175.
+  const primaryLabel = refusal.primaryAction.priceFromStore && topUpPrice
+    ? `${refusal.primaryAction.label} — ${topUpPrice}`
+    : refusal.primaryAction.label;
 
   const handleTopUp = () => {
     if (busy) return;
@@ -101,11 +121,15 @@ export function BudgetRefusalSheet({ visible, refusal, onDismiss, onTopUp, busy 
             disabled={busy}
             style={[styles.primaryBtn, busy && styles.primaryBtnBusy]}
             accessibilityRole="button"
-            accessibilityLabel={refusal.primaryAction.label}
+            accessibilityLabel={
+              refusal.primaryActionNote
+                ? `${primaryLabel}. ${refusal.primaryActionNote}`
+                : primaryLabel
+            }
             accessibilityState={{ disabled: busy, busy }}
           >
             <Text style={[styles.primaryLabel, busy && styles.primaryLabelHidden]}>
-              {refusal.primaryAction.label}
+              {primaryLabel}
             </Text>
             {busy ? (
               <View style={styles.primarySpinner} pointerEvents="none">
@@ -113,6 +137,17 @@ export function BudgetRefusalSheet({ visible, refusal, onDismiss, onTopUp, busy 
               </View>
             ) : null}
           </Pressable>
+
+          {/* WHAT THE MONEY BUYS. Sits under the button, not on it, so the
+              price stays the loudest thing on the action. Still no count and
+              no balance — the sentence is a comparison the two server
+              constants make exactly true. Hidden while busy: the purchase
+              sheet is what the user is reading then. */}
+          {refusal.primaryActionNote && !busy ? (
+            <Text style={styles.actionNote} importantForAccessibility="no">
+              {refusal.primaryActionNote}
+            </Text>
+          ) : null}
 
           <Pressable
             onPress={handleDismiss}
@@ -200,6 +235,17 @@ const styles = StyleSheet.create({
   },
   // Held in layout, hidden from view — see the comment at the call site.
   primaryLabelHidden: { opacity: 0 },
+  // What the top-up buys. Dim and small on purpose: the price on the button
+  // above stays the loudest thing on the action, and this explains it rather
+  // than competing with it. Same colour and family as `reset`, one size down.
+  actionNote: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
   primarySpinner: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

@@ -93,14 +93,28 @@ ok('parseTrialFreeze is actually CALLED somewhere',
   /\bparseTrialFreeze\(/.test(API.replace(/export function parseTrialFreeze\(/, '')),
   'an exported parser nothing calls is the "looks like it works" failure');
 
-// Both 402 transports. Counted, so removing one is caught.
+// ALL THREE 402 transports. Counted, so removing one is caught.
+//
+// This asserted 2 until 2026-09-10 and was RIGHT about the two it knew: the
+// chat JSON fallback and the guide xhr. It could not see the one that
+// mattered most -- the STREAMING chat transport, which is what actually runs
+// (STREAMING_ENABLED, api.ts:29). Its 402 branch only ever called
+// parseBudgetRefusal, which returns null for a trial payload, so day 8 in
+// main chat rendered "Something went wrong on my end" with a retry pill. The
+// third site is emitPaymentRequired(), which tries trial first and falls back
+// to budget.
 {
-  // Counted on the exact argument names so the two sites cannot overlap --
-  // /parseTrialFreeze\(raw/ matches `rawBody` too, which counted 3 for 2 sites.
+  // Counted on the exact argument names so the sites cannot overlap --
+  // /parseTrialFreeze\(raw/ matches `rawBody` too.
   const calls = (API.match(/const trial = parseTrialFreeze\(raw\);/g) || []).length
     + (API.match(/const trial = parseTrialFreeze\(rawBody\);/g) || []).length;
-  ok(`both 402 sites parse the trial payload (found ${calls})`, calls === 2,
-    'expected 2 — the chat fetch path and the guide xhr path');
+  ok(`all three 402 sites parse the trial payload (found ${calls})`, calls === 3,
+    'expected 3 — the chat fetch path, the guide xhr path, and the streaming transport');
+  // And the streaming 402 branch must route through it rather than going
+  // straight to the budget parser, which is the bug this replaced.
+  ok('the streaming 402 branch routes through emitPaymentRequired',
+    /if \(!emitPaymentRequired\(raw\)\) cb\.onError\('chat 402'\);/.test(API),
+    'a budget-only parse here is what produced the generic error on day 8');
 }
 
 // ORDERING. parseBudgetRefusal returns null for a trial payload, so trying it

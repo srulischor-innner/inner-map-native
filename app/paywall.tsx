@@ -83,7 +83,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator,
+  View, Text, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -348,7 +348,11 @@ export default function PaywallScreen() {
         // The second sentence matters: the single most common cause of an
         // empty restore is being signed into a different Apple Account than
         // the one that paid, and without it this dead-ends.
-        'We didn’t find a membership on this Apple Account. If you subscribed with a different Apple Account, sign in to that one and try again.',
+        // Store-neutral by platform — see the matching note in settings.tsx.
+        // On Android this named the wrong account entirely.
+        Platform.OS === 'android'
+          ? 'We didn’t find a membership on this Google Account. If you subscribed with a different Google Account, sign in to that one and try again.'
+          : 'We didn’t find a membership on this Apple Account. If you subscribed with a different Apple Account, sign in to that one and try again.',
       );
       return;
     }

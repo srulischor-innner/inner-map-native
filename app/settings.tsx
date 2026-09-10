@@ -1299,7 +1299,16 @@ function YourPlanSection() {
       } else {
         Alert.alert(
           'Nothing to restore',
-          "We didn't find a membership on this Apple Account. If you subscribed with a different Apple Account, sign in to that one and try again.",
+          // STORE-NEUTRAL BY PLATFORM. This said "Apple Account" twice,
+          // unconditionally, and the Android build now shows Settings and the
+          // paywall — so an Android user restoring a Play purchase was being
+          // told to check an Apple account they may not have. The second
+          // sentence is the load-bearing one either way: the commonest cause
+          // of an empty restore is being signed into a different account than
+          // the one that paid.
+          Platform.OS === 'android'
+            ? "We didn't find a membership on this Google Account. If you subscribed with a different Google Account, sign in to that one and try again."
+            : "We didn't find a membership on this Apple Account. If you subscribed with a different Apple Account, sign in to that one and try again.",
         );
       }
     } catch (e) {

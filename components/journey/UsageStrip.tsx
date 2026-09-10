@@ -33,6 +33,17 @@ export function UsageStrip({ status, style }: Props) {
   const budget = status?.budget ?? null;
   if (!budget || !VISIBLE_TIERS.includes(budget.tier)) return null;
 
+  // ONLY WHEN THE WALL IS REAL (2026-09-10, founder ruling: "it shouldn't say
+  // usage is spent while nothing is refused"). The server has always gated its
+  // in-chat 95% line on BUDGET_ENFORCEMENT; this strip did not, so with
+  // enforcement off — which is how it ships today — the app could tell someone
+  // "This month's usage is spent." while every turn still went through. The
+  // tier is honestly computed either way; what was wrong was saying it out
+  // loud. Absent flag (older server) reads false and the strip stays silent,
+  // which is the safe direction: a missing warning is recoverable, a false one
+  // is not.
+  if (!budget.enforced) return null;
+
   const fill = fillFraction(budget.spentCents, budget.allowanceCents, budget.tier);
 
   return (

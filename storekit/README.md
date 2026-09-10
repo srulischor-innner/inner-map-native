@@ -1,7 +1,7 @@
 # StoreKit Configuration (local IAP testing)
 
 `InnerMap.storekit` is an Xcode **StoreKit Configuration file**: a local, offline model of the real
-App Store Connect products (`innermap_monthly` — $24.99/mo with a 1-week free trial, in the
+App Store Connect products (`innermap_monthly` — $19.99/mo with a 1-week free trial, in the
 "Inner Map Membership" subscription group — and the `innermap_topup_10` consumable at $19.99; the
 `_10` in that ID is a known misnomer, the price really is $19.99). With it enabled, StoreKit serves
 those products from this file, so the paywall can be built, run and purchased against **with no App
