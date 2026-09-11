@@ -374,6 +374,12 @@ function EnrichmentCard({ message, onEditFocus }: { message: InboxMessage; onEdi
     ),
   );
   const [values, setValues] = useState<string[]>(items.map((it) => it.editedValue || it.value || ''));
+  // ITEM 14: which item, if any, came back from the server as a failed write.
+  // EnrichmentCard had no error surface at all — a failure just snapped the
+  // button back to ADD TO PART with nothing said, and the far more common case
+  // (the server reporting success over a write that never landed) said the
+  // opposite of the truth.
+  const [failedIdx, setFailedIdx] = useState<number | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
 
   function setItemState(i: number, s: ItemState) {
@@ -383,6 +389,7 @@ function EnrichmentCard({ message, onEditFocus }: { message: InboxMessage; onEdi
   async function accept(i: number) {
     if (states[i] !== 'pending') return;
     setItemState(i, 'sending');
+    setFailedIdx((prev) => (prev === i ? null : prev));
     Haptics.selectionAsync().catch(() => {});
     const trimmed = values[i].trim();
     const edits = trimmed && trimmed !== items[i].value ? { [i]: trimmed } : undefined;
@@ -392,6 +399,13 @@ function EnrichmentCard({ message, onEditFocus }: { message: InboxMessage; onEdi
       if (editingIdx === i) setEditingIdx(null);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       refreshInboxStatus(true).catch(() => {});
+    } else {
+      // ITEM 14: the success haptic and "Added to the part’s folder." used to
+      // fire whatever happened, because the server always said ok. It can now
+      // say no — so say no back, and leave the item where the person can retry
+      // it or dismiss it. Nothing about their words is lost either way.
+      setFailedIdx(i);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     }
   }
 
@@ -443,6 +457,15 @@ function EnrichmentCard({ message, onEditFocus }: { message: InboxMessage; onEdi
             ) : (
               <Text style={styles.itemContext}>{values[i]}</Text>
             )}
+
+            {failedIdx === i && st === 'pending' ? (
+              <View style={styles.itemResolvedRow}>
+                <Ionicons name="alert-circle-outline" size={15} color={colors.creamDim} />
+                <Text style={styles.itemResolvedTextDim}>
+                  Couldn’t add this one — it’s still here.
+                </Text>
+              </View>
+            ) : null}
 
             {st === 'accepted' ? (
               <View style={styles.itemResolvedRow}>

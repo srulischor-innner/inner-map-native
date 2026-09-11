@@ -344,6 +344,13 @@ export type InboxMessage = {
       /** The name (pending_parts) or value (enrichment) the user refined. */
       editedName?: string;
       editedValue?: string;
+      /** enrichment items, server-owned (2026-09-10): the parts-row id this
+       *  card was minted against, and whether that row existed at card time.
+       *  The accept path uses both — the id so the write lands on the row the
+       *  card is about, `partExisted` so a row the router never created can be
+       *  told apart from a part the person removed. Absent on older cards. */
+      pid?: string;
+      partExisted?: boolean;
     }[];
     title?: string;
     body?: string;
@@ -1702,7 +1709,7 @@ export const api = {
     messageId: string,
     itemIndices: number[],
     edits?: Record<number, string>,
-  ): Promise<{ ok: boolean; written: number; allResolved: boolean }> {
+  ): Promise<{ ok: boolean; written: number; failed: number; allResolved: boolean }> {
     try {
       const headers = await authHeaders();
       const body = edits && Object.keys(edits).length
@@ -1712,12 +1719,15 @@ export const api = {
         label: 'messages-act', method: 'POST', headers,
         body: JSON.stringify(body), timeoutMs: 20000,
       });
-      if (!res.ok) return { ok: false, written: 0, allResolved: false };
+      if (!res.ok) return { ok: false, written: 0, failed: itemIndices.length, allResolved: false };
       const j: any = await res.json();
-      return { ok: !!j?.ok, written: Number(j?.written || 0), allResolved: !!j?.allResolved };
+      // ITEM 14: the server can now say a write did not land (ok:false, with a
+      // reason). Log it — this class of failure was invisible on both sides.
+      if (!j?.ok) console.warn('[inbox] act reported a failed write:', j?.error || 'unknown', 'failed=', j?.failed);
+      return { ok: !!j?.ok, written: Number(j?.written || 0), failed: Number(j?.failed || 0), allResolved: !!j?.allResolved };
     } catch (e) {
       console.warn('[inbox] act failed:', (e as Error)?.message);
-      return { ok: false, written: 0, allResolved: false };
+      return { ok: false, written: 0, failed: itemIndices.length, allResolved: false };
     }
   },
 
