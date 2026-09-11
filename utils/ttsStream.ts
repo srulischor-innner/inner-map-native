@@ -31,14 +31,18 @@
 //    minimum (~80 chars) OR the stream finishes. This avoids per-word
 //    fetches that produce unnatural one-syllable audio.
 
-import { createAudioPlayer, setAudioModeAsync, RecordingPresets } from 'expo-audio';
+import { setAudioModeAsync, RecordingPresets } from 'expo-audio';
+import {
+  acquireAudioSession, createManagedPlayer, noteRecordingArmed, playManaged,
+  releaseManagedPlayer, whenAudioSessionSettled, type ManagedPlayer,
+} from './audioSession';
 // expo-file-system legacy entry — class-based File API is in the
 // new top-level export, but the path-based writeAsStringAsync we
 // need still ships under /legacy and is the simplest call for
 // "write base64 bytes to cache" in standalone builds.
 import * as FileSystem from 'expo-file-system/legacy';
 import { api } from '../services/api';
-type Player = ReturnType<typeof createAudioPlayer>;
+type Player = ManagedPlayer;
 
 // We write each chunk to a single fixed cache file rather than data
 // URIs because expo-audio's data-URI playback was failing silently
@@ -172,9 +176,17 @@ export function getStreamingMessageId(): string | null { return currentMessageId
 export async function playPreFetchedAudio(messageId: string, buf: ArrayBuffer): Promise<void> {
   console.log(`[tts] playPreFetchedAudio ENTER — messageId=${messageId.slice(0, 8)} bytes=${buf.byteLength}`);
   cancelStream();
-  // cancelStream already bumped watchToken. Use the post-bump value so
-  // playOneBuffer's stale-token check passes and the play actually runs.
-  await playOneBuffer(buf, watchToken);
+  // One-shot playback does not go through the chain worker, so it has no span
+  // lease of its own. Take one here, or the session would be handed back and
+  // immediately re-taken around a single buffer for nothing.
+  const releaseSessionLease = acquireAudioSession('tts-oneshot');
+  try {
+    // cancelStream already bumped watchToken. Use the post-bump value so
+    // playOneBuffer's stale-token check passes and the play actually runs.
+    await playOneBuffer(buf, watchToken);
+  } finally {
+    releaseSessionLease();
+  }
   console.log('[tts] playPreFetchedAudio EXIT');
 }
 
@@ -305,7 +317,7 @@ export function cancelStream(handBackToRecord: boolean = true): void {
   buffer = '';
   consumedSoFar = 0;
   if (player) {
-    try { player.pause(); player.remove(); } catch {}
+    releaseManagedPlayer(player);
     player = null;
   }
   // Drop every queued sentence. The worker, if currently mid-step,
@@ -431,6 +443,14 @@ async function processChainQueue(): Promise<void> {
   }
   chainWorkerActive = true;
   console.log('[tts] worker START — claiming chainWorkerActive=true');
+  // SPAN LEASE on the audio session, held for the WHOLE drain — not per
+  // buffer. Between two sentences this worker owns no player at all: the
+  // previous one has been removed and the next one's /api/speak can still be
+  // in the air for the better part of a second. A per-player lease would read
+  // that gap as "nobody wants the session", hand it back, and the next
+  // sentence would take it again — the user's music blipping on and off
+  // between our sentences. See utils/audioSession.ts.
+  const releaseSessionLease = acquireAudioSession('tts-chain');
   let iteration = 0;
   try {
     while (chainQueue.length > 0) {
@@ -508,6 +528,9 @@ async function processChainQueue(): Promise<void> {
     console.log(`[tts] worker LOOP END — totalIterations=${iteration} queueLenFinal=${chainQueue.length}`);
   } finally {
     chainWorkerActive = false;
+    // The queue is drained: this is the moment read-aloud stops wanting the
+    // session. Dropping the lease starts the handback debounce.
+    releaseSessionLease();
     console.log('[tts] worker END — releasing chainWorkerActive=false');
   }
 }
@@ -573,6 +596,15 @@ async function resetAudioSessionForRecording(): Promise<void> {
  *  single retry absorbs that without masking a genuine failure. */
 export async function ensureRecordingMode(): Promise<boolean> {
   cancelStream(false); // tear down the player; we set record mode ourselves below
+  // Get in front of the audio-session handback BEFORE touching the category.
+  // whenAudioSessionSettled cancels one that is merely scheduled and awaits
+  // one already in the air; noteRecordingArmed refuses any new one until
+  // playback next starts. Without both, a setActive(false) can land on top of
+  // the recorder's own setActive(true) — which is either an
+  // AVAudioSessionErrorCodeIsBusy throw or a silent take, the exact failure
+  // this function exists to prevent.
+  await whenAudioSessionSettled();
+  noteRecordingArmed();
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await setAudioModeAsync({
@@ -627,14 +659,29 @@ export const METERED_HIGH_QUALITY = {
  *  The silence floor below is a STARTING GUESS and is logged on every capture
  *  precisely so it can be replaced with a measured one.
  *
- *  @returns 'live' | 'silent' | 'unknown' — 'unknown' when metering is absent,
- *           which must never be treated as failure.
+ *  IT ALSO STOPS WHEN THE TAKE DOES. Pass `isCurrent` — the surface's own
+ *  authoritative liveness ref. Without it the sampler outlives the take: the
+ *  resume paths in ChatInput and JournalEntryModal read isRecording off this
+ *  same recorder on the very NEXT line and can show "Can't resume" while this
+ *  loop keeps sampling a recorder that never started.
+ *
+ *  @returns 'live' | 'silent' | 'unknown' — 'unknown' when metering is absent
+ *           OR the take was abandoned mid-window; never a failure.
  */
 export const SILENCE_FLOOR_DB = -55;   // GUESS. iOS metering is dBFS; true
                                        // digital silence reads about -160.
 export async function verifyCaptureLive(
   getState: () => { metering?: number; isRecording?: boolean } | null,
-  { windowMs = 400, sampleEveryMs = 50 }: { windowMs?: number; sampleEveryMs?: number } = {},
+  { windowMs = 400, sampleEveryMs = 50, isCurrent }: {
+    windowMs?: number;
+    sampleEveryMs?: number;
+    /** The caller's own authoritative "this take is still mine" signal —
+     *  recordingRef, recordingModeRef, a take counter. Optional ONLY so this
+     *  signature stays non-breaking; every surface should pass one. Without it
+     *  the sampler runs its whole window over a recorder the surface has
+     *  already abandoned and reports a verdict about a take that is over. */
+    isCurrent?: () => boolean;
+  } = {},
 ): Promise<'live' | 'silent' | 'unknown'> {
   const samples: number[] = [];
   const deadline = Date.now() + windowMs;
@@ -642,6 +689,24 @@ export async function verifyCaptureLive(
   while (Date.now() < deadline) {
     let st: { metering?: number; isRecording?: boolean } | null = null;
     try { st = getState(); } catch { st = null; }
+    // ABANDONMENT — checked BEFORE the metering read, on two independent
+    // signals: the surface's own take token, and the recorder's own
+    // isRecording. isRecording has been in this function's parameter type
+    // since the first commit and was never read once — in the one place where
+    // reading it decides whether a silence verdict means anything at all.
+    // `=== false` deliberately, never falsy: isRecording is optional and
+    // undefined must not be read as "stopped".
+    // 'unknown', not 'silent': the docblock above already binds 'unknown' to
+    // "must never be treated as failure", and that is the honest verdict for a
+    // take that ended before the window closed.
+    if (isCurrent && !isCurrent()) {
+      console.log('[audio] capture verify ABANDONED — the take this check was armed for is over');
+      return 'unknown';
+    }
+    if (st && st.isRecording === false) {
+      console.log('[audio] capture verify ABANDONED — recorder is no longer recording');
+      return 'unknown';
+    }
     if (st && typeof st.metering === 'number' && Number.isFinite(st.metering)) {
       sawMetering = true;
       samples.push(st.metering);
@@ -659,16 +724,27 @@ export async function verifyCaptureLive(
     return 'unknown';
   }
   const peak = Math.max(...samples);
-  console.warn(`[audio] capture SILENT — ${samples.length} sample(s), peak=${peak.toFixed(1)}dB, floor=${SILENCE_FLOOR_DB}dB. Re-arming the session.`);
-  try {
-    await setAudioModeAsync({
-      allowsRecording: true, playsInSilentMode: true,
-      interruptionMode: 'doNotMix', shouldPlayInBackground: false,
-    });
-    console.log('[audio] session re-armed after silent capture');
-  } catch (e) {
-    console.warn('[audio] re-arm after silent capture failed:', (e as Error)?.message);
-  }
+  // NO RE-ARM. Removed 2026-09-10. Do not add it back without a device trace.
+  // The setAudioModeAsync({ allowsRecording: true, ... }) that used to sit here
+  // was checked against expo-audio's own native source, not inferred:
+  //   iOS — allowsRecording:true + playsInSilentMode:true resolves to
+  //     category = .playAndRecord (AudioModule.swift:552), and
+  //     AudioRecorder.swift:75 already set exactly that category at prepare().
+  //     No input-route re-selection, no setActive cycle. A no-op.
+  //   Android — AudioMode (AudioRecords.kt:15-20) HAS NO allowsRecording FIELD.
+  //     The flag was dropped on the floor. What the call actually did, into a
+  //     still-capturing MediaRecorder, was audioManager.mode = MODE_NORMAL and
+  //     setSpeakerphoneOn(true) (AudioModule.kt:187 → 607-608) — and, because
+  //     allowsBackgroundRecording also went unset and defaults false,
+  //     useForegroundService = false on every live recorder (kt:188-192).
+  //     That last write strips the foreground service from the exact long
+  //     hands-free take the screen-sleep wake lock exists to protect.
+  // Zero proven upside on iOS, three unwanted native writes on Android, both
+  // mid-take. The docblock above says IT REPORTS; IT DOES NOT RESTART. This is
+  // that, honoured. If a re-arm ever returns it must be Platform.OS === 'ios'
+  // gated, reachable only while the take is still live, must pass
+  // allowsBackgroundRecording explicitly, and must log "attempted (unproven)".
+  console.warn(`[audio] capture SILENT — ${samples.length} sample(s), peak=${peak.toFixed(1)}dB, floor=${SILENCE_FLOOR_DB}dB.`);
   return 'silent';
 }
 
@@ -721,26 +797,23 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
   // against the rare case where cancelStream missed a beat.
   if (player) {
     console.log('[tts] playOneBuffer tearing down prior player before creating new');
-    try { player.pause(); player.remove(); } catch {}
+    releaseManagedPlayer(player);
     player = null;
   }
   console.log(`[tts] playOneBuffer creating player from file URI: ${TTS_CACHE_FILE}`);
-    // keepAudioSessionActive (iOS, expo-audio 1.1.1 AudioPlayerOptions, default
-    // false). Its own doc: "The audio session for this player will not be
-    // deactivated automatically when the player finishes playback."
-    //
-    // Without it, iOS tears the session down the moment playback ends, and the
-    // next capture races that teardown -- which is the every-other-message
-    // silent-dictation bug. resetAudioSessionForRecording and the awaited
-    // ensureRecordingMode are a net UNDER that race; this removes the race.
-  const p = createAudioPlayer({ uri: TTS_CACHE_FILE }, { keepAudioSessionActive: true });
+  // keepAudioSessionActive is still on; its reasoning now lives once, in
+  // utils/audioSession.ts, instead of being restated at each player. It stops
+  // expo-audio tearing the session down at every pause/finish — between two
+  // sentences here, or one beat before a capture. The half that was missing is
+  // the owner that hands the session back when nobody wants it any more.
+  const p = createManagedPlayer({ uri: TTS_CACHE_FILE }, 'read-aloud');
   player = p;
   console.log('[tts] playOneBuffer player created, setting volume=1.0');
   // Belt-and-braces volume reset, mirroring map voice's playArrayBuffer.
   try { (p as any).volume = 1.0; } catch (e) { console.warn('[tts] could not set volume:', (e as Error)?.message); }
   console.log('[tts] playOneBuffer calling p.play()…');
   try {
-    p.play();
+    playManaged(p, 'read-aloud');
     console.log('[tts] playOneBuffer p.play() returned without throwing');
   } catch (e) {
     console.error('[tts] p.play() THREW:', (e as Error)?.message);
@@ -830,11 +903,12 @@ async function playOneBuffer(buf: ArrayBuffer, myToken: number): Promise<void> {
   if (player !== p) exitReason = 'player swapped (someone else replaced this player)';
   if (myToken !== watchToken) exitReason = 'watchToken bumped during playback';
   console.log(`[tts] playOneBuffer LOOP EXIT — pollIter=${pollIter} reason=${exitReason} myToken=${myToken} watchToken=${watchToken}`);
-  // Explicit pause() before remove() — paired with the doNotMix
-  // session, this stops the current buffer's output cleanly before
-  // the next createAudioPlayer takes over.
-  try { p.pause(); } catch {}
-  try { p.remove(); } catch {}
+  // Explicit pause() before remove() — paired with the doNotMix session, this
+  // stops the current buffer's output cleanly before the next player takes
+  // over. releaseManagedPlayer does both and drops THIS buffer's lease; the
+  // chain worker's span lease is what holds the session across the gap to the
+  // next sentence.
+  releaseManagedPlayer(p);
   if (player === p) player = null;
   console.log('[tts] playOneBuffer EXIT — player removed');
 }

@@ -305,7 +305,13 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
       // never delay capture, and it REPORTS rather than restarting -- a restart
       // would discard whatever was already said, and the silence floor is still
       // a guess until a real device has produced real numbers.
-      void verifyCaptureLive(() => recorder.getStatus());
+      // isCurrent is load-bearing HERE above all: the very next line can
+      // conclude this resume FAILED and alert "Can't resume". Without the
+      // predicate the sampler keeps reading a dead recorder for the rest of
+      // its window and reports SILENT about a take that never started.
+      void verifyCaptureLive(() => recorder.getStatus(), {
+        isCurrent: () => recordingRef.current,
+      });
       const st = recorder.getStatus();
       if (st.isRecording) {
         interruptedRef.current = false;
@@ -366,9 +372,14 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
         // never delay capture, and it REPORTS rather than restarting -- a restart
         // would discard whatever was already said, and the silence floor is still
         // a guess until a real device has produced real numbers.
-        void verifyCaptureLive(() => recorder.getStatus());
         recordingRef.current = true;
         setRecording(true);
+        // BELOW the claim, deliberately: isCurrent reads recordingRef, which is
+        // only true from the line above, so firing this before the claim would
+        // make the sampler abandon itself on its first tick.
+        void verifyCaptureLive(() => recorder.getStatus(), {
+          isCurrent: () => recordingRef.current,
+        });
         setSeconds(0);
         // Fresh take — reset the reconciliation state. The timer is driven
         // by the recorder watch (native durationMillis), not wall clock.

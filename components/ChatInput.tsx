@@ -254,7 +254,13 @@ export function ChatInput({
       // never delay capture, and it REPORTS rather than restarting -- a restart
       // would discard whatever was already said, and the silence floor is still
       // a guess until a real device has produced real numbers.
-      void verifyCaptureLive(() => recorder.getStatus());
+      // isCurrent is load-bearing HERE above all: the very next line can
+      // conclude this resume FAILED and alert "Can't resume". Without the
+      // predicate the sampler keeps reading a dead recorder for the rest of
+      // its window and reports SILENT about a take that never started.
+      void verifyCaptureLive(() => recorder.getStatus(), {
+        isCurrent: () => recordingRef.current && !stoppingRef.current,
+      });
       const st = recorder.getStatus();
       if (st.isRecording) {
         interruptedRef.current = false;
@@ -566,14 +572,6 @@ export function ChatInput({
           return false;
         }
         recorder.record();
-        // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
-        // route flipped; on some devices the first second is digital silence and
-        // the transcript comes back empty. This samples the recorder's own
-        // metering and logs what it sees. Fire-and-forget on purpose: it must
-        // never delay capture, and it REPORTS rather than restarting -- a restart
-        // would discard whatever was already said, and the silence floor is still
-        // a guess until a real device has produced real numbers.
-        void verifyCaptureLive(() => recorder.getStatus());
         // Fresh take — clear the reconciliation signals, THEN claim it. The
         // timer is driven by the recorder watch (native durationMillis), not
         // wall clock. Deliberately NOT resetTake(): this is an ENTRY.
@@ -584,6 +582,19 @@ export function ChatInput({
         stoppingRef.current = false; // a take exists again; the watch may reconcile
         recordingRef.current = true;
         setRecording(true);
+        // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
+        // route flipped; on some devices the first second is digital silence and
+        // the transcript comes back empty. This samples the recorder's own
+        // metering and logs what it sees. Fire-and-forget on purpose: it must
+        // never delay capture, and it REPORTS rather than restarting -- a restart
+        // would discard whatever was already said, and the silence floor is still
+        // a guess until a real device has produced real numbers.
+        // BELOW the claim, deliberately: isCurrent reads recordingRef, which is
+        // only true from the line above, so firing this before the claim would
+        // make the sampler abandon itself on its first tick.
+        void verifyCaptureLive(() => recorder.getStatus(), {
+          isCurrent: () => recordingRef.current && !stoppingRef.current,
+        });
         startTimeRef.current = Date.now();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
         return true;

@@ -161,6 +161,11 @@ export function GuideAskModal({ visible, onClose }: Props) {
   const recorder = useAudioRecorder(METERED_HIGH_QUALITY);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
+  // TAKE COUNTER. This is the one recording surface with no liveness REF —
+  // it tracks a take in React state (`recording`) only, and a closure handed
+  // to verifyCaptureLive cannot observe state. Bumped on entry and on every
+  // exit, so `takeSeqRef.current === myTake` means "still the take I armed for".
+  const takeSeqRef = useRef(0);
 
   // Reanimated red-dot pulse during voice recording.
   const dotScale = useSharedValue(1);
@@ -467,6 +472,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
         return;
       }
       await recorder.prepareToRecordAsync();
+      const myTake = ++takeSeqRef.current;
       recorder.record();
       // SILENT-CAPTURE CHECK. setAudioModeAsync resolving does not mean the mic
       // route flipped; on some devices the first second is digital silence and
@@ -475,7 +481,9 @@ export function GuideAskModal({ visible, onClose }: Props) {
       // never delay capture, and it REPORTS rather than restarting -- a restart
       // would discard whatever was already said, and the silence floor is still
       // a guess until a real device has produced real numbers.
-      void verifyCaptureLive(() => recorder.getStatus());
+      void verifyCaptureLive(() => recorder.getStatus(), {
+        isCurrent: () => takeSeqRef.current === myTake,
+      });
       setRecording(true);
       setSeconds(0);
       startTimeRef.current = Date.now();
@@ -485,12 +493,14 @@ export function GuideAskModal({ visible, onClose }: Props) {
       }, 250);
     } catch (err) {
       console.warn('[guide-ask-mic] startRecording failed:', (err as Error).message);
+      takeSeqRef.current++; // this take is over; stop any sampler armed for it
       setRecording(false);
     }
   }
 
   async function endRecording() {
     if (!recording) return;
+    takeSeqRef.current++; // the take is over; any sampler armed for it stops now
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     const heldSec = Math.max(0.1, (Date.now() - startTimeRef.current) / 1000);
     setRecording(false);

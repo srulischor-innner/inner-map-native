@@ -40,8 +40,11 @@ import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   useAudioRecorder, AudioModule, RecordingPresets,
-  setAudioModeAsync, createAudioPlayer,
+  setAudioModeAsync,
 } from 'expo-audio';
+import {
+  createManagedPlayer, playManaged, releaseManagedPlayer, type ManagedPlayer,
+} from '../../utils/audioSession';
 
 import { colors, fonts, spacing, radii } from '../../constants/theme';
 import { api } from '../../services/api';
@@ -228,7 +231,14 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
   // path uses. HIGH_QUALITY gives m4a on iOS / mp4 on Android, both
   // of which Cartesia accepts.
   const recorder = useAudioRecorder(METERED_HIGH_QUALITY);
-  const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+  const playerRef = useRef<ManagedPlayer | null>(null);
+  // The playback-poll interval, in a ref so unmount can clear it. As a local
+  // const inside playReplyAudio it outlived the component: leaving the Map tab
+  // mid-reply left it ticking forever, calling setState on a dead component
+  // AND never releasing the player — so its audio-session lease was held for
+  // the life of the process. That is the same never-lets-go bug from the other
+  // end.
+  const playCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wantRecordingRef = useRef(false);
   const pressStartTimeRef = useRef<number>(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -310,8 +320,9 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
   // Unmount cleanup — make sure no recorder / player is left running.
   useEffect(() => () => {
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    if (playCheckRef.current) { clearInterval(playCheckRef.current); playCheckRef.current = null; }
     try { recorder.stop(); } catch {}
-    try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
+    releaseManagedPlayer(playerRef.current);
     playerRef.current = null;
   }, [recorder]);
 
@@ -416,7 +427,6 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       // never delay capture, and it REPORTS rather than restarting -- a restart
       // would discard whatever was already said, and the silence floor is still
       // a guess until a real device has produced real numbers.
-      void verifyCaptureLive(() => recorder.getStatus());
       // recordingModeRef.current is the AUTHORITATIVE signal that a
       // recording is in flight — set the moment recorder.record() has
       // been called. The release handler reads THIS (not React state)
@@ -427,6 +437,15 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       setHoldSec(0);
       cancellingRef.current = false;
       setSlideCancelling(false);
+      // The verify moved BELOW the claim so it can be handed that same
+      // authoritative signal. This bar has the widest exposure of the five:
+      // it parks the session for its own spoken replies AND has
+      // slide-to-cancel, so the sampling window routinely outlives the take.
+      // `=== mode` not `!== null`: a second mic started in the window is a
+      // different take, and this sampler does not own it.
+      void verifyCaptureLive(() => recorder.getStatus(), {
+        isCurrent: () => recordingModeRef.current === mode && !cancellingRef.current,
+      });
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       tickRef.current = setInterval(() => {
         setHoldSec(Math.floor((Date.now() - pressStartTimeRef.current) / 1000));
@@ -466,27 +485,27 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
     await FileSystem.writeAsStringAsync(tmpUri, base64, {
       encoding: FileSystem.EncodingType.Base64,
     });
-    try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
-    // keepAudioSessionActive (iOS, expo-audio 1.1.1 AudioPlayerOptions, default
-    // false). Its own doc: "The audio session for this player will not be
-    // deactivated automatically when the player finishes playback."
-    //
-    // Without it, iOS tears the session down the moment playback ends, and the
-    // next capture races that teardown -- which is the every-other-message
-    // silent-dictation bug. resetAudioSessionForRecording and the awaited
-    // ensureRecordingMode are a net UNDER that race; this removes the race.
-    const player = createAudioPlayer({ uri: tmpUri }, { keepAudioSessionActive: true });
+    releaseManagedPlayer(playerRef.current);
+    if (playCheckRef.current) { clearInterval(playCheckRef.current); playCheckRef.current = null; }
+    // keepAudioSessionActive is still on; its reasoning now lives once, in
+    // utils/audioSession.ts. What was missing was the other half. This bar
+    // PARKS the session for its own spoken reply, and nothing ever handed it
+    // back — so the podcast a person paused in order to talk to us was stopped
+    // for the rest of the app's life. The lease taken by playManaged below,
+    // and dropped by releaseManagedPlayer here, on finish, and on unmount, is
+    // that half.
+    const player = createManagedPlayer({ uri: tmpUri }, 'map-voice');
     playerRef.current = player;
     setState('speaking');
-    player.play();
-    const playCheck = setInterval(() => {
+    playManaged(player, 'map-voice');
+    playCheckRef.current = setInterval(() => {
       try {
         const s = player.currentStatus;
         if (s?.didJustFinish || (s && s.duration > 0 && s.currentTime >= s.duration - 0.05)) {
-          clearInterval(playCheck);
+          if (playCheckRef.current) { clearInterval(playCheckRef.current); playCheckRef.current = null; }
           setState('idle');
           setActiveMic(null);
-          try { player.remove(); } catch {}
+          releaseManagedPlayer(player);
           playerRef.current = null;
           FileSystem.deleteAsync(tmpUri, { idempotent: true }).catch(() => {});
         }

@@ -41,12 +41,22 @@ export const PARTNER_ENABLED: boolean = false;
 // playback->record switch and reports live / silent / unknown.
 //
 // WHAT IS PROVEN AND WHAT IS NOT. The DETECTOR measures: "[audio] capture LIVE
-// -- metering=..." means the route really is capturing. The RE-ARM that runs on
-// a silent result is UNPROVEN -- on iOS it sets a category the session already
-// holds, and on Android setAudioModeAsync ignores allowsRecording, so
-// "[audio] session re-armed after silent capture" prints whenever the call
-// resolves and is NOT evidence the route flipped. The on-device test settles
-// that half; do not read the re-arm log as a pass.
+// -- metering=..." means the route really is capturing. That half stands.
+//
+// THE RE-ARM IS GONE (2026-09-10). This paragraph used to say the re-arm was
+// UNPROVEN and to not read its log as a pass -- correct, and the code shipped
+// with it anyway, certified clean by a check that structurally could not see
+// it. It was worse than unproven. Checked against expo-audio's native source:
+// on iOS it re-set the .playAndRecord category AudioRecorder.swift:75 had
+// already set at prepare() -- a no-op. On Android AudioMode has no
+// allowsRecording field at all, so the flag was dropped and the call's only
+// real effects were audioManager.mode = MODE_NORMAL, setSpeakerphoneOn(true),
+// and useForegroundService = false on every LIVE recorder -- that last one
+// stripping the foreground service from the long hands-free take the wake lock
+// exists to protect. verifyCaptureLive now only reports, which is what its own
+// docblock always claimed. Do not re-add a re-arm without a device trace; the
+// conditions it would have to meet are written at the deletion site in
+// utils/ttsStream.ts.
 export const CHAT_READ_ALOUD_ENABLED: boolean = true;
 
 // Boot-time push auto-registration stays off. This flag gates ONLY the

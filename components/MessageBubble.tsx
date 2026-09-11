@@ -12,9 +12,11 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { View, Text, Pressable, Animated, Easing, StyleSheet, PanResponder, LayoutChangeEvent, ActivityIndicator, ActionSheetIOS, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { setAudioModeAsync } from 'expo-audio';
 import {
-  createAudioPlayer, setAudioModeAsync,
-} from 'expo-audio';
+  createManagedPlayer, pauseManaged, playManaged, releaseManagedPlayer,
+  type ManagedPlayer,
+} from '../utils/audioSession';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { PartBadge } from './PartBadge';
@@ -407,7 +409,7 @@ function VoiceNoteBubble({
   // waveform AND the "0:03 / 0:08" counter. Updated every 100ms while the
   // player is active.
   const [currentTime, setCurrentTime] = useState(0);
-  const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+  const playerRef = useRef<ManagedPlayer | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Measured width of the waveform view — used to map finger x → seek seconds
   // for both tap-to-seek and drag-to-scrub.
@@ -436,7 +438,7 @@ function VoiceNoteBubble({
   // reset while a bubble is cached in the Messages list.
   useEffect(() => () => {
     stopPolling();
-    try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
+    releaseManagedPlayer(playerRef.current);
     playerRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -457,6 +459,9 @@ function VoiceNoteBubble({
         if (s?.didJustFinish) {
           // Reached the end — reset UI so next tap plays from the start.
           stopPolling();
+          // Drop the audio-session lease. The player stays loaded so a later
+          // tap resumes instantly; what must not stay claimed is the session.
+          pauseManaged(p);
           try { p.seekTo(0); } catch {}
           setCurrentTime(0);
           setPlaying(false);
@@ -473,15 +478,19 @@ function VoiceNoteBubble({
         interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
       });
     } catch {}
-    // keepAudioSessionActive (iOS, expo-audio 1.1.1 AudioPlayerOptions, default
-    // false). Its own doc: "The audio session for this player will not be
-    // deactivated automatically when the player finishes playback."
+    // BORROWED REASONING, CORRECTED. This block used to carry the
+    // every-other-message silent-dictation argument, pasted verbatim from
+    // utils/ttsStream.ts. It is FALSE here: this is a mixWithOthers voice-note
+    // player, it never precedes a capture, and no recording surface waits on
+    // its teardown. Nothing about dictation was ever at stake on this player.
     //
-    // Without it, iOS tears the session down the moment playback ends, and the
-    // next capture races that teardown -- which is the every-other-message
-    // silent-dictation bug. resetAudioSessionForRecording and the awaited
-    // ensureRecordingMode are a net UNDER that race; this removes the race.
-    const p = createAudioPlayer({ uri }, { keepAudioSessionActive: true });
+    // The flag still belongs, for a different reason. expo-audio's own
+    // deactivation (ios/AudioModule.swift — onPlaybackComplete and
+    // Function("pause")) is process-wide, and its hasActivePlayers guard reads
+    // clear during the ~60ms gap between two read-aloud sentences: pausing a
+    // voice note in that window would tear the session out from under chat.
+    // One owner decides instead — utils/audioSession.ts.
+    const p = createManagedPlayer({ uri }, 'voice-note');
     playerRef.current = p;
     return p;
   }
@@ -490,7 +499,7 @@ function VoiceNoteBubble({
     Haptics.selectionAsync().catch(() => {});
     // PAUSE — keep the player alive so a later tap resumes from here.
     if (playing) {
-      try { playerRef.current?.pause(); } catch {}
+      pauseManaged(playerRef.current);
       setPlaying(false);
       stopPolling();
       return;
@@ -501,7 +510,7 @@ function VoiceNoteBubble({
     setLoading(true);
     try {
       const p = await ensurePlayer();
-      p.play();
+      playManaged(p, 'voice-note');
       setPlaying(true);
       setLoading(false);
       startPolling();
