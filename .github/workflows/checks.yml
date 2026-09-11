@@ -49,24 +49,40 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: 'InnerMap'
+
+      # check-journal-privacy-promise.js counts a promise in the PUBLISHED
+      # privacy policy against the control that has to satisfy it, so it needs
+      # the legal repo on disk as a sibling. Without it the check fails
+      # honestly rather than passing — which is right, and is also why CI was
+      # red for four commits before anyone looked. inner-map-legal is public,
+      # so this costs no credential.
+      - uses: actions/checkout@v4
+        with:
+          repository: srulischor-innner/inner-map-legal
+          path: 'inner-map-legal'
 
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
+          cache-dependency-path: InnerMap/package-lock.json
 
       - name: Give the suite the CRLF working copy it was written against
         run: |
           find . -path ./node_modules -prune -o -type f \
-            \( -name '*.js' -o -name '*.mjs' -o -name '*.ts' -o -name '*.tsx' -o -name '*.json' \) -print0 \
+            \( -name '*.js' -o -name '*.mjs' -o -name '*.ts' -o -name '*.tsx' -o -name '*.json' -o -name '*.html' \) -print0 \
             | xargs -0 -r perl -pi -e 's/\r?\n/\r\n/'
 
       - run: npm ci
+        working-directory: 'InnerMap'
 
       # - name: Install eas-cli   # only useful with EXPO_TOKEN set
       #   run: npm i -g eas-cli
 
       - name: Run all checks
+        working-directory: 'InnerMap'
         run: node scripts/ci-run-all.js
         # env:
         #   EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
