@@ -28,6 +28,7 @@ import * as Haptics from 'expo-haptics';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { journal, JournalEntry, JournalKind } from '../../services/journal';
 import { JournalEntryModal } from '../../components/journal/JournalEntryModal';
+import { CrisisResourcesCard } from '../../components/safety/CrisisResourcesCard';
 
 export default function JournalScreen() {
   const insets = useSafeAreaInsets();
@@ -35,15 +36,41 @@ export default function JournalScreen() {
   const [composeKind, setComposeKind] = useState<JournalKind | null>(null);
   const [viewing, setViewing] = useState<JournalEntry | null>(null);
   const [search, setSearch] = useState('');
+  // CRISIS (server-detected on the synced entry). Set by the onCrisis callback
+  // passed into journal.add — it lands AFTER the entry is saved and the
+  // compose modal has closed, which is why it needs its own state rather than
+  // a return value. `referral` is the server's deterministic text, so the
+  // tier-1 / tier-2 / third-party wording can never drift from chat's.
+  const [crisis, setCrisis] = useState<{ tier: number | null; referral: string } | null>(null);
+  // MODAL CONTENTION — the referral is silently dropped without this.
+  // CrisisResourcesCard's modal variant, JournalEntryModal and ViewEntryModal
+  // are all RN <Modal>, and RN will not present one while another is
+  // dismissing (~300ms animated on iOS). handleSave calls setComposeKind(null)
+  // synchronously, so a fast POST resolving inside that window would ask for a
+  // second modal mid-dismissal and get nothing. Hold the card until no other
+  // modal is up, then wait out the animation. If the person opens compose or
+  // an entry before it lands, the card retreats and re-arms rather than being
+  // lost — `crisis` is only cleared by an explicit close.
+  const [crisisReady, setCrisisReady] = useState(false);
 
   const refresh = useCallback(async () => {
     setEntries(await journal.list());
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
+  useEffect(() => {
+    if (!crisis || composeKind || viewing) { setCrisisReady(false); return; }
+    const t = setTimeout(() => setCrisisReady(true), 500);
+    return () => clearTimeout(t);
+  }, [crisis, composeKind, viewing]);
+
   async function handleSave(content: string, shared: boolean) {
     if (!composeKind) return;
-    await journal.add(composeKind, content, undefined, shared);
+    // setCrisis is passed as the onCrisis callback, NOT awaited. The save and
+    // the modal close stay exactly as fast as they are today and an offline
+    // save is unchanged; if the server's ack carries a referral it arrives a
+    // moment later and opens the resources card over the journal list.
+    await journal.add(composeKind, content, undefined, shared, setCrisis);
     setComposeKind(null);
     refresh();
   }
@@ -72,6 +99,19 @@ export default function JournalScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={[]}>
+      {/* CRISIS — the same tappable card Map Voice surfaces when the server
+          flags a turn. The header says the entry SAVED, because the first
+          thing a person needs to know is that their writing was not lost or
+          refused; the lede is the server's deterministic referral text. No
+          acknowledge button and no gate: this surface refers and does not
+          hold, so the X is the whole exit by design. */}
+      <CrisisResourcesCard
+        asModal
+        visible={!!crisis && crisisReady}
+        onClose={() => setCrisis(null)}
+        header="Your entry is saved"
+        lede={crisis?.referral}
+      />
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: spacing.xxl + insets.bottom }]}

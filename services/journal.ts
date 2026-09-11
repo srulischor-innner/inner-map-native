@@ -71,6 +71,14 @@ export const journal = {
     content: string,
     prompt?: string,
     shared: boolean = true,
+    // CRISIS (server-detected). Called at most once, AFTER the local save has
+    // already succeeded, when the server's ack carries a referral. A callback
+    // rather than an awaited return ON PURPOSE: awaiting the sync would make
+    // an offline save hang on apiFetch's 25s timeout, and the offline-first
+    // contract below says the sync must never block or fail the local save.
+    // A PRIVATE entry never syncs, so it never reaches the server's net at
+    // all and this callback never fires for one.
+    onCrisis?: (c: { tier: number | null; referral: string }) => void,
   ): Promise<JournalEntry> {
     await ensureReady();
     const entry: JournalEntry = {
@@ -99,7 +107,11 @@ export const journal = {
         content: entry.content,
         prompt: entry.prompt,
         createdAt: entry.createdAt,
-      });
+      }).then((r) => {
+        if (r && r.crisis_detected && r.referral) {
+          onCrisis?.({ tier: r.crisis_tier ?? null, referral: r.referral });
+        }
+      }).catch(() => {});
     }
     return entry;
   },

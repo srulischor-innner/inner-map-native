@@ -672,23 +672,38 @@ export const api = {
    *  embedded for RAG (the AI reads the journal as context, never as a map
    *  update). Offline-first: the entry is saved to local encrypted storage
    *  first; this sync is fire-and-forget and a failure must never block or
-   *  surface to the user. Returns true on success, false on any failure. */
+   *  surface to the user.
+   *
+   *  CRISIS: the ack can carry a referral (the server runs the same crisis
+   *  net here that /api/chat and /api/map-voice/turn run) — including on the
+   *  frozen 402, the rate-limit 429 and the 500, which refuse or fail the
+   *  write but must not swallow the referral. So the body is parsed on every
+   *  status. `ok` is still the plain success bit callers had before. */
   async syncJournalEntry(entry: {
     id: string;
     kind: string;
     content: string;
     prompt?: string;
     createdAt: string;
-  }): Promise<boolean> {
+  }): Promise<{ ok: boolean; crisis_detected?: boolean; crisis_tier?: 1 | 2 | null; referral?: string }> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/journal', {
         label: 'journal-sync', method: 'POST', headers, body: JSON.stringify(entry),
       });
-      return res.ok;
+      // Parsed on EVERY status, not only 2xx — the referral rides on the 402,
+      // the 429 and the 500 too. apiFetch reads its own failure preview off a
+      // clone, so the body is still unread here.
+      const j: any = await res.json().catch(() => null);
+      return {
+        ok: res.ok,
+        crisis_detected: !!(j && j.crisis_detected),
+        crisis_tier: j && typeof j.crisis_tier === 'number' ? (j.crisis_tier as 1 | 2) : null,
+        referral: j && typeof j.referral === 'string' ? j.referral : undefined,
+      };
     } catch (e) {
       console.warn('[journal-sync] threw:', (e as Error)?.message);
-      return false;
+      return { ok: false, crisis_detected: false, crisis_tier: null };
     }
   },
 
