@@ -12,7 +12,7 @@
 //   2. all four modes have a user-facing label, and none leaks our word for the
 //      prompt ("Light", "Process", "Explore", "Differentiation")
 //   3. it is rendered above the transcript, not down in the input dock
-//   4. it is suppressed during the first session, where mode does nothing
+//   4. it is rendered during the first session TOO (reversed 2026-09-10)
 //
 // Carries a negative control, per the house rule that a checker which cannot
 // fail is not a checker.
@@ -57,10 +57,35 @@ check(ctrlAt > -1, 'WorkingModeControl is not rendered in the chat screen at all
 check(scrollAt > -1 && ctrlAt > -1 && ctrlAt < scrollAt,
   'WorkingModeControl must render ABOVE the transcript — it is a state, not an action');
 
-// 4. suppressed during the first session
+// 4. RENDERED IN THE FIRST SESSION TOO — the guard reversed on 2026-09-10.
+//
+// This assertion used to be its exact inverse: the row had to be wrapped in
+// `firstSessionPending === true ? null : (...)`, and the reason given was "the
+// first session is server-routed, so a choice there does nothing". That was
+// true, and it was the bug. /api/chat replaced whatever mode the person picked
+// with the starter-map arc, so the one screen that teaches modes exist was
+// hidden from the one person who has never seen them — one turn after the
+// orientation promised "you can change it whenever ... I'll follow", and one
+// turn after four boxes asked them which way they wanted to work.
+//
+// The server now honours the pick in the first session (server.js
+// firstSessionBodyFor + the first-session route; scripts/smoke-first-session.js
+// steps 14–14.15 in the server repo). So the state has to be visible, and it has
+// to be reachable a second time: the four boxes are shown once and never again,
+// which left a first-session person who picked wrong with no way back.
+//
+// A window, not a whole-file search, because `firstSessionPending` appears all
+// over this screen legitimately — the banner directly above this row is one.
 const window = ctrlAt > -1 ? SCREEN.slice(Math.max(0, ctrlAt - 600), ctrlAt) : '';
-check(/firstSessionPending/.test(window),
-  'WorkingModeControl is not guarded by firstSessionPending — the first session is server-routed, so a choice there does nothing');
+check(!/firstSessionPending === true \? null :/.test(window),
+  'WorkingModeControl has been hidden during the first session again — the server now honours the mode chosen there, so hiding the control hides live state and removes the only second chance to change it');
+// Negative control for the assertion above: prove the window is actually
+// looking at the ternary's old position, not at empty space somewhere else.
+const RESTORED = SCREEN.slice(0, ctrlAt) + '{firstSessionPending === true ? null : (' + SCREEN.slice(ctrlAt);
+const restoredWindow = RESTORED.slice(Math.max(0, ctrlAt - 600 + 39), ctrlAt + 39);
+if (!/firstSessionPending === true \? null :/.test(restoredWindow)) {
+  fails.push('NEGATIVE CONTROL: the first-session assertion cannot fail — restoring the ternary does not land inside the window it searches');
+}
 
 // negative control: the assertions must actually be capable of failing
 // Global, both times. Each string appears twice — once in the visible row and
@@ -78,4 +103,4 @@ if (fails.length) {
   for (const f of fails) console.error('  - ' + f);
   process.exit(1);
 }
-console.log('check-working-mode-control: OK — labelled, at the top, four modes, first session excluded');
+console.log('check-working-mode-control: OK — labelled, at the top, four modes, shown in the first session too');

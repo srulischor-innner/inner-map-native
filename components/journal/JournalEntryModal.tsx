@@ -20,7 +20,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Modal, View, Text, TextInput, Pressable, StyleSheet,
+  Modal, View, Text, TextInput, Pressable, StyleSheet, Switch,
   Platform, ScrollView, Animated, Easing, Keyboard,
   GestureResponderEvent, Alert, ActivityIndicator,
 } from 'react-native';
@@ -85,10 +85,21 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   const [transcribing, setTranscribing] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [saving, setSaving] = useState(false);
-  // Share flag — now a save-time SNAPSHOT of the global default (Settings →
-  // "Share journal with AI"), seeded on open below. The in-compose per-entry
-  // toggle was removed in favour of the single global setting. true → synced
-  // to the server for RAG; false → stays on-device, never sent.
+  // PER-ENTRY, AS PROMISED. Seeded on open from the global default (Settings →
+  // "Share journal with AI"), then owned by this entry until save, where it is
+  // locked. true → synced to the server for RAG; false → stays in local
+  // encrypted storage and is never sent.
+  //
+  // The in-compose control was removed on 2026-06-29 (3e92a67) in favour of the
+  // single global setting, and four surfaces went on promising it: the
+  // first-launch privacy screen ("or mark it private"), the Guide's Journal
+  // card, the caption at the top of this tab, and the published privacy policy,
+  // which says "You decide, per journal entry" and "when you mark a journal
+  // entry as shared". The default is shared, so a person who read all four and
+  // was shown no control had every entry synced.
+  //
+  // SETTINGS IS THE DEFAULT, NOT THE LOCK. It still decides which way this
+  // opens; this decides which way this one goes.
   const [shared, setShared] = useState(true);
   // Build 14 — manual kbHeight lift, replacing the prior
   // KeyboardAvoidingView with behavior:'height' on Android (which
@@ -588,6 +599,50 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
             />
           </ScrollView>
 
+          {/* WHERE THIS ONE IS GOING — and it says so whether or not anyone
+              touches it. A hidden state teaches nothing, which is the same
+              rule the mode control at the top of the chat tab is built on:
+              the label doing double duty as the affordance IS the design.
+
+              The whole row is the hit target, not just the switch. A 51pt
+              switch on the right of a phone is reachable; the sentence that
+              explains it is what people actually aim at.
+
+              Locked at save: services/journal.ts syncs only when
+              `entry.shared !== false`, and there is no flip-to-private purge
+              path, so a private entry simply never leaves the device. */}
+          <Pressable
+            style={styles.shareRow}
+            onPress={() => { Haptics.selectionAsync().catch(() => {}); setShared((v) => !v); }}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: shared }}
+            accessibilityLabel={shared
+              ? 'Shared with the AI. The AI can read this entry and bring it into conversation. Tap to keep it private.'
+              : "Private to this device. Kept on this device only, encrypted — we genuinely can't read it. Tap to share it with the AI."}
+          >
+            <View style={styles.shareTextWrap}>
+              <Text style={styles.shareLabel}>
+                {shared ? 'Shared with the AI' : 'Private to this device'}
+              </Text>
+              <Text style={styles.shareHelp}>
+                {shared
+                  ? 'The AI can read this entry and bring it into conversation.'
+                  : "Kept on this device only — we genuinely can't read it."}
+              </Text>
+            </View>
+            <Switch
+              value={shared}
+              onValueChange={setShared}
+              trackColor={{ false: 'rgba(255,255,255,0.16)', true: 'rgba(230,180,122,0.5)' }}
+              thumbColor={shared ? colors.amber : '#9a9a9a'}
+              ios_backgroundColor="rgba(255,255,255,0.16)"
+              // The row above owns the accessible name; this must not be a
+              // second, competing announcement of the same control.
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            />
+          </Pressable>
+
           {/* Recording / transcribing overlay-style row above the mic. */}
           {(recording || transcribing) ? (
             <View style={styles.recordingBar}>
@@ -716,6 +771,34 @@ const styles = StyleSheet.create({
     letterSpacing: 1.6,
   },
   saveBtnTextDisabled: { color: 'rgba(230,180,122,0.35)' },
+
+  // ----- per-entry privacy row (above the recording bar / mic dock) -----
+  // The four keys 3e92a67 deleted, back in the place it deleted them from.
+  shareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 0.5,
+    borderTopColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  shareTextWrap: { flex: 1 },
+  shareLabel: {
+    color: colors.cream,
+    fontFamily: fonts.sansBold,
+    fontSize: 13,
+    letterSpacing: 0.3,
+    marginBottom: 2,
+  },
+  shareHelp: {
+    color: 'rgba(240,237,232,0.5)',
+    fontFamily: fonts.sans,
+    fontSize: 12,
+    lineHeight: 16,
+  },
 
   scrollContent: {
     paddingHorizontal: spacing.lg,

@@ -52,9 +52,31 @@ if (mc) {
 check(/BACKSTOP seeded the transcript/.test(src),
   'the blank-screen backstop is gone — if boot and resume both fail to seed, the user gets an empty chat with no way back');
 
-// 5. the first session is still routed untouched
-check(/firstSessionPending === true \? null :/.test(src),
-  'the working-mode control is no longer hidden during the first session');
+// 5. THE MODE CONTROL IS LIVE IN THE FIRST SESSION TOO (reversed 2026-09-10),
+// and it still cannot cost anyone their conversation.
+//
+// This used to assert the opposite — that the control was hidden behind
+// `firstSessionPending === true ? null :` — on the grounds that the first
+// session was server-routed and a choice there did nothing. That was true, and
+// it was the bug: the pick was discarded by /api/chat, so the one screen that
+// teaches modes exist was hidden from the one person who has never seen them.
+// The server honours it now (server.js firstSessionBodyFor), so the row is
+// rendered unconditionally and check-working-mode-control.js owns that fact.
+//
+// What THIS file owns is the consequence: a mode change is now reachable
+// during the first session, so the single render site's onChange has to go
+// through handleModeChange — the path checks 3 and 4 above prove is
+// non-destructive — rather than doing anything of its own to the transcript.
+check(!/firstSessionPending === true \? null :/.test(src),
+  'the working-mode control is hidden during the first session again — the server now honours the mode chosen there, so hiding it hides live state');
+const ctrlSites = (src.match(/<WorkingModeControl/g) || []).length;
+check(ctrlSites === 1, `expected exactly 1 <WorkingModeControl render site, found ${ctrlSites}`);
+{
+  const ctrlAt = src.indexOf('<WorkingModeControl');
+  const ctrlBlock = ctrlAt > -1 ? src.slice(ctrlAt, src.indexOf('/>', ctrlAt)) : '';
+  check(/handleModeChange\(wireModeFor\(next\)\)/.test(ctrlBlock),
+    'the mode control no longer routes through handleModeChange — that is the only path proven not to touch the transcript');
+}
 
 // negative control — these assertions must be able to fail
 {
@@ -62,6 +84,15 @@ check(/firstSessionPending === true \? null :/.test(src),
   const bm = /function handleModeChange\([\s\S]*?\n  \}/.exec(broken);
   if (!bm || !bm[0].includes('sessionIdRef.current =')) {
     fails.push('NEGATIVE CONTROL: the handleModeChange body scan cannot detect an injected mutation');
+  }
+  // And the reversed first-session assertion: restoring the old ternary in
+  // front of the control must turn check 5 red.
+  const at = src.indexOf('<WorkingModeControl');
+  const restored = at > -1
+    ? src.slice(0, at) + '{firstSessionPending === true ? null : (' + src.slice(at)
+    : src;
+  if (!/firstSessionPending === true \? null :/.test(restored)) {
+    fails.push('NEGATIVE CONTROL: the first-session assertion cannot fail — the restored ternary is not detectable');
   }
 }
 

@@ -333,10 +333,11 @@ export default function SettingsScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.rowTitle}>Share journal with AI</Text>
             <Text style={styles.rowSub}>
-              New entries are shared with the AI by default — stored on our server
-              so it can reference them in conversation, and occasionally suggest
-              something for your map (which you always approve first). Turn off to
-              keep new entries private: encrypted on your device, never sent.
+              Sets how each new entry OPENS — you can still change any single
+              entry while you're writing it. Shared means stored on our server so
+              the AI can reference it in conversation, and occasionally suggest
+              something for your map (which you always approve first). Private
+              means encrypted on your device and never sent.
             </Text>
           </View>
           <Switch

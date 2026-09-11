@@ -1977,20 +1977,29 @@ export default function ChatScreen() {
           an action: it says what is happening right now, and a state belongs
           where you look to find out, not where your thumb rests to act. It
           was above the input for one build; using it made the case. */}
-      {firstSessionPending === true ? null : (
-        <WorkingModeControl
-          mode={workingMode}
-          disabled={sending}
-          onChange={(next) => {
-            // Changing how we work does not touch the conversation, the session
-            // id, or the scroll position — see handleModeChange. The ref is set
-            // synchronously so a turn started in the same tick reads the new mode.
-            workingModeRef.current = next;
-            setWorkingMode(next);
-            handleModeChange(wireModeFor(next));
-          }}
-        />
-      )}
+      {/* SHOWN IN THE FIRST SESSION TOO (2026-09-10). It was hidden here, and
+          the reason it could be hidden was that it did nothing: the server
+          replaced whatever it said with the starter-map arc. So the one screen
+          that teaches modes exist was hidden from the one person who has never
+          seen them — a turn after the orientation told them they could change
+          it whenever, and a turn after four boxes asked them which way.
+
+          Now that the pick reaches the prompt, the state has to be visible, and
+          it has to be reachable a second time: the boxes are shown once and
+          never again, so without this row a first-session person who picked
+          wrong had no way back. */}
+      <WorkingModeControl
+        mode={workingMode}
+        disabled={sending}
+        onChange={(next) => {
+          // Changing how we work does not touch the conversation, the session
+          // id, or the scroll position — see handleModeChange. The ref is set
+          // synchronously so a turn started in the same tick reads the new mode.
+          workingModeRef.current = next;
+          setWorkingMode(next);
+          handleModeChange(wireModeFor(next));
+        }}
+      />
       <View style={styles.indicatorBar}>
         {isGenerating ? (
           <AttentionIndicator />

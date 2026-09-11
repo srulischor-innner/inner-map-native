@@ -31,10 +31,10 @@ const REPO = path.resolve(__dirname, "..");
 // Not checks — a generator and a preview server.
 const NOT_CHECKS = new Set(["generate-icon.js", "preview-reading-web.js"]);
 
-// 9 checks + 8 smokes. Below this, the run fails: see
+// 10 checks + 8 smokes. Below this, the run fails: see
 // the count-guard note in the server repo's runner. Deleting a check must be
 // a decision, not a diff nobody noticed.
-const EXPECTED_TOTAL = 17;
+const EXPECTED_TOTAL = 18;
 
 const TIMEOUT_MS = 180_000;
 
