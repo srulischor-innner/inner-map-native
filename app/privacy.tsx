@@ -49,7 +49,7 @@ import * as Sharing from 'expo-sharing';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import {
-  PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, openLegalDoc,
+  PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, LEGAL_DOCS_LAST_UPDATED, openLegalDoc,
 } from '../utils/legalDocs';
 import { CrisisResourcesCard } from '../components/safety/CrisisResourcesCard';
 import { getUserId } from '../services/user';
@@ -160,7 +160,7 @@ export default function PrivacyScreen() {
 
         {/* ===== 2. PRIVACY AT A GLANCE ===== */}
         <Text style={[styles.h1, styles.h1Top]}>Privacy at a glance</Text>
-        <Text style={styles.updated}>Reflects the policy last updated: July 1, 2026</Text>
+        <Text style={styles.updated}>Reflects the policy last updated: {LEGAL_DOCS_LAST_UPDATED}</Text>
 
         <View style={styles.banner}>
           <Text style={styles.bannerTitle}>This is a summary.</Text>

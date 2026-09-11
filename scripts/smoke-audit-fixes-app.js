@@ -3,6 +3,10 @@
 //   1. the age-gate bypass — a slow storage read waived the terms screen
 //   2. the frozen paywall — nothing parsed the trial 402
 //   3. the opening mode boxes
+//   4. the in-app privacy summary cited a policy version that never existed
+//   5. the journal is the only ENCRYPTED store on the device — the code-side
+//      guard behind a Privacy Policy correction
+//      (4 and 5 added 2026-09-10; not among the 09-06 rulings)
 //
 // Every assertion here is WRITTEN to fail when its fix is reverted. The lesson
 // being applied is the trial-freeze smoke, whose headline check greped for a
@@ -19,6 +23,14 @@
 //            passed. (b) Rename the MODE_BLURB export: the parse guard goes
 //            red, so the pair can never silently measure an empty list.
 //   checked  the age-gate unknown-state default (2026-09-06).
+//   checked  section 4, two mutations (2026-09-10). (a) LEGAL_DOCS_LAST_UPDATED
+//            back to 'July 1, 2026' in utils/legalDocs.ts: the first assertion
+//            goes red. (b) The literal date back into the rendered Text --
+//            even the CORRECT date: the second assertion goes red on the digit
+//            guard, which is the point. The defect was a second copy of the
+//            fact, not a wrong character in it.
+//   checked  section 5, one mutation (2026-09-10). A second createMMKV call in
+//            utils/encryptedStorage.ts: the instance-count clause goes red.
 //   NOT YET  the remaining assertions in sections 1 and 2. They are written to
 //            be falsifiable and are believed to be, but believed is not
 //            measured. Do not read a green run here as proof of more than the
@@ -241,6 +253,84 @@ ok('...and never while a crisis owns the screen',
 ok('picking writes the ref synchronously, like the control does',
   /workingModeRef\.current = next;\s*\r?\n\s*setWorkingMode\(next\);\s*\r?\n\s*handleModeChange\(wireModeFor\(next\)\);/.test(CHAT),
   'a turn started in the same tick must read the new mode, not the stale one');
+
+// ===========================================================================
+console.log('\n=== 4. the in-app summary cites a policy version that exists ===');
+// ===========================================================================
+// app/privacy.tsx read "Reflects the policy last updated: July 1, 2026" while
+// both published documents read "Last Updated: July 3, 2026" and the server
+// stamps every age attestation with AGE_POLICY_VERSION = "2026-07-03". July 1
+// is not a version of anything. That line is the ONLY thing in the app that
+// would ever tell a reader the summary had fallen behind the binding document,
+// and it named text that has never existed — so it could not have told them
+// however far the summary drifted. Nothing asserted it, which is why it was
+// wrong from the day the screen shipped.
+//
+// THE DATE IS PINNED HERE ON PURPOSE, and that is a trade. A shape-only check
+// ("any Month D, YYYY") would have stayed green through the whole defect. The
+// cost is that a legitimate re-dating of the policy turns this red; the BUMP
+// list in utils/legalDocs.ts names this file so whoever re-dates it is told.
+const LEGALDOCS = read('utils/legalDocs.ts');
+const PRIVACY = read('app/privacy.tsx');
+
+ok('the date is declared once, and matches the published documents',
+  /export const LEGAL_DOCS_LAST_UPDATED = 'July 3, 2026';/.test(LEGALDOCS),
+  'privacy-policy.html:55 and terms-of-service.html:49 both read "Last Updated: July 3, 2026"');
+
+// NARROW SLICE, on purpose, and over EVERY occurrence rather than the first.
+// The constant's own header comment quotes the WRONG date in order to explain
+// what was wrong with it, so a whole-file assertion over either file would be
+// measuring the rationale rather than the copy. matchAll rather than match
+// because a second styles.updated Text added above line 163 would otherwise be
+// the one measured, and a re-hardcoded date below it would go unseen.
+{
+  const lines = [...PRIVACY.matchAll(/<Text style=\{styles\.updated\}>[^<]*<\/Text>/g)].map((m) => m[0]);
+  ok('the summary screen renders the constant, never a literal date',
+    lines.length > 0 &&
+    lines.every((l) => /\{LEGAL_DOCS_LAST_UPDATED\}/.test(l) && !/\d/.test(l)),
+    lines.length
+      ? `rendered: ${lines.join(' | ')}`
+      : 'the "Reflects the policy last updated" line is gone entirely');
+}
+
+ok('...and it is imported, not shadowed by a local re-declaration',
+  /import \{[^}]*LEGAL_DOCS_LAST_UPDATED[^}]*\} from '\.\.\/utils\/legalDocs';/.test(PRIVACY) &&
+  !/const LEGAL_DOCS_LAST_UPDATED/.test(PRIVACY),
+  'a local const would re-open exactly the drift the shared constant closes');
+
+// ===========================================================================
+console.log('\n=== 5. the journal is the only ENCRYPTED store on the device ===');
+// ===========================================================================
+// The published Privacy Policy lists "Your cached chat history (for offline
+// reading)" under "On your device (encrypted, never transmitted to us)". No
+// such store has ever been written: chat lives in React state for the life of
+// the screen (app/(tabs)/index.tsx) and is re-fetched from the server on
+// resume, and the only encrypted on-device store is the journal. That policy
+// sentence is being corrected with counsel.
+//
+// WHAT THIS DOES AND DOES NOT MEASURE — read this before quoting it. It pins
+// the single MMKV instance, which is the HEADING's claim: the encrypted store
+// is the journal and nothing else. It does NOT and CANNOT prove "there is no
+// offline copy of your chat history on the phone" — a chat cache would arrive
+// through AsyncStorage or expo-file-system and would never touch this file, so
+// this step could not go red on that regression. That absence was established
+// by hand on 2026-09-10 by reading every AsyncStorage.setItem and every
+// createMMKV call site in the app repo (exactly one createMMKV; no chat,
+// message, transcript or history key anywhere) and is recorded in the counsel
+// note. A second ENCRYPTED store is what has to come through here.
+//
+// Comments are stripped before counting so that a future paragraph explaining
+// MMKV instance ids cannot turn this red, and the instance-id match is
+// whitespace-tolerant so a formatter cannot either.
+const ENCSTORE = read('utils/encryptedStorage.ts');
+const ENCSTORE_CODE = ENCSTORE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+{
+  const instances = (ENCSTORE_CODE.match(/createMMKV\(/g) || []).length;
+  ok('the only encrypted on-device store is the journal, and there is exactly one',
+    /MMKV_INSTANCE_ID\s*=\s*'journal'/.test(ENCSTORE_CODE) && instances === 1,
+    `createMMKV call sites found: ${instances} — a second instance would be a second ` +
+    'encrypted store, which the Privacy Policy does not describe');
+}
 
 console.log(`\nsmoke-audit-fixes-app: ${fail === 0 ? 'PASS' : 'FAIL'} — ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

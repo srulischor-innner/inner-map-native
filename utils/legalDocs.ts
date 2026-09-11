@@ -15,9 +15,34 @@
 import { Linking } from 'react-native';
 
 // Canonical, legally-binding documents (hosted at my-inner-map.com via
-// Cloudflare; authored in the inner-map-legal repo). Last updated July 1, 2026.
+// Cloudflare; authored in the inner-map-legal repo).
 export const PRIVACY_POLICY_URL = 'https://my-inner-map.com/privacy-policy.html';
 export const TERMS_OF_SERVICE_URL = 'https://my-inner-map.com/terms-of-service.html';
+
+// The "Last Updated" date carried by BOTH canonical documents. They are
+// versioned in lockstep and both currently read "Last Updated: July 3, 2026"
+// (privacy-policy.html line 55, terms-of-service.html line 49). The server
+// repo holds the same fact as AGE_POLICY_VERSION = "2026-07-03" and stamps it
+// on every age attestation, so if the two ever disagree the attestation audit
+// trail points at a version of the text nobody was ever shown.
+//
+// THIS IS THE ONLY PLACE IN THE APP WHERE THE DATE MAY BE WRITTEN.
+// app/privacy.tsx renders it; nothing else may hardcode a date. Both this
+// comment and that screen carried "July 1, 2026" from the day the summary
+// shipped — a version of the policy that has never existed. That line is the
+// single thing in the app that would ever tell a reader the non-binding
+// summary had fallen behind the binding document, and because it named a
+// version that does not exist it could not have told them, however far behind
+// the summary drifted. Nothing asserted it, which is how it stayed wrong.
+//
+// BUMP THIS whenever either document's Last Updated date changes, in the SAME
+// change as:
+//   - AGE_POLICY_VERSION in the server repo's server.js, and
+//   - the date pinned in scripts/smoke-audit-fixes-app.js section 4, which
+//     asserts this constant exactly and goes red until it is updated too.
+//     That step pins the literal on purpose: a shape-only check ("any
+//     Month D, YYYY") would have stayed green through the July 1 defect.
+export const LEGAL_DOCS_LAST_UPDATED = 'July 3, 2026';
 
 /**
  * Open one of the live legal documents.
