@@ -455,8 +455,9 @@ function PrivacyNoticeScreen({ onAcknowledge }: { onAcknowledge: () => void }) {
         models on your conversations.
       </Text>
       <Text style={styles.privacyNoticeBody}>
-        From Settings, you can export everything we have on you or
-        delete your account permanently. Anytime.
+        Any time, you can take a copy of your data with you, or delete
+        your account for good. Both are in the menu: deletion under
+        Settings, and a copy of your data under Privacy, Data & Safety.
       </Text>
       <Text style={[styles.privacyNoticeBody, styles.privacyNoticeClose]}>
         Inner work is yours. You decide what to share and what to keep private.

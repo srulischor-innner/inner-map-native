@@ -7,7 +7,8 @@
 //   - EXPERIENCE LEVEL with a Change link that re-opens the level picker
 //   - YOUR PLAN — membership / restore / manage subscription (iOS only)
 //   - ACCOUNT — linked sign-in options
-//   - PRIVACY — App Lock, share-journal-with-AI, inbox notifications
+//   - PRIVACY — App Lock, share-journal-with-AI, inbox notifications,
+//     and a pointer row to "Privacy, Data & Safety" (/privacy)
 //   - CONTACT — mailto link to support
 //   - VERSION — dim line at the bottom
 //
@@ -20,9 +21,11 @@
 // long privacy/data explainer, and the data controls (export / your ID).
 // They moved to app/privacy.tsx — "Privacy, Data & Safety" — so there is
 // ONE place that explains the data story and ONE place that acts on it.
-// Settings keeps a single pointer row to the crisis section (Apple Mental
-// Health & Wellness review wants a discoverable crisis surface; one row,
-// no duplicated content).
+// Settings keeps POINTER ROWS to that screen, never copies of it: one to
+// the crisis section (Apple Mental Health & Wellness review wants a
+// discoverable crisis surface) and one to the data controls, because the
+// published privacy policy and terms both send people to Settings for
+// their export and their deletion. Rows, not duplicated content.
 //
 // The ONE exception to that move: ACCOUNT keeps a "Delete account" row.
 // It is an entry point only — /account/delete still owns the whole
@@ -361,10 +364,41 @@ export default function SettingsScreen() {
             ios_backgroundColor="#3A3340"
           />
         </View>
-        {/* The "Privacy policy" row is gone: the side menu's
-            "Privacy, Data & Safety" entry is the single route to
-            /privacy now, and that screen carries the crisis card, the
-            summary, and the data controls together. */}
+        {/* A ROUTE, NOT A SECOND COPY OF THE CONTROLS.
+            The side menu already opens /privacy. This is the second door,
+            and it exists because the published privacy policy and the
+            terms both send people to Settings for their data controls —
+            and for a while they landed in the PRIVACY section above,
+            which holds App Lock and two toggles and no way to export
+            anything. A reviewer following the store listing's privacy
+            link lands in the same place.
+            The EXPORT MY DATA and DELETE MY ACCOUNT buttons still live
+            ONLY on /privacy, with the summary that explains what the data
+            is. This row is how Settings answers the question without
+            owning a second copy of the answer — the same shape as the
+            crisis pointer row at the top of this screen.
+            (The former "Privacy policy" row stays gone. That one pointed
+            at the same explanation the side menu already pointed at, from
+            a screen that offered no data controls at all. Different thing.)
+            Pinned by scripts/check-legal-nav-paths.js, which goes red with
+            the published sentence quoted if this row moves. */}
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            router.push('/privacy' as any);
+          }}
+          style={styles.linkRow}
+          accessibilityRole="button"
+          accessibilityLabel="Privacy, Data and Safety"
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Privacy, Data & Safety</Text>
+            <Text style={styles.rowSub}>
+              Export your data, delete your account, and what we store.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.creamFaint} />
+        </Pressable>
 
         {/* ===== DEVELOPER =====
             Dev-only tools. The label lives inside the __DEV__ gate with
@@ -469,10 +503,15 @@ export default function SettingsScreen() {
           </Pressable>
         ) : null}
 
-        {/* Export My Data and Your ID now live exclusively on /privacy
+        {/* Export My Data and Your ID still live exclusively on /privacy
             ("Privacy, Data & Safety"), together with the summary that
             explains what the data is. Single source of truth — do not
-            re-add them here. Account deletion is reachable from both
+            re-add the CONTROLS here. The PRIVACY section above now carries
+            a ROW that routes to that screen, which is a different thing:
+            the published policy and terms send people to Settings for
+            their data controls, and a route is how Settings can answer
+            that without owning a second copy of them.
+            Account deletion is reachable from both
             surfaces on purpose: /privacy explains it, and ACCOUNT above
             carries the entry point App Store review expects to find in
             Settings. Neither one performs the deletion. */}
