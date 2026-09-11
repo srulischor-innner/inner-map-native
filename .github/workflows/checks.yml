@@ -1,6 +1,6 @@
 
 # Every check and smoke in the app repo, plus tsc, on every push.
-# 16 scripts + `tsc --noEmit`, ~42s.
+# 19 scripts + `tsc --noEmit`, ~45s.
 #
 # THIS RUN IS DELIBERATELY NOT THE COMPLETE GATE. Two halves do not run here,
 # and the runner prints both rather than letting a green tick imply them:

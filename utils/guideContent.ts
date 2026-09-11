@@ -451,8 +451,10 @@ export const USING_FEATURES: GuideFeature[] = [
     icon: 'map',
     title: 'Map',
     body: [
-      "The Map shows your inner landscape — wound, fixer, skeptic, managers, firefighters, and Self. As you talk in Chat, parts get added or refined. Tap any part to see what's been said about it and the belief it carries.",
-      "Two mic buttons sit at the bottom of the Map for Map Voice — short, focused voice conversations to check where you are right now.",
+      "The Map shows your inner landscape — wound, fixer, skeptic, managers, firefighters, Self, and You. As you talk in Chat, parts get added or refined. Tap any of them to open what has been filed there. Rows nothing has reached yet still show, with a line saying what they are building toward, so a map early on reads as unfinished rather than empty. Managers and Firefighters are groups rather than single parts: tapping either one opens every protector in it, each with its own rows.",
+      "A folder fills in as the map does. Once a part has been detected, its folder carries a count of how many times, the date it was first noticed, and — once you have opened it before — when you last did. There is a GO DEEPER section holding the secondary rows, and once more than half of a part's rows are filled in, a button appears to hear what Self would say to that part. Self is the one exception, deliberately: no count, no dates, no GO DEEPER, no button. Self is not a part to be mapped or spoken to; it is where the speaking comes from.",
+      "Beliefs sit in two places on the map and they are not the same thing. The Wound folder has a row called The Belief — the one the wound formed, that the rest of the map is arranged around, filed by the AI as it learns it. The You folder has YOUR BELIEF — what you stand on, separate from what your parts believe — and that one is yours to write, edit or clear. A belief of their own is not among the rows Fixer, Skeptic, Managers and Firefighters carry: those say what a part does, what it protects and what it needs.",
+      "Two mics sit at the bottom of the Map for Map Voice. The first time you press either one an explainer opens instead of recording; after that, press and hold, say what is alive right now, and let go. Slide your finger up before you let go to throw the take away. The LEADING mic waits on one more thing before it will record — its own card says what.",
     ],
   },
   {
@@ -466,7 +468,9 @@ export const USING_FEATURES: GuideFeature[] = [
     icon: 'self-like',
     title: 'The leading mic',
     body: [
-      "Use the leading mic when you're ready to lead a part rather than be run by it. Tap a part on the map to focus on it, then press the mic marked LEADING. It speaks to that part the way you would from the ground you stand on — your own belief, separate from what the part believes. The point is to hear what that sounds like, so you can come to speak it yourself. Once your belief is articulated, you can save it to that part's folder.",
+      "Use the leading mic when you're ready to lead a part rather than be run by it. It speaks to whichever part is active the way you would from the ground you stand on — your own belief, separate from what your parts believe. The point is to hear what that sounds like, so you can come to speak it yourself.",
+      "It opens once you have a belief of your own. Until then the LEADING mic sits dimmed, and pressing it tells you what it is waiting for instead of recording. To establish what you stand on, tap YOU on your map — the diamond on the triangle — and press Establish your belief. That hands the work to Chat, which helps you find the words; what you land on is kept in your You folder, and you can edit or clear it there. There is one belief for the whole map and it lives on that row.",
+      "Once it is set, press and hold LEADING, say what is alive right now, and let go. You do not pick which part it answers: the app listens for the one speaking through you, lights it on the map, and speaks to that one. If it cannot tell which part it is, it says so and asks you to try again with one specific situation.",
     ],
   },
   // Partner card hidden behind PARTNER_ENABLED for v1 launch — the Guide
