@@ -263,6 +263,12 @@ const base = {
       // cold-start disk I/O. Local plugin; see the file header for the full
       // mechanism. Must run after any plugin that rewrites MainApplication.
       './plugins/withActivityResultPrewarm',
+      // Strips the two foreground-service permissions expo-audio merges in.
+      // This app never starts a service — every audio session is configured
+      // with shouldPlayInBackground:false — and Play has an overdue declaration
+      // asking us to either justify the permission or remove it. Removing is
+      // the honest answer; scripts/check-no-foreground-service.js keeps it true.
+      './plugins/withNoForegroundService',
     ],
     extra: {
       apiBaseUrl: 'https://inner-map-production.up.railway.app',
