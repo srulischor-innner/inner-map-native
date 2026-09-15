@@ -610,26 +610,33 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
             />
           </ScrollView>
 
-          {/* WHERE THIS ONE IS GOING — and it says so whether or not anyone
-              touches it. A hidden state teaches nothing, which is the same
-              rule the mode control at the top of the chat tab is built on:
-              the label doing double duty as the affordance IS the design.
+          {/* WHERE THIS ONE IS GOING — READ-ONLY, BY RULING (2026-09-15).
+              "Change the copy, don't build it. The control is a global on/off
+              toggle in Settings." So the per-entry switch that stood here is
+              gone, and this states where the entry is going without offering
+              to change it. Tapping it does nothing and it is not a switch to a
+              screen reader.
 
-              The whole row is the hit target, not just the switch. A 51pt
-              switch on the right of a phone is reachable; the sentence that
-              explains it is what people actually aim at.
+              THE INDICATOR IS NOT THE CONTROL, and removing the control is not
+              a reason to remove the indicator: someone writing something they
+              may not want read has to be able to see which way this entry is
+              going without leaving the screen they are writing on. That is the
+              one thing scripts/check-journal-privacy-promise.js asserts under
+              BOTH branches of this decision.
+
+              `shared` is read once when the modal opens, from the global
+              default, and cannot change while the entry is being written —
+              so this line cannot go stale under the person's hands.
 
               Locked at save: services/journal.ts syncs only when
               `entry.shared !== false`, and there is no flip-to-private purge
-              path, so a private entry simply never leaves the device. */}
-          <Pressable
+              path, so an unshared entry simply never leaves the device. */}
+          <View
             style={styles.shareRow}
-            onPress={() => { Haptics.selectionAsync().catch(() => {}); setShared((v) => !v); }}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: shared }}
+            accessibilityRole="text"
             accessibilityLabel={shared
-              ? 'Shared with the AI. The AI can read this entry and bring it into conversation. Tap to keep it private.'
-              : "Private to this device. Kept on this device only, encrypted — we genuinely can't read it. Tap to share it with the AI."}
+              ? 'This entry will be shared with the AI. Change journal sharing in Settings.'
+              : "This entry stays on this device, encrypted. Change journal sharing in Settings."}
           >
             <View style={styles.shareTextWrap}>
               <Text style={styles.shareLabel}>
@@ -637,22 +644,11 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
               </Text>
               <Text style={styles.shareHelp}>
                 {shared
-                  ? 'The AI can read this entry and bring it into conversation.'
-                  : "Kept on this device only — we genuinely can't read it."}
+                  ? 'The AI can read this entry. Change this for new entries in Settings.'
+                  : "Kept on this device only — we genuinely can't read it. Change this in Settings."}
               </Text>
             </View>
-            <Switch
-              value={shared}
-              onValueChange={setShared}
-              trackColor={{ false: 'rgba(255,255,255,0.16)', true: 'rgba(230,180,122,0.5)' }}
-              thumbColor={shared ? colors.amber : '#9a9a9a'}
-              ios_backgroundColor="rgba(255,255,255,0.16)"
-              // The row above owns the accessible name; this must not be a
-              // second, competing announcement of the same control.
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-            />
-          </Pressable>
+          </View>
 
           {/* Recording / transcribing overlay-style row above the mic. */}
           {(recording || transcribing) ? (

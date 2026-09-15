@@ -7,7 +7,7 @@
 //   ASSOCIATION
 //
 // Layout:
-//   • Header caption: "Share entries with the AI, or keep them private"
+//   • Header caption: names the GLOBAL setting, not a per-entry choice
 //   • "Journal" Cormorant title + italic subtitle
 //   • Two stacked cards (full width)
 //   • RECENT ENTRIES section with text search
@@ -119,7 +119,7 @@ export default function JournalScreen() {
       >
         {/* ===== HEADER ===== */}
         <View style={styles.privateRow}>
-          <Text style={styles.privateText}>Share entries with the AI, or keep them private</Text>
+          <Text style={styles.privateText}>New entries are shared with the AI unless you turn that off in Settings</Text>
         </View>
         <Text style={styles.heading}>Journal</Text>
         <Text style={styles.subtitle}>A space for whatever's present.</Text>

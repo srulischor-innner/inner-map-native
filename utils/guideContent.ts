@@ -491,7 +491,7 @@ export const USING_FEATURES: GuideFeature[] = [
     icon: 'journal',
     title: 'Journal',
     body: [
-      "Free space for whatever needs to come out. Share an entry and the AI can draw on it to understand you; keep it private and it stays on your device, unread.",
+      "Free space for whatever needs to come out. New entries are shared with the AI, so it can draw on them to understand you. One switch in Settings — Share journal with AI — turns that off for every new entry from then on; those stay encrypted on your device, unread.",
     ],
   },
   {
