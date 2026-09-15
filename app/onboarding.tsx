@@ -493,10 +493,10 @@ function PrivacyNoticeScreen({ onAcknowledge }: { onAcknowledge: () => void }) {
       <Text style={styles.privacyNoticeLede}>
         Before you start, here's the short version.
       </Text>
+      <Text style={styles.privacyNoticeBody}>
         You choose what the AI sees. New journal entries are shared with it,
         so it can understand you — one switch in Settings turns that off for
         every new entry. Those stay encrypted on your phone, and we genuinely
-        can't read them.
         can't read them.
       </Text>
       <Text style={styles.privacyNoticeBody}>
