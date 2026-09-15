@@ -110,9 +110,19 @@ const ORIENTATION_MESSAGE =
   // thing a new person reads and the control they then tap described the same
   // work in two registers, the harsher one first.
   "can look at one belief \u2014 where it came from, and whether it still holds.\n\n" +
-  "You don't have to choose now — I'll ask. And you can change it whenever: " +
-  "\"can we slow down\", \"I just want to talk\", \"why does this keep happening\" " +
-  "all work. Say it however it comes out. I'll follow.\n\n" +
+  // STYLE, NOT MODE, FOR THE FIRST CONVERSATION (founder ruling 2026-09-15).
+  // This used to offer "can we slow down" / "I just want to talk" / "why does
+  // this keep happening" as things that change how the app works. Those are
+  // MODE requests, and mode is not what a brand-new person should be steering:
+  // the four ways are read against a map and they have not got one yet. The
+  // three STYLE dials are honoured from the first turn, and they are what this
+  // names instead. The mode sentence still stands in the Guide and the mode
+  // sheet, both of which matter after the first session rather than during it.
+  "You don't have to choose now — I'll ask once your map has something in it. " +
+  "For this first conversation I'll stay in one way of working while we sketch " +
+  "it out.\n\n" +
+  "What you can change right now is how I talk: ask for shorter, slower, or " +
+  "less explaining, and I'll keep it that way.\n\n" +
   "I'll be more directive at first while we build your starter map. What we " +
   "build in this session is a rough sketch — it'll become sharper and more " +
   "accurate as we go. If something I name doesn't fit, say so. 'That's not " +
