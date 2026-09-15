@@ -416,16 +416,58 @@ export async function restore(): Promise<{ ok: boolean; hasEntitlement: boolean;
 }
 
 /** Client-side entitlement read. Convenience only — the SERVER is the
- *  authority on access (see api.getBillingStatus). Returns false whenever
- *  we cannot answer, which is the safe direction. */
-export async function hasActiveEntitlement(): Promise<boolean> {
+ *  authority on access (see api.getBillingStatus).
+ *
+ *  THREE ANSWERS, NOT TWO, AND THE THIRD ONE IS THE POINT. It used to return
+ *  false whenever it could not answer — which reads, to every caller, as "this
+ *  person is not a member". That was harmless while nothing called it. It is not
+ *  harmless now: the membership door reads it at the end of onboarding, and with
+ *  BOTH server-side entitlement writers inert (no RC_WEBHOOK_AUTH, no
+ *  RC_SECRET_API_KEY) the entitlements table is empty, so the server honestly
+ *  says state:"none" for a paying customer too. A single StoreKit hiccup would
+ *  then have been the whole difference between a payer walking into the app and
+ *  a payer meeting a paywall. NULL MEANS UNKNOWN; services/membershipDecision.ts
+ *  rule 5 turns unknown into a shut door, never into a sale.
+ *
+ *  ensureIdentified() ADDED 2026-09-15. purchase() and restore() both bind our
+ *  userId before touching the store, each with a note saying a store call made
+ *  first lands on whatever anonymous id the SDK happens to be holding. This one
+ *  did not — and the door reads it at a moment that races app/_layout.tsx's
+ *  identifyUser effect, which is keyed on ageGateDecision and therefore fires at
+ *  an unrelated time. A CustomerInfo read against an anonymous id answers "no
+ *  entitlement" for a person who has one, and with the entitlements table empty
+ *  this is the only source that can currently say yes. */
+export async function hasActiveEntitlement(): Promise<boolean | null> {
   const sdk = await readySdk();
-  if (!sdk) return false;
+  if (!sdk) return null;
+  await ensureIdentified();
   try {
     const info = await sdk.default.getCustomerInfo();
     return customerHasEntitlement(info);
   } catch (e) {
     console.warn('[purchases] getCustomerInfo threw:', (e as Error)?.message);
+    return null;
+  }
+}
+
+/** CAN THIS BUILD REACH A STORE AT ALL? The first question the membership door
+ *  asks, and the reason it can never stand in front of an Android user with no
+ *  key pasted (the Android slot in app.config.js is empty and nothing is set in
+ *  the environment).
+ *
+ *  It answers the LATCH, not a guess: configurePurchases() is idempotent and
+ *  coalescing, and it sets _configureImpossible on an unsupported platform or a
+ *  key that is absent or does not carry its platform prefix. Awaiting it here
+ *  either returns instantly or joins the in-flight configure.
+ *
+ *  Never throws. A false answer means the door stays shut, which is the same
+ *  direction every other unknown takes. */
+export async function storeConfigurable(): Promise<boolean> {
+  try {
+    await configurePurchases();
+  } catch (e) {
+    console.error('[purchases] configure threw while probing reachability:', (e as Error)?.message);
     return false;
   }
+  return _configured && !_configureImpossible;
 }

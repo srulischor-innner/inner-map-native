@@ -16,7 +16,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
 import { colors, fonts, spacing } from '../constants/theme';
@@ -25,13 +25,30 @@ import { SupportResourcesScreen } from '../components/safety/SupportResourcesScr
 export default function SupportResourcesRoute() {
   const router = useRouter();
 
-  // canGoBack() guard: this route is normally pushed from Settings, but a
-  // cold deep link would leave nothing to pop — fall back to Settings
-  // explicitly so the exit never no-ops.
+  // WHERE THIS SCREEN WAS OPENED FROM. Settings is the original caller and stays
+  // the default; ?from=door is the membership door (app/paywall.tsx in door
+  // mode). Nothing about the resources changes — the numbers, the copy and the
+  // layout are the same screen. What changes is what the exit is CALLED: a
+  // person who tapped "If you need support right now" on a paywall must not have
+  // "Back to settings" read out to them on a screen they have never been near,
+  // and a cold deep link must not drop them into Settings instead.
+  const params = useLocalSearchParams<{ from?: string | string[] }>();
+  const rawFrom = Array.isArray(params.from) ? params.from[0] : params.from;
+  const fromDoor = rawFrom === 'door';
+  const backLabel = fromDoor ? 'Back' : 'Back to settings';
+  const continueLabel = fromDoor ? 'BACK' : 'BACK TO SETTINGS';
+  // The fallback loses the `then` destination, which is correct: it is only
+  // reached on a cold deep link, where there was no onboarding exit to return
+  // to, and the door's own allow-list defaults an absent `then` to '/'.
+  const fallbackRoute = fromDoor ? '/paywall?door=1' : '/settings';
+
+  // canGoBack() guard: this route is normally pushed from Settings or from the
+  // membership door, but a cold deep link would leave nothing to pop — fall
+  // back explicitly so the exit never no-ops.
   function goBack() {
     Haptics.selectionAsync().catch(() => {});
     if (router.canGoBack()) router.back();
-    else router.replace('/settings' as any);
+    else router.replace(fallbackRoute as any);
   }
 
   return (
@@ -41,7 +58,7 @@ export default function SupportResourcesRoute() {
           onPress={goBack}
           hitSlop={10}
           style={styles.backBtn}
-          accessibilityLabel="Back to settings"
+          accessibilityLabel={backLabel}
         >
           <Ionicons name="chevron-back" size={22} color={colors.creamDim} />
         </Pressable>
@@ -49,7 +66,7 @@ export default function SupportResourcesRoute() {
         <View style={styles.backBtn} />
       </View>
 
-      <SupportResourcesScreen onContinue={goBack} continueLabel="BACK TO SETTINGS" />
+      <SupportResourcesScreen onContinue={goBack} continueLabel={continueLabel} />
     </SafeAreaView>
   );
 }

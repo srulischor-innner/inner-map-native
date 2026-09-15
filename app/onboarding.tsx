@@ -31,6 +31,12 @@ import {
   markAgeGateBlocked, clearAgeGateBlocked, markAgeGateRetryUsed,
   isAgeGateBlocked, isAgeGateRetryUsed, markAgeSyncPending,
 } from '../services/onboarding';
+// THE MEMBERSHIP DOOR. primeDoor() is fire-and-forget from the mount effect
+// below, once the age read has said NOT blocked; doorForExit() is awaited by
+// each of the two terminal exits and returns the route to replace to. These are
+// the only two call sites in the app and scripts/smoke-membership-door.mjs
+// asserts that as a census over comment-stripped source.
+import { primeDoor, doorForExit } from '../services/membershipDoor';
 import { api } from '../services/api';
 import {
   evaluateDob, localToday, parseBox, MINIMUM_AGE,
@@ -194,6 +200,32 @@ export default function OnboardingScreen() {
     return () => clearTimeout(ageReadCap);
   }, []);
 
+  // PRIME THE MEMBERSHIP DOOR — ONLY ONCE THE AGE READ HAS SAID 'NOT BLOCKED'.
+  //
+  // WHY IT IS GATED RATHER THAN FIRED ON MOUNT. Priming configures the
+  // RevenueCat SDK and issues GET /api/billing/status. app/_layout.tsx's boot
+  // HARD RETURNS before token bootstrap, terms reconciliation, age
+  // reconciliation and RevenueCat identify for a blocked device, on the ruling
+  // that "a block that keeps writing to the server about the blocked person is
+  // not a block". An unconditional prime here would be exactly that, from the
+  // other side of the same screen. `ageBlocked` is null while the read is in
+  // flight, so an unknown answer primes nothing and the effect simply re-runs
+  // when the read settles.
+  //
+  // FIRE AND FORGET. Nothing on this screen waits for it. The two terminal exits
+  // await the ANSWER with their own short patience cap; if it has not landed by
+  // then the door does not open, the person walks in, and the server's 402 is
+  // the wall. That is the fail direction on purpose.
+  //
+  // THE HEAD START IS THE POINT. On the self-explorer path there are three or
+  // four screens between here and the exit. On the invitee path there is only
+  // the terms screen — which is why the prime lives on MOUNT rather than at
+  // terms-acceptance, where it would have had zero milliseconds to settle.
+  useEffect(() => {
+    if (ageBlocked !== false) return;
+    primeDoor();
+  }, [ageBlocked]);
+
   // Full-path completion (self-explorer): mark intake complete + route
   // to chat tab. The relationship intro slides + chat live behind the
   // PARTNER tab; users who go through the full flow can opt into them
@@ -201,7 +233,15 @@ export default function OnboardingScreen() {
   async function finishAndEnterApp() {
     await markIntakeComplete();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    router.replace('/');
+    // TERMINAL EXIT 1 OF 2. The door is RESOLVED HERE, before the navigation,
+    // never raced against it. The previous design armed a device flag and fired
+    // a prefetch in the same tick; the prefetch read the flag before the write
+    // landed, the verdict was always 'unknown', and the paywall first appeared
+    // on the SECOND cold launch. There is no flag to arm now — this awaits an
+    // answer primed on this screen's mount and gets back the route to go to,
+    // either '/' or the paywall in door mode carrying '/'.
+    const next = await doorForExit('/');
+    router.replace(next as any);
   }
 
   // Invitee shortcut — terms-only path. Mark intro+intake all complete
@@ -213,7 +253,17 @@ export default function OnboardingScreen() {
     try { await markIntroSeen(); } catch {}
     try { await markIntakeComplete(); } catch {}
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    router.replace('/relationships');
+    // TERMINAL EXIT 2 OF 2 — the one the last review found ungated. It is dead
+    // behind PARTNER_ENABLED=false, which is exactly why it gets the door now
+    // rather than on the day somebody flips that flag. The destination travels
+    // through the door and comes back out the other side: doorForExit returns
+    // '/relationships' when the door stays shut, and
+    // /paywall?door=1&then=%2Frelationships when it opens, so the person lands
+    // where the invite meant them to land either way. The allow-list in
+    // services/membershipDecision.ts is what keeps that param from being a
+    // route this screen can be talked into.
+    const next = await doorForExit('/relationships');
+    router.replace(next as any);
   }
 
   // Hold rendering until both async reads settle. Otherwise a brand-new
@@ -443,10 +493,10 @@ function PrivacyNoticeScreen({ onAcknowledge }: { onAcknowledge: () => void }) {
       <Text style={styles.privacyNoticeLede}>
         Before you start, here's the short version.
       </Text>
-      <Text style={styles.privacyNoticeBody}>
         You choose what the AI sees. Share a journal entry to help it
         understand you, or mark it private — private entries stay
         encrypted on your phone, and we genuinely can't read them.
+        can't read them.
       </Text>
       <Text style={styles.privacyNoticeBody}>
         Your chats and your map live on our server so you can pick up

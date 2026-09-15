@@ -17,6 +17,11 @@ import {
   buildIdentityHeaders, getTokens, getAccessToken, setTokens, clearTokens,
 } from './user';
 import { emitRateLimitNotice } from '../utils/rateLimitNotice';
+// The 402 matcher lives in a module with zero imports so
+// scripts/smoke-membership-door.mjs can RUN it against a payload assembled from
+// the server's own literals, lifted out of server.js at run time. A regex over
+// this file would only prove the source contains a string.
+import { isMembershipRefusal } from './membershipDecision';
 
 const BASE_URL: string =
   (Constants.expoConfig?.extra as any)?.apiBaseUrl ||
@@ -448,6 +453,19 @@ export type BillingStatus = {
   willRenew: boolean;
   periodEnd: string | null;
   trialEnd: string | null;
+  /** TRUE only when the server actually SAID whether the entitlement is active.
+   *
+   *  The status route's catch path (server.js:8049-8060) answers HTTP 200 with
+   *  state:"none" and NO entitlementActive key at all. `!!undefined` below turns
+   *  that into entitlementActive:false + state:'none' — byte-identical to "brand
+   *  new, never subscribed". Without this bit a database hiccup on a READ is
+   *  indistinguishable from an unsubscribed user, and a client that shows a
+   *  paywall on "unsubscribed" would show one on a transient server error.
+   *
+   *  Nothing may decide to show a membership screen while this is false.
+   *  services/membershipDecision.ts checks it BEFORE it reads either billing
+   *  field, and the 1584-case sweep pins that ordering. */
+  entitlementKnown: boolean;
   /** NULL on the server's 200 catch-all (a DB hiccup on the status read).
    *  Treat null as "unknown", never as "exhausted". */
   budget: {
@@ -495,6 +513,11 @@ export async function getBillingStatus(): Promise<BillingStatus | null> {
       willRenew: !!j.willRenew,
       periodEnd: typeof j.periodEnd === 'string' ? j.periodEnd : null,
       trialEnd: typeof j.trialEnd === 'string' ? j.trialEnd : null,
+      // `typeof === 'boolean'` IS THE WHOLE MECHANISM. The server's catch payload
+      // omits the key entirely, so nothing weaker than an existence test can tell
+      // "they are not subscribed" from "the read failed". See the field's note on
+      // the type above.
+      entitlementKnown: typeof j.entitlementActive === 'boolean',
       budget: b && typeof b === 'object'
         ? {
             spentCents: Number(b.spentCents || 0),
@@ -587,19 +610,49 @@ export function parseBudgetRefusal(raw: unknown): BudgetRefusal | null {
   }
 }
 
-/** THE TRIAL FREEZE REFUSAL.
+/** THE MEMBERSHIP REFUSAL — HTTP 402, one shape for every refused surface.
  *
- *  Deliberately the SAME SHAPE as a budget refusal (error / title / body) so
- *  the sheet, the parser and every call site stay one mechanism. A second
- *  payload shape would mean a second parser to keep in step, and the pair
- *  drifting apart is how these things rot.
+ *  THE NAME IS A FOSSIL AND IS KEPT ON PURPOSE. There is no trial to freeze any
+ *  more: the server trial — the clock, the stamping, the freeze gates — was
+ *  deleted on 2026-09-14 (server.js:7623-7659). Renaming TrialFreezeRefusal,
+ *  parseTrialFreeze and onTrialExpired would cost twelve assertions in
+ *  scripts/smoke-audit-fixes-app.js, which is today the only guard on this
+ *  wiring, and would buy nothing a person ever sees. What was wrong was this
+ *  docblock, which described a mechanism that no longer exists.
  *
- *  Arrives on the same two transports for the same reason: HTTP 402 with the
- *  payload as the body on a non-streaming call, and — because the freeze runs
- *  before any header is written — a plain 402 rather than an event-stream
- *  frame on a streaming one. There is no `trial_expired` SSE frame to parse,
- *  and that is on purpose: nothing has been written to the response yet, so
- *  there is no half-open stream to rescue.
+ *  WHAT THE SERVER ACTUALLY SENDS (subscriptionRequiredPayload, server.js:7842):
+ *    error: "subscription-required"   the honest name; what the logs read (7845)
+ *    type:  "trial_expired"           A COMPATIBILITY SHIM (7846) carrying a
+ *                                     deletion condition. It describes the build
+ *                                     that IS SHIPPED — whose parser matched
+ *                                     exactly two strings and would otherwise
+ *                                     render a 402 as "Something went wrong on
+ *                                     my end" with a retry pill and nothing
+ *                                     anywhere naming a membership. It is marked
+ *                                     for deletion once the minimum supported
+ *                                     build reads subscriptionRequired — which
+ *                                     is the build this parser makes.
+ *    subscriptionRequired: true       the honest key (7847); nothing read it
+ *                                     until now
+ *    title / body                     rendered VERBATIM, never restated here.
+ *                                     The body (7850) is the reads-stay-open
+ *                                     promise, and the title is "Your membership
+ *                                     has lapsed." for anyone with a row and
+ *                                     "InnerMap is a membership." for anyone
+ *                                     without one.
+ *
+ *  THE THIRD SHAPE IS GONE — DO NOT RE-ADD A MATCHER FOR IT. The journal write
+ *  used to answer error:"subscription-frozen", which no shipped parser matched
+ *  at all; it now goes through the same refuseIfUnentitled (server.js:22012) and
+ *  sends the payload above. The literal is emitted nowhere in server.js. A
+ *  matcher for a code nothing sends is dead weight that reads as coverage.
+ *
+ *  Arrives on the same two transports as a budget refusal and for the same
+ *  reason: HTTP 402 with the payload as the JSON body on a non-streaming call,
+ *  and — because refuseIfUnentitled answers before any header is written — a
+ *  plain 402 rather than an event-stream frame on a streaming one. There is no
+ *  `trial_expired` SSE frame to parse: nothing has been written to the response
+ *  yet, so there is no half-open stream to rescue.
  */
 export type TrialFreezeRefusal = {
   title: string;
@@ -611,12 +664,21 @@ export function parseTrialFreeze(raw: unknown): TrialFreezeRefusal | null {
   try {
     if (!raw || typeof raw !== 'object') return null;
     const r = raw as any;
-    if (r.error !== 'trial-expired' && r.type !== 'trial_expired') return null;
+    // FOUR SPELLINGS, IN THE ORDER THEY MATTER: the honest key first, then its
+    // error code, then the two retired names so this build still parses a server
+    // that has not been redeployed. The list is data in
+    // services/membershipDecision.ts and the smoke DRIVES this predicate with a
+    // payload assembled from server.js's own literals.
+    if (!isMembershipRefusal(r)) return null;
     return {
-      title: typeof r.title === 'string' && r.title ? r.title : 'Your free week is up.',
+      // FALLBACKS ONLY. The server authors both of these on every live path and
+      // they are rendered verbatim; these two strings are what a malformed or
+      // truncated payload would show. The old title said "Your free week is up",
+      // which describes a trial the server no longer has.
+      title: typeof r.title === 'string' && r.title ? r.title : 'InnerMap is a membership.',
       body: typeof r.body === 'string' && r.body
         ? r.body
-        : "Everything you've made is still here — your map, your journal, past conversations and your reading are all still yours to read.",
+        : "Everything you've made is still here — your map, your journal, past conversations and your reading are all still yours to read. Starting something new needs a membership.",
       trialEndsAt: typeof r.trialEndsAt === 'string' ? r.trialEndsAt : null,
     };
   } catch {
@@ -646,6 +708,65 @@ export const api = {
    *  `getBillingStatus`. Same function, reachable either way so callers
    *  can match whichever import style the screen already uses. */
   getBillingStatus,
+
+  /** POST /api/billing/sync — the way back in for a payer the webhook missed,
+   *  AND IT IS NOT RUNNING TODAY. Read the next paragraph before relying on it
+   *  anywhere.
+   *
+   *  WHAT MAKES IT WORK: RC_SECRET_API_KEY set on the server. Without it the
+   *  route answers 503 and writes nothing, so this call is a no-op. That matters
+   *  more than it sounds, because the configuration that CREATES a payer with no
+   *  row is the same configuration that makes this inert: setEntitlement has
+   *  exactly two callers server-side — the RevenueCat webhook (503 until
+   *  RC_WEBHOOK_AUTH is set) and this endpoint (503 until RC_SECRET_API_KEY is
+   *  set) — and with neither configured NO entitlements row exists for anybody.
+   *  So a purchase made today writes nothing on the server and the person
+   *  becomes a payer the server has never heard of, with no remedy.
+   *
+   *  THE ONE CONFIGURATION THAT WOULD STRAND SOMEBODY: RC_WEBHOOK_AUTH set and
+   *  RC_SECRET_API_KEY unset. Interlock 1 (server.js:7707-7716) then lets the
+   *  wall arm, while this remedy still 503s — so a payer whose webhook event was
+   *  missed or dropped meets a 402 on all fourteen surfaces with nothing on the
+   *  device able to fix it. Set both, or neither. That is a founder decision and
+   *  it is written down here rather than assumed away.
+   *
+   *  BECAUSE IT CAN FAIL SILENTLY, THE CALLER SAYS SO OUT LOUD. app/paywall.tsx
+   *  waits BILLING_SYNC_WAIT_MS for the answer on the restore path and tells the
+   *  person which halves actually succeeded: a membership the store confirmed on
+   *  this device is not the same sentence as a membership the server has
+   *  recorded, and an alert that claims the second when only the first happened
+   *  is how somebody ends up looping through the same screen. The purchase path
+   *  does not wait — a person who has just paid must not be held behind a
+   *  billing call — and takes the log line instead.
+   *
+   *  A 503 (not configured), a 429 (its own hourly cap — deliberately hourly
+   *  rather than daily, so the one population that must never be stuck cannot
+   *  429 itself out of its own remedy), a 502 (the RC lookup failed) and a
+   *  transport failure all mean the same thing: nothing was written.
+   *
+   *  ONE CASE IT CANNOT FIX EVEN WHEN CONFIGURED, stated because the server's own
+   *  note does: a purchase made while logIn() had failed is attached to an
+   *  anonymous RevenueCat id, and the endpoint looks the subscriber up by the
+   *  app_user_id it is given (server.js:7900-7903). */
+  async billingSync(): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/billing/sync', {
+        label: 'billing-sync', method: 'POST', headers, body: JSON.stringify({}), timeoutMs: 15000,
+      });
+      if (!res.ok) {
+        console.log(`[billing-sync] ${res.status} — nothing applied`);
+        return false;
+      }
+      const j: any = await res.json().catch(() => null);
+      const applied = !!(j && j.applied);
+      console.log(`[billing-sync] ok applied=${applied}`);
+      return applied;
+    } catch (e) {
+      console.warn('[billing-sync] threw:', (e as Error)?.message);
+      return false;
+    }
+  },
 
   /** Quick health ping — useful from dev screens to confirm the tunnel works. */
   async ping(): Promise<{ ok: boolean; ms: number; status?: number; error?: string }> {

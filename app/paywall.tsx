@@ -87,7 +87,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import type { PurchasesPackage } from 'react-native-purchases';
 
@@ -99,6 +99,10 @@ import {
 import {
   PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, openLegalDoc,
 } from '../utils/legalDocs';
+import { DOOR_EXITS } from '../constants/doorExits';
+import {
+  normalizeDoorThen, awaitWithin, BILLING_SYNC_WAIT_MS,
+} from '../services/membershipDecision';
 
 // Capabilities, not quantities. See the COPY RULE note above before editing.
 const CAPABILITIES = [
@@ -245,6 +249,29 @@ export default function PaywallScreen() {
   // this false and the normal paywall up. See note 5 in the header.
   const [alreadyMember, setAlreadyMember] = useState(false);
 
+  // ---- DOOR MODE ----------------------------------------------------------
+  // The one-time membership door, reached from the end of onboarding and from
+  // nowhere else. It changes FOUR things on this screen and nothing else:
+  //   1. the header chevron becomes a labelled "Not now" — present in every
+  //      state, outside every branch;
+  //   2. a successful purchase or restore posts /api/billing/sync;
+  //   3. leaving REPLACES forward instead of popping, because door mode arrives
+  //      by replace() and there is nothing on the stack to pop to — that was the
+  //      ready-state lockout the last review found;
+  //   4. two extra rows render between the restore control and the legal links.
+  // The price block, the trial disclosure, the restore control and the legal
+  // links are the same bytes in both modes. All four are compliance surface
+  // (3.1.2(a), Schedule 2 §3.8(b)) and a second version of them is a second
+  // thing to keep true — the smoke proves that structurally, by asserting the
+  // door flag never appears anywhere inside that region.
+  const params = useLocalSearchParams<{ door?: string | string[]; then?: string | string[] }>();
+  const firstParam = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const isDoor = firstParam(params.door) === '1';
+  // ALLOW-LISTED, never trusted. innermap://paywall?door=1&then=<anything> is
+  // reachable through expo-router's own url subscription; normalizeDoorThen
+  // collapses everything except '/' and '/relationships' to '/'.
+  const thenRoute = normalizeDoorThen(firstParam(params.then));
+
   // Guards every post-await setState. The user can close this screen mid-flight
   // (the store sheet is modal but restore is not), and a state write after
   // unmount is a warning we don't need in a payments path.
@@ -299,8 +326,13 @@ export default function PaywallScreen() {
 
   const close = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
+    // THE LOCKOUT FIX. Door mode arrives by router.replace() from onboarding, so
+    // there is nothing on the stack and router.back() is a no-op — a screen with
+    // a close control that does nothing. Replace forward instead. Normal mode
+    // (Settings → Membership, the chat refusal sheet) is unchanged.
+    if (isDoor) { router.replace(thenRoute as any); return; }
     router.back();
-  }, [router]);
+  }, [router, isDoor, thenRoute]);
 
   const onPurchase = useCallback(async () => {
     Haptics.selectionAsync().catch(() => {});
@@ -314,6 +346,19 @@ export default function PaywallScreen() {
     if (!alive.current) return;
     setPurchasing(false);
     if (res.ok) {
+      // TELL THE SERVER. POST /api/billing/sync (server.js:7918) is the only way
+      // an entitlements row gets written while the RevenueCat webhook is
+      // 503-walled — without it a purchase made today leaves the server with a
+      // payer it has never heard of.
+      //
+      // NOT AWAITED HERE, unlike the restore path, and the asymmetry is
+      // deliberate: a person who has just handed over money must not be held
+      // behind a billing call, and the store sheet has already told them the
+      // purchase succeeded. If the sync 503s they are in the same position as a
+      // payer whose webhook never fired, and the restore path is where that gets
+      // said out loud.
+      api.billingSync().catch(() => {});
+      if (isDoor) { router.replace(thenRoute as any); return; }
       router.back();
       return;
     }
@@ -321,7 +366,7 @@ export default function PaywallScreen() {
     // purpose; an alert here would be scolding them for it.
     if (res.cancelled) return;
     Alert.alert('Purchase not completed', res.message || 'The purchase could not be completed.');
-  }, [pkg, purchasing, router]);
+  }, [pkg, purchasing, router, isDoor, thenRoute]);
 
   const onRestore = useCallback(async () => {
     Haptics.selectionAsync().catch(() => {});
@@ -329,17 +374,38 @@ export default function PaywallScreen() {
     setRestoring(true);
     const res = await restorePurchases();
     if (!alive.current) return;
-    // Cleared before any alert — the button must never be left spinning behind
-    // a dialog the user then dismisses.
-    setRestoring(false);
     if (res.ok && res.hasEntitlement) {
+      // THE REMEDY FOR A WRONGLY-DOORED PAYER — AND THE HALF OF IT THAT CAN
+      // SILENTLY NOT HAPPEN. Restoring proves to the STORE that they hold it;
+      // this is what tells the SERVER, which otherwise has no row for them and
+      // would keep refusing every new turn. But POST /api/billing/sync answers
+      // 503 until RC_SECRET_API_KEY is set, and the configuration that leaves a
+      // payer with no row is the same one that makes this write nothing.
+      //
+      // SO THE ALERT SAYS WHICH HALVES ACTUALLY SUCCEEDED, rather than claiming
+      // the second one. "Membership restored" to somebody who is about to be
+      // refused again is how a person loops through this screen deciding the app
+      // is broken and they are stupid. This is the only place the failure is
+      // visible to them at all, so it is the place that has to be honest.
+      //
+      // The wait is capped and the spinner stays up under it: restore is a
+      // deliberate, alert-terminated action, unlike the purchase path above,
+      // where a person who has just paid must not be held behind a billing call.
+      const applied = await awaitWithin(api.billingSync(), BILLING_SYNC_WAIT_MS, false);
+      if (!alive.current) return;
+      setRestoring(false);
       Alert.alert(
-        'Membership restored',
-        'Your Inner Map membership is active on this device.',
-        [{ text: 'OK', onPress: () => router.back() }],
+        applied ? 'Membership restored' : 'Membership found on this device',
+        applied
+          ? 'Your Inner Map membership is active on this device.'
+          : 'Your Inner Map membership is active on this device. We could not confirm it with our server just now, so anything that starts something new may still ask you to subscribe — try again later, and everything you have already made stays readable either way.',
+        [{ text: 'OK', onPress: () => { if (isDoor) router.replace(thenRoute as any); else router.back(); } }],
       );
       return;
     }
+    // Cleared before any alert — the button must never be left spinning behind
+    // a dialog the user then dismisses.
+    setRestoring(false);
     if (res.ok) {
       Alert.alert(
         'Nothing to restore',
@@ -357,7 +423,7 @@ export default function PaywallScreen() {
       return;
     }
     Alert.alert('Restore not completed', res.message || 'Restore could not be completed.');
-  }, [restoring, router]);
+  }, [restoring, router, isDoor, thenRoute]);
 
   const openDoc = useCallback((url: string) => {
     Haptics.selectionAsync().catch(() => {});
@@ -393,15 +459,40 @@ export default function PaywallScreen() {
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
       <View style={styles.headerRow}>
-        <Pressable
-          onPress={close}
-          hitSlop={10}
-          style={styles.closeBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-        >
-          <Ionicons name="close" size={22} color={colors.creamFaint} />
-        </Pressable>
+        {isDoor ? (
+          // THE WAY OUT, LABELLED, IN EVERY STATE.
+          //
+          // This row sits ABOVE the scroller, so it is outside the
+          // price/member/unavailable branches and outside every state test: a
+          // store that will not configure, an offering that is empty, a purchase
+          // the store refused and a restore that found nothing all leave it
+          // exactly where it is. That is the answer to the lockout the last
+          // review found in the ready state, and it is structural rather than a
+          // condition somebody has to keep true.
+          //
+          // A 22px chevron in the corner is not a way out a person meeting a
+          // paywall will find, and "Close" is not what a VoiceOver user needs to
+          // hear on it. Same handler, same position, said out loud.
+          <Pressable
+            onPress={close}
+            hitSlop={10}
+            style={styles.notNowBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Not now"
+          >
+            <Text style={styles.notNowText}>Not now</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={close}
+            hitSlop={10}
+            style={styles.closeBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Ionicons name="close" size={22} color={colors.creamFaint} />
+          </Pressable>
+        )}
       </View>
 
       <ScrollView
@@ -518,6 +609,35 @@ export default function PaywallScreen() {
             <Text style={styles.restoreText}>Restore purchases</Text>
           )}
         </Pressable>
+
+        {/* THE DOOR'S OTHER EXITS — crisis, and the screen that owns export and
+            deletion. Rendered from constants/doorExits.ts rather than written
+            here, so scripts/smoke-membership-door.mjs can IMPORT that list and
+            assert its contents by executing it: exactly one crisis exit,
+            exactly one data exit, each href a route that exists on disk and is
+            a ROOT route rather than a tab. The previous design's crisis link was
+            one deletable JSX line pinned by a 200-character distance regex.
+
+            They sit here, between the restore control and the legal links, for
+            the same reason the restore control does: this region is outside the
+            price, member and unavailable branches, so nothing about the store's
+            state can take them away. Both destinations need no entitlement, no
+            store, no server and no network. */}
+        {isDoor && DOOR_EXITS.map((exit) => (
+          <Pressable
+            key={exit.id}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              router.push(exit.href as any);
+            }}
+            hitSlop={8}
+            style={styles.doorExitBtn}
+            accessibilityRole="button"
+            accessibilityLabel={exit.label}
+          >
+            <Text style={styles.doorExitText}>{exit.label}</Text>
+          </Pressable>
+        ))}
 
         <View style={styles.legalRow}>
           <Pressable onPress={() => openDoc(TERMS_OF_SERVICE_URL)} hitSlop={8}>
@@ -676,5 +796,32 @@ const styles = StyleSheet.create({
     color: colors.creamFaint,
     fontFamily: fonts.sans,
     fontSize: 12,
+  },
+
+  // --- Door mode -----------------------------------------------------------
+  // minHeight 44 on both: these are the two controls a person meeting a paywall
+  // needs to be able to hit, and one of them is a crisis link.
+  notNowBtn: {
+    height: 44,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notNowText: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 15,
+  },
+  doorExitBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+    minHeight: 44,
+  },
+  doorExitText: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    textDecorationLine: 'underline',
   },
 });

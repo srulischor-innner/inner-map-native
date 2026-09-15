@@ -204,6 +204,34 @@ export async function isTermsSyncPending(): Promise<boolean> {
 export const markIntakeComplete     = () => setBool(KEYS.intakeComplete, true);
 export const markPrivacyNoticeSeen  = () => setBool(KEYS.privacyNoticeSeen, true);
 
+// ---- the membership door (2026-09-15) --------------------------------------
+// ONE FLAG, AND IT IS IDEMPOTENCE RATHER THAN ENFORCEMENT.
+//
+// The door is the screen shown at the END of onboarding to a device that has
+// never subscribed. It has exactly two call sites, both inside
+// app/onboarding.tsx's terminal exits, and onboarding is unreachable once
+// intakeComplete is set — so the installed base and every lapsed subscriber are
+// spared by CONTROL FLOW, the way app/_layout.tsx spares them from the age gate
+// ("the ruling is a gate on FIRST-TIME signup"). This flag only stops a second
+// showing if someone re-runs the flow.
+//
+// Deliberately NOT in KEYS and NOT in getOnboardingState's multiGet: that call's
+// timeout path defaults its three loop-breaker flags TRUE, and a flag that says
+// "already shown" defaulting to true on a stall is the RIGHT direction here but
+// the wrong mechanism to inherit. It follows the local-const idiom of
+// TERMS_SYNC_PENDING and AGE_SYNC_PENDING instead.
+//
+// NO TIMEOUT HERE, for the same reason isAgeGateBlocked has none: the catch
+// below handles a THROW and cannot handle a STALL. Its only caller caps it
+// (services/membershipDecision.ts, DOOR_READ_CAP_MS) and chooses the direction
+// — unknown means the door stays shut.
+const MEMBERSHIP_DOOR_SHOWN = 'membership.doorShown';
+export const markMembershipDoorShown = () => setBool(MEMBERSHIP_DOOR_SHOWN, true);
+export async function hasMembershipDoorBeenShown(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(MEMBERSHIP_DOOR_SHOWN)) === '1'; }
+  catch { return false; }
+}
+
 // ---- 18+ age gate (2026-08) -------------------------------------------------
 // The device-local half of the gate. The SERVER half (age18Confirmed +
 // timestamp + policy version, in user_settings) is the audit trail and is
@@ -393,6 +421,10 @@ export async function resetOnboarding(): Promise<void> {
     AsyncStorage.removeItem(KEYS.ageGateBlocked),
     AsyncStorage.removeItem(KEYS.ageGateRetryUsed),
     AsyncStorage.removeItem(AGE_SYNC_PENDING),
+    // The door flag resets with everything else, so a dev reset really does
+    // reproduce a first install — including the one screen this work adds.
+    // This is the ONLY thing that clears it; the smoke counts the references.
+    AsyncStorage.removeItem(MEMBERSHIP_DOOR_SHOWN),
     // Read-aloud, so a reset actually resets. Not an onboarding flag, but
     // this helper is what "start again as a new person" means on a device
     // that is not being wiped, and a reset that leaves the speaker armed

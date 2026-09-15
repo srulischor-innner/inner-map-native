@@ -28,6 +28,15 @@ try {
 import { v4 as uuidv4 } from 'uuid';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+// Platform and the app config, for the platform header below. Both are core /
+// config reads with no native call behind them, which is why they are safe in a
+// file whose whole header is about boot-path fragility. Deliberately NOT an
+// import of services/purchases.ts: that module owns the RevenueCat SDK loader,
+// and dragging it into the one function every request goes through would put a
+// store dependency on the boot path to save duplicating two string constants.
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+import { sellablePlatform } from './membershipDecision';
 
 const KEY = 'innerMapUserId';
 
@@ -382,6 +391,42 @@ export async function buildIdentityHeaders(
   // bootstrap/migration paths keep working. It's removed only after the
   // server-side REQUIRE_BEARER cutover (which ignores it anyway).
   if (userId) headers['X-User-Id'] = userId;
+  // WHICH STORE THIS BUILD CAN BUY FROM — and the single most load-bearing line
+  // in the membership work.
+  //
+  // entitlementPlatformEnforced (server.js:7733) reads this header, and an EMPTY
+  // value returns {enforce:false, reason:"platform-unknown"} — the wall held
+  // OPEN. This app has never sent it: buildIdentityHeaders is the only injector
+  // and there is no hand-built header anywhere in app/ or services/. So
+  // entitlementVerdict has been returning entitled:true for EVERY request this
+  // client makes, whatever ENTITLEMENT_ENFORCEMENT says. The server wall was not
+  // merely disarmed; it was unreachable, and every claim that "the server's 402
+  // is the wall" was false for that reason.
+  //
+  // IT CARRIES THE STORE, NOT THE OS, AND THAT IS NOT A DETAIL. sellablePlatform
+  // answers '' for a platform this build holds no usable key for, and an empty
+  // value is not sent at all. Today that means iOS declares itself and Android
+  // stays silent — which keeps the structural protection Android has right now,
+  // where an empty key slot means no purchase is possible on the device. A bare
+  // Platform.OS here would have deleted that protection and left one env-var
+  // edit between an Android user and a 402 on all fourteen surfaces with no way
+  // to pay anywhere on the phone. The note in services/membershipDecision.ts
+  // says which protection is load-bearing for each platform after this change.
+  //
+  // IT CHANGES NOTHING TODAY. ENTITLEMENT_ENFORCEMENT defaults off, both
+  // entitlement writers are inert without a secret, and the entitlements table
+  // is empty — three interlocks, any one of which keeps the wall open. What it
+  // changes is that arming the wall becomes possible at all.
+  //
+  // The server lower-cases this, strips it to [a-z0-9._-] and cuts it to 16
+  // characters before comparing, echoing or logging it, and keys its
+  // once-per-process warning on a fixed enum rather than on the value. There is
+  // no CORS middleware in server.js, so nothing preflights on it.
+  const extra = (Constants.expoConfig?.extra as any) || {};
+  const clientPlatform = sellablePlatform(
+    Platform.OS, extra.revenueCatApiKeyIos, extra.revenueCatApiKeyAndroid,
+  );
+  if (clientPlatform) headers['X-Client-Platform'] = clientPlatform;
   // Phase 2b — attach the Bearer access token when we have one. A missing
   // token is non-fatal: the request resolves via X-User-Id (dual-accept).
   const accessToken = (await getTokens()).accessToken;

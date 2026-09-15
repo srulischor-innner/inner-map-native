@@ -82,3 +82,26 @@ export const NOTIFICATIONS_ENABLED: boolean = false;
 // the mode-lock, and the server-side updatedAt ordering + re-summary
 // idempotency. Only the entry-point button is gated.
 export const SESSION_RESUME_ENABLED: boolean = false;
+
+// THE MEMBERSHIP DOOR (founder ruling 2026-09-15). The one-time screen shown at
+// the END of onboarding, before a person's first conversation, to a device that
+// has never subscribed.
+//
+// IT IS NOT A WALL IN FRONT OF THE APP, and that distinction is the whole
+// design. It has a labelled way out in every state, and it has exactly two call
+// sites — both inside app/onboarding.tsx's terminal exits — so a lapsed
+// subscriber, who never re-enters onboarding, cannot meet it at all. Their map,
+// journal, history, reading, export and deletion are reads, and reads are not
+// gated anywhere.
+//
+// OFF IS GENUINELY INERT. The flag is read in exactly one place
+// (services/membershipDoor.ts) and passed into the pure decision as `enabled`;
+// with it false resolveDoor returns BEFORE it reads the device flag, configures
+// the store or issues GET /api/billing/status. scripts/smoke-membership-door.mjs
+// proves that by COUNTING the calls, not by reading the source — and it reads
+// this constant's REAL value and reports it, so shipping it either way is a
+// stated fact rather than an untested one.
+//
+// TURNING IT OFF DOES NOT MAKE THE APP FREE. The wall is the server's 402
+// (server.js:7878, refuseIfUnentitled) and it is unaffected by this flag.
+export const MEMBERSHIP_DOOR_ENABLED: boolean = true;
