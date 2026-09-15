@@ -86,6 +86,36 @@ ok('the plugin is registered in app.config.js',
   /withNoForegroundService/.test(cfg),
   'without it expo-audio merges both permissions back in and the Play declaration on file becomes false');
 
+// ---- the iOS half of the same claim ----------------------------------------
+// UIBackgroundModes: ['audio'] was the iOS twin of these permissions and was
+// left behind when they went. It is guarded HERE rather than in its own file
+// because it is one claim — "this app does nothing in the background" — and
+// splitting it across two checks is how the iOS half got forgotten the first
+// time. Declaring a background mode the app does not use is Guideline 2.5.4,
+// and a reviewer tests it by backgrounding the app and listening.
+//
+// Evaluated, not grepped: app.config.js is a function export, so reading it as
+// text would pass on a commented-out key and fail on one inside a comment. The
+// first version of this verification did exactly that and proved nothing.
+{
+  let ip = null;
+  try {
+    const mod = require(path.join(ROOT, 'app.config.js'));
+    const cfg = typeof mod === 'function' ? mod({ config: {} })
+      : (typeof mod.default === 'function' ? mod.default({ config: {} }) : mod);
+    const expo = cfg.expo || cfg;
+    ip = (expo.ios || {}).infoPlist || null;
+  } catch (e) {
+    ip = null;
+  }
+  ok('the evaluated iOS infoPlist was readable', !!ip && Object.keys(ip).length > 0,
+    'app.config.js would not evaluate — this check cannot see anything');
+  ok('iOS declares no background modes', !!ip && ip.UIBackgroundModes === undefined,
+    ip ? `UIBackgroundModes = ${JSON.stringify(ip.UIBackgroundModes)} — nothing in this app runs in the background` : '');
+  ok('iOS keeps App Transport Security on', !!ip && ip.NSAppTransportSecurity === undefined,
+    ip ? `NSAppTransportSecurity = ${JSON.stringify(ip.NSAppTransportSecurity)} — every URL in this app is https, and the privacy policy promises TLS 1.2+` : '');
+}
+
 const plugin = path.join(ROOT, 'plugins', 'withNoForegroundService.js');
 ok('the plugin still removes BOTH permissions',
   fs.existsSync(plugin) &&

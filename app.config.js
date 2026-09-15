@@ -106,12 +106,33 @@ const base = {
           'Inner Map uses the microphone for voice notes and voice conversations.',
         NSSpeechRecognitionUsageDescription:
           'Inner Map uses speech recognition to transcribe your voice notes.',
-        UIBackgroundModes: ['audio'],
+        // UIBackgroundModes: ['audio'] WAS HERE AND IS GONE (2026-09-15).
+        //
+        // It is the iOS twin of the Android foreground-service permissions
+        // removed the same day, and it was left behind when they went. Nothing
+        // is behind it: every setAudioModeAsync call site passes
+        // shouldPlayInBackground:false, allowsBackgroundRecording is never set
+        // anywhere in app code, and expo-audio's OnAppEntersBackground pauses
+        // every player and recorder the moment the app backgrounds. So the app
+        // is silent in the background and always has been.
+        //
+        // Declaring a background mode the app does not use is App Store
+        // Guideline 2.5.4, and it is the kind of thing a reviewer tests by
+        // backgrounding the app and listening. scripts/check-no-foreground-service.js
+        // now asserts its absence, so the iOS and Android halves of this claim
+        // are guarded by one check.
         NSFaceIDUsageDescription:
           'Inner Map uses Face ID to keep your conversations private.',
-        NSAppTransportSecurity: {
-          NSAllowsArbitraryLoads: true,
-        },
+        // NSAppTransportSecurity / NSAllowsArbitraryLoads WAS HERE AND IS GONE.
+        //
+        // A blanket exemption from App Transport Security, with nothing that
+        // needed it: apiBaseUrl is https, services/api.ts's fallback is the same
+        // https string, and grepping every .ts/.tsx for an http:// URL returns
+        // nothing. It also contradicted the privacy policy, which promises
+        // TLS 1.2+. check-production-build.js's ATS test passes on the https
+        // branch alone, so removing it breaks no gate — and a blanket exemption
+        // is something a reviewer can ask you to justify, with nothing here to
+        // justify it.
         ITSAppUsesNonExemptEncryption: false,
       },
     },
