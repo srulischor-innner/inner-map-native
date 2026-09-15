@@ -53,6 +53,14 @@ const ASYNC_KEYS_TO_CLEAR = [
   'map_intro_seen',
   'attentionIndicator.firstTransitionSeen.v1',
   'attention_indicator_seen',
+  // Read-aloud. The DEFAULT is off and the hydration in app/(tabs)/index.tsx
+  // only turns it on for a literal '1', so a genuinely fresh install is
+  // silent. But nothing cleared this key, so "delete my account" and the dev
+  // reset both left the speaker armed — and the next "brand-new account" on
+  // that device started talking out loud on its first reply. Reported from a
+  // phone on 2026-09-15 as "the audio toggle is on by default", which it is
+  // not; it was on because the device remembered.
+  'chat.readAloudEnabled',
 ];
 // Anything matching one of these prefixes gets removed even if not
 // listed above — covers per-relationship intro flags like

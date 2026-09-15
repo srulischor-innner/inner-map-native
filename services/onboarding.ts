@@ -19,6 +19,14 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+/** Read-aloud in chat. Lives HERE, not beside its toggle, because three
+ *  different files need the same string and the two that clear it are not the
+ *  one that writes it. It was a private const in app/(tabs)/index.tsx and so
+ *  the wipe and the reset simply did not know it existed — which is why a
+ *  "brand-new account" on a used device started talking out loud.
+ *  scripts/check-read-aloud-reset.js pins all three to this value. */
+export const READ_ALOUD_PREF_KEY = 'chat.readAloudEnabled';
+
 const KEYS = {
   hasSeenIntro:       'onboarding.hasSeenIntro',
   termsAccepted:      'onboarding.termsAccepted',
@@ -385,5 +393,10 @@ export async function resetOnboarding(): Promise<void> {
     AsyncStorage.removeItem(KEYS.ageGateBlocked),
     AsyncStorage.removeItem(KEYS.ageGateRetryUsed),
     AsyncStorage.removeItem(AGE_SYNC_PENDING),
+    // Read-aloud, so a reset actually resets. Not an onboarding flag, but
+    // this helper is what "start again as a new person" means on a device
+    // that is not being wiped, and a reset that leaves the speaker armed
+    // makes the next first reply talk out loud unprompted.
+    AsyncStorage.removeItem(READ_ALOUD_PREF_KEY),
   ]);
 }

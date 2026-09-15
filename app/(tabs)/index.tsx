@@ -153,7 +153,10 @@ const ORIENTATION_MESSAGE =
 // This string is the one 163 Explore sessions already opened on. It is the
 // codified generic that every ladder in the old design fell through to, so it
 // is not new copy — it is the rung that was always true.
-const READ_ALOUD_PREF_KEY = 'chat.readAloudEnabled';
+// Imported, not re-declared. The wipe (utils/localCleanup.ts) and the reset
+// (services/onboarding.ts) both clear this key, and a private copy here is how
+// they came to not know about it.
+import { READ_ALOUD_PREF_KEY } from '../../services/onboarding';
 
 const STANDARD_OPENER =
   "What's on your mind today?\n\n" +
