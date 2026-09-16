@@ -40,3 +40,9 @@ yarn-error.*
 /ios
 /android
 .claude/worktrees/ 
+
+# Google Play service account key for `eas submit` (created 2026-09-16).
+# A PRIVATE KEY WITH RELEASE RIGHTS ON THE PLAY ACCOUNT. Never commit it.
+# Google auto-disables service account keys it finds in public repositories,
+# so a leak here costs a revoke-and-reissue, not just embarrassment.
+credentials/
