@@ -163,6 +163,7 @@ const REQUIRED_EAS_NAMES = [
   'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID',
   'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID',
   'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID',
+  'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY',
 ];
 
 function listEasSecrets(profile) {
@@ -193,8 +194,14 @@ function listEasSecrets(profile) {
     if (!out) continue;
     const names = [];
     for (const line of out.split(/\r?\n/)) {
-      const m = /^([A-Z0-9_]+)=/.exec(line.trim());
-      if (m) names.push({ name: m[1] });
+      // The value is captured, not just the name. A plaintext variable prints
+      // NAME=value here, and for the RevenueCat key the SHAPE is the thing worth
+      // asserting: a present-but-wrong key configures an SDK against a project
+      // that cannot serve it, which fails later and further away than a missing
+      // one. Sensitive and secret variables print no value; the caller treats an
+      // absent value as "cannot check the shape", never as "the shape is wrong".
+      const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+      if (m) names.push({ name: m[1], value: m[2] });
     }
     if (names.length) return names;
   }
@@ -330,6 +337,30 @@ if (easSecrets === null) {
   check('EAS secret EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID is set (Android OAuth client — passed to SDK for completeness)',
     secretNames.has('EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID'),
     'create with `eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID --value "<android-client-id>.apps.googleusercontent.com"`');
+
+  // THE REVENUECAT ANDROID KEY. Added 2026-09-16, and until now nothing guarded
+  // it. app.config.js reads it from the environment ONLY — unlike the iOS key,
+  // which is hardcoded — so if it is ever deleted from the EAS production
+  // environment the next Android build assembles an empty string, and
+  // services/purchases.ts then refuses to configure at all: no paywall, no
+  // purchase, no restore, on a listing that sells a membership. The failure is
+  // silent on the build and only shows up on a device.
+  //
+  // This is the same defect the audit filed as #44 and the reason it stayed
+  // open: the audit checked app.config.js, saw '', and called it live. The
+  // value does not live in the source file. It lives here.
+  check('EAS variable EXPO_PUBLIC_REVENUECAT_ANDROID_KEY is set (Android purchases + restore)',
+    secretNames.has('EXPO_PUBLIC_REVENUECAT_ANDROID_KEY'),
+    'create with `eas env:set --scope project --environment production --name EXPO_PUBLIC_REVENUECAT_ANDROID_KEY --value "goog_..." --visibility plaintext`. Without it Android cannot configure RevenueCat: Settings > Restore purchases errors, and the paywall renders the Membership-unavailable copy.');
+
+  // Shape, when the value is visible. services/purchases.ts gates on this exact
+  // prefix, so a key that does not carry it is equivalent to no key at all.
+  const rcAndroid = easSecrets.find((s2) => s2.name === 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY');
+  if (rcAndroid && rcAndroid.value) {
+    check('...and it is a Google Play key (goog_ prefix, matching services/purchases.ts)',
+      rcAndroid.value.trim().startsWith('goog_'),
+      `the value starts "${rcAndroid.value.trim().slice(0, 5)}" — services/purchases.ts only configures Android on a goog_ key, and an appl_ key here would silently disable Android purchases`);
+  }
 }
 
 console.log(pass ? '[prebuild-check] ALL CHECKS PASSED' : '[prebuild-check] FAILURES — aborting build');
