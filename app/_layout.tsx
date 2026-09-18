@@ -774,10 +774,29 @@ function RootLayout() {
       try {
         if (!url) return;
         const parsed = Linking.parse(url);
+        // THE LEADING SLASH IS NOT THERE. expo-linking's parse ends with
+        // `path = removeLeadingSlash(path)` (expo-linking/build/createURL.js:146),
+        // so https://my-inner-map.com/auth/email?token=… parses to
+        // path === "auth/email", NOT "/auth/email". The universal-link branch
+        // used to require the slash, so it never matched and the token was
+        // never consumed.
+        //
+        // THIS WAS INVISIBLE UNTIL 2026-09-17. Until the Apple Team ID was
+        // filled into .well-known/apple-app-site-association the association
+        // never validated, iOS never handed the https URL to the app, and every
+        // magic link arrived through the innermap:// fallback below — which
+        // matches on `path === 'email'` and works. Fixing the Team ID is what
+        // started routing real sign-ins down the broken branch: the app opens,
+        // nothing is consumed, no error is shown.
+        //
+        // Both spellings are accepted rather than just the correct one. A
+        // future expo-linking that stops stripping the slash must not break
+        // sign-in a second time in the same place.
+        const p = parsed.path || '';
         const isAuthEmail =
           (parsed.scheme === 'innermap' && parsed.hostname === 'auth' &&
-            (parsed.path === '/email' || parsed.path === 'email')) ||
-          (parsed.hostname === 'my-inner-map.com' && /\/auth\/email\/?$/.test(parsed.path || ''));
+            (p === '/email' || p === 'email')) ||
+          (parsed.hostname === 'my-inner-map.com' && /^\/?auth\/email\/?$/.test(p));
         if (!isAuthEmail) return;
 
         // =====================================================================

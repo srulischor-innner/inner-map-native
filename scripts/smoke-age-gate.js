@@ -685,7 +685,20 @@ const LinkingStub = {
       const [k, v] = kv.split('=');
       qp[decodeURIComponent(k)] = decodeURIComponent(v || '');
     }
-    return { scheme: m[1], hostname: m[2], path: m[3] || '', queryParams: qp };
+    // THE LEADING SLASH IS STRIPPED, BECAUSE THE REAL ONE STRIPS IT.
+    // expo-linking's parse ends with `path = removeLeadingSlash(path)`
+    // (expo-linking/build/createURL.js:146). This stub used to return
+    // "/auth/email" where production returns "auth/email", so every assertion
+    // below exercised a shape that cannot occur on a device — and the
+    // universal-link branch of consumeAuthEmailUrl, which required the slash,
+    // passed here while being dead in production. That is what let magic-link
+    // sign-in break silently the moment the Apple Team ID made the association
+    // valid and iOS started routing https links into the app.
+    //
+    // A stub that is kinder than the real thing is not a stub, it is a second
+    // implementation that agrees with nobody.
+    const rawPath = m[3] || '';
+    return { scheme: m[1], hostname: m[2], path: rawPath.replace(/^\//, ''), queryParams: qp };
   },
 };
 
