@@ -92,6 +92,14 @@ const PER_ENTRY = [
   'mark a journal entry as shared',
   'each new entry OPENS',
   'change any single entry',
+  // ADDED 2026-09-17. The first pass over the policy changed the two clauses
+  // that had been flagged and left three more that say the same thing in other
+  // words — an adversarial pass found them in the published, binding document
+  // a week after the rewrite was reported done. A phrase list is only as good
+  // as the paraphrases in it.
+  'choose to share an entry',
+  'Entries you choose to share',
+  'journal entries you share with the AI are stored',
 ];
 for (const [name, src] of SURFACES.concat([['Settings row', prose(settings)]])) {
   const found = PER_ENTRY.filter((ph) => src.includes(ph));
