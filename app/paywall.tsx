@@ -103,6 +103,7 @@ import { DOOR_EXITS } from '../constants/doorExits';
 import {
   normalizeDoorThen, awaitWithin, BILLING_SYNC_WAIT_MS,
 } from '../services/membershipDecision';
+import { isDoorModeArmed, disarmDoorMode } from '../services/membershipDoor';
 
 // Capabilities, not quantities. See the COPY RULE note above before editing.
 const CAPABILITIES = [
@@ -266,7 +267,25 @@ export default function PaywallScreen() {
   // door flag never appears anywhere inside that region.
   const params = useLocalSearchParams<{ door?: string | string[]; then?: string | string[] }>();
   const firstParam = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-  const isDoor = firstParam(params.door) === '1';
+  // DOOR MODE NEEDS BOTH: the param AND an arm that only a real decision in
+  // services/membershipDoor.ts can set. The param alone was enough until
+  // 2026-09-18, which made innermap://paywall?door=1 a way to put any user —
+  // including a subscriber — on the one-time onboarding screen, where "Not now"
+  // REPLACES the navigation stack rather than popping it and takes their place
+  // in the app with it.
+  //
+  // READ ONCE, INTO A REF, AND NOT CONSUMED. isDoor sits in the dependency list
+  // of four useCallbacks; a value that could flip mid-mount would rebuild them
+  // underneath the person. And the read cannot be folded into the param test,
+  // because useLocalSearchParams may still be empty on the first render — the
+  // ref answers "was the app in a door transit when this screen mounted", which
+  // is true on that frame too.
+  const doorArmedAtMount = useRef<boolean | null>(null);
+  if (doorArmedAtMount.current === null) doorArmedAtMount.current = isDoorModeArmed();
+  const isDoor = firstParam(params.door) === '1' && doorArmedAtMount.current === true;
+  // Dropped when the person leaves, so the arm covers one transit and a later
+  // deep link finds it cold.
+  useEffect(() => disarmDoorMode, []);
   // ALLOW-LISTED, never trusted. innermap://paywall?door=1&then=<anything> is
   // reachable through expo-router's own url subscription; normalizeDoorThen
   // collapses everything except '/' and '/relationships' to '/'.

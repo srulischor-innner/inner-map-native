@@ -33,6 +33,11 @@ export type DoorBilling = { known: boolean; entitled: boolean; state: string } |
 export type DoorInput = {
   enabled: boolean;
   alreadyShown: boolean;
+  /** TRUE if this device had already finished onboarding BEFORE this run of it
+   *  started. Read at PRIME time, which is onboarding's mount — by the terminal
+   *  exit both call sites have already written the flag, so an exit-time read
+   *  would be true for everyone and mean nothing. See rule 1b. */
+  alreadyOnboarded: boolean;
   storeConfigurable: boolean;
   offeringAvailable: boolean;
   /** null means "the store could not answer" — never false. services/purchases.ts
@@ -50,6 +55,7 @@ export type DoorOutcome = { show: boolean; reason: string };
 export const DOOR_REASONS: readonly string[] = [
   'door-disabled',
   'already-shown',
+  'already-onboarded',
   'store-not-configurable',
   'no-offering',
   'store-entitled',
@@ -94,6 +100,24 @@ export function decideDoor(i: DoorInput): DoorOutcome {
   if (!i || i.enabled !== true) return { show: false, reason: 'door-disabled' };
   // 1. ONE-TIME. The flag is idempotence, not enforcement.
   if (i.alreadyShown === true) return { show: false, reason: 'already-shown' };
+  // 1b. THE INSTALLED BASE, ENFORCED RATHER THAN ASSUMED.
+  //    The header of this file says a lapsed subscriber is spared "by CONTROL
+  //    FLOW … onboarding is unreachable once intakeComplete is set". That
+  //    sentence was false in three shipped ways, all found on 2026-09-18:
+  //      - app/settings.tsx's SIGN OUT calls resetOnboarding() and replaces to
+  //        /sign-in, which re-runs this whole flow;
+  //      - components/HamburgerMenu.tsx's "Reset onboarding" long-press ships
+  //        to EVERY user — there is no __DEV__ around it — and replaces
+  //        straight to /onboarding;
+  //      - app/_layout.tsx:502 routes to /onboarding when the boot read of the
+  //        onboarding flags is UNKNOWN after a retry, because termsAccepted is
+  //        a legal gate that must fail toward showing. That is the right
+  //        direction for terms and it drags the door along with it.
+  //    In all three the person has used the app for months and app/onboarding.tsx
+  //    always starts at phase 'welcome' — there is no resume. A premise that
+  //    three shipped code paths contradict is not a premise, so the door now
+  //    asks the question itself instead of trusting the route it arrived by.
+  if (i.alreadyOnboarded === true) return { show: false, reason: 'already-onboarded' };
   // 2. CONSTRAINT 4 — a build that cannot reach a store cannot show a price, and
   //    a mandatory paywall on it is a locked door with no handle. Android's key
   //    slot is empty (app.config.js:324-325) and nothing is set.
@@ -261,6 +285,9 @@ export type DoorDeps = {
   enabled: boolean;
   capMs: number;
   hasShown: () => Promise<boolean>;
+  /** Rule 1b's input. Its reader answers TRUE when it cannot tell, because
+   *  "unknown" and "returning user" both have to shut the door. */
+  hasOnboardedBefore: () => Promise<boolean>;
   storeConfigurable: () => Promise<boolean>;
   offeringAvailable: () => Promise<boolean>;
   getBilling: () => Promise<DoorBilling>;
@@ -290,6 +317,13 @@ export async function resolveDoor(d: DoorDeps): Promise<DoorOutcome> {
     if (failReason) return { show: false, reason: failReason };
     if (alreadyShown === true) return { show: false, reason: 'already-shown' };
 
+    // SECOND, AND STILL BEFORE ANY STORE OR NETWORK I/O. Both of the free
+    // local reads happen before the two expensive ones, so a returning user
+    // costs a single AsyncStorage get and nothing else.
+    const onboardedBefore = await read(d.hasOnboardedBefore);
+    if (failReason) return { show: false, reason: failReason };
+    if (onboardedBefore === true) return { show: false, reason: 'already-onboarded' };
+
     const configurable = await read(d.storeConfigurable);
     if (failReason) return { show: false, reason: failReason };
     if (configurable !== true) return { show: false, reason: 'store-not-configurable' };
@@ -307,6 +341,7 @@ export async function resolveDoor(d: DoorDeps): Promise<DoorOutcome> {
     return decideDoor({
       enabled: true,
       alreadyShown: false,
+      alreadyOnboarded: false,
       storeConfigurable: true,
       offeringAvailable: true,
       // A non-boolean here is the store declining to answer, and rule 5 keeps

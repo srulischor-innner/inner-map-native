@@ -61,6 +61,26 @@ const ASYNC_KEYS_TO_CLEAR = [
   // phone on 2026-09-15 as "the audio toggle is on by default", which it is
   // not; it was on because the device remembered.
   'chat.readAloudEnabled',
+  // ---- 2026-09-18: three more that outlived "delete my account" ----------
+  // Found the same way the read-aloud key above was: by listing what a device
+  // still knows after the wipe, rather than by reading the wipe list and
+  // agreeing with it. None of the three is covered by the 'onboarding.' prefix
+  // below, and all three are settings a NEW account on this device inherits.
+  //
+  // The door flag. services/onboarding.ts's resetOnboarding deliberately does
+  // NOT clear this any more — a sign-out is not a new person. A deletion is:
+  // the account is gone, and a flag saying "this device has already been shown
+  // the price" is the last thing left of somebody who asked to be forgotten.
+  'membership.doorShown',
+  // Journal sharing. The DEFAULT is shared-on, so a device left with an
+  // explicit 'false' here would hand the next account a quieter journal than
+  // the four surfaces that describe this setting promise — and one left with
+  // 'true' is a stale echo of a choice the new person never made.
+  'journal.shareDefault',
+  // Push opt-in. Leaving this set meant the new account was recorded as having
+  // already answered a question nobody asked it, so app/messages.tsx never
+  // offered the prompt again.
+  'push.optedIn',
 ];
 // Anything matching one of these prefixes gets removed even if not
 // listed above — covers per-relationship intro flags like

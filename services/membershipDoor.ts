@@ -31,19 +31,22 @@
 // once intakeComplete is set. The smoke asserts the census over comment-stripped
 // source across app/, services/, components/, utils/ and constants/.
 //
-// TWO THINGS THIS FILE DOES THAT ARE FAIL-OPEN AND ARE DECLARED RATHER THAN
-// GUARDED, because guarding either would cost more than it buys:
+// THE ANSWER IS SCOPED TO ONE RUN OF ONBOARDING, NOT TO THE PROCESS. It used to
+// be the process: primeDoor() returned early if _inFlight was set, and nothing
+// ever cleared it. The declared justification was that "there is no sign-in
+// affordance anywhere inside app/onboarding.tsx", which is true and is also not
+// the question — the identity can change with onboarding UNMOUNTED and the flow
+// then re-entered in the same process. app/settings.tsx's SIGN OUT does exactly
+// that: clearUserId() + resetOnboarding() + replace('/sign-in'), and the next
+// person to finish onboarding on that device got the previous person's verdict.
+// So: primeDoor() always starts a FRESH resolve, and doorForExit() drops the
+// answer once it has used it. The window a cached answer lives in is now the
+// window it was always meant for — this screen's mount to this screen's exit.
 //
-//   1. THE ANSWER IS COMPUTED ONCE PER PROCESS and is bound to whatever identity
-//      exists when onboarding MOUNTS. That is correct today because there is no
-//      sign-in affordance anywhere inside app/onboarding.tsx — the smoke asserts
-//      that, so the day somebody adds one this note stops being true out loud
-//      rather than quietly. If a sign-in ever lands mid-flow, clear _inFlight on
-//      the identity change; a stale answer would be one wrongly-shut door, never
-//      a wrongly-open one, because the store read is the only source that can
-//      say yes and a shut door lets the person straight in.
+// ONE THING THIS FILE STILL DOES THAT IS FAIL-OPEN AND IS DECLARED RATHER THAN
+// GUARDED, because guarding it would cost more than it buys:
 //
-//   2. THE DEVICE FLAG IS WRITTEN ON THE DECISION, NOT ON THE SCREEN BEING SEEN.
+//   THE DEVICE FLAG IS WRITTEN ON THE DECISION, NOT ON THE SCREEN BEING SEEN.
 //      If the navigation below failed after the flag landed, that device would
 //      never be offered the door again. That is the fail-open direction — they
 //      get the app instead of a paywall — and it is one screen, once, on a
@@ -54,7 +57,9 @@
 import { MEMBERSHIP_DOOR_ENABLED } from '../constants/features';
 import { api } from './api';
 import { getMembershipOffering, hasActiveEntitlement, storeConfigurable } from './purchases';
-import { hasMembershipDoorBeenShown, markMembershipDoorShown } from './onboarding';
+import {
+  hasMembershipDoorBeenShown, markMembershipDoorShown, hasCompletedIntakeBefore,
+} from './onboarding';
 import {
   resolveDoor, doorRouteFor, awaitWithin,
   DOOR_READ_CAP_MS, DOOR_PATIENCE_MS, DOOR_NOT_READY,
@@ -63,12 +68,16 @@ import {
 
 let _inFlight: Promise<DoorOutcome> | null = null;
 
-export function primeDoor(): void {
-  if (_inFlight) return;
-  _inFlight = resolveDoor({
+function startResolve(): Promise<DoorOutcome> {
+  return resolveDoor({
     enabled: MEMBERSHIP_DOOR_ENABLED,
     capMs: DOOR_READ_CAP_MS,
     hasShown: hasMembershipDoorBeenShown,
+    // Rule 1b. Read HERE, on the mount, because both terminal exits call
+    // markIntakeComplete() before they call doorForExit() — an exit-time read
+    // would be true for a first-time user too and would shut the door on
+    // everybody.
+    hasOnboardedBefore: hasCompletedIntakeBefore,
     storeConfigurable,
     offeringAvailable: async () => !!(await getMembershipOffering()),
     getBilling: async () => {
@@ -84,18 +93,49 @@ export function primeDoor(): void {
   });
 }
 
+/** Starts a FRESH resolve. Called once, from app/onboarding.tsx's mount effect,
+ *  when the age read has come back NOT BLOCKED — so it runs once per run of
+ *  onboarding, which is the scope the answer is valid over. */
+export function primeDoor(): void {
+  _inFlight = startResolve();
+}
+
+// ===========================================================================
+// DOOR MODE IS NOT A URL CLAIM
+// ===========================================================================
+// app/paywall.tsx read door=1 straight off useLocalSearchParams, so
+// innermap://paywall?door=1 put any user — a subscriber of two years — into the
+// one-time end-of-onboarding screen, where "Not now" REPLACES the stack instead
+// of popping and takes their place in the app with it. The destination was
+// already allow-listed (normalizeDoorThen); the MODE was not guarded at all.
+//
+// The guard is in memory on purpose. A URL cannot set it, only the return of a
+// real decision below can, and a cold start from a link begins with it false.
+// The paywall reads it on mount and drops it on unmount, so it covers exactly
+// one transit: this file's replace() to the paywall, and the person's exit.
+let _doorArmed = false;
+export function isDoorModeArmed(): boolean { return _doorArmed; }
+export function disarmDoorMode(): void { _doorArmed = false; }
+
 export async function doorForExit(dest: string): Promise<string> {
-  // Idempotent — this is the safety net for an exit reached without a prime
-  // (a phase pushed straight to a terminal screen, a future flow change). It
-  // costs the full patience wait rather than being free, and that is the whole
-  // difference between priming and not.
-  primeDoor();
+  // The safety net for an exit reached without a prime (a phase pushed straight
+  // to a terminal screen, a future flow change). It costs the full patience wait
+  // rather than being free, and that is the whole difference between priming and
+  // not. It does NOT re-prime over a live one — that would throw away the head
+  // start this screen's mount bought.
+  if (!_inFlight) _inFlight = startResolve();
   const outcome = await awaitWithin(_inFlight, DOOR_PATIENCE_MS, DOOR_NOT_READY);
+  // USED, SO DROPPED. Onboarding runs to exactly one of its two terminal exits,
+  // so the answer has no reader after this line — and leaving it behind is what
+  // let one person's verdict outlive their session on a shared device.
+  _inFlight = null;
   console.log(`[door] ${outcome.show ? 'OPEN' : 'shut'} (${outcome.reason}) dest=${dest}`);
   // NOT AWAITED, ON PURPOSE. The flag is idempotence, not a legal gate:
   // onboarding runs once, so a lost write costs nothing — while an AsyncStorage
   // stall sitting between a person and the app they have just finished setting
   // up costs everything. setBool already swallows its own throw.
   if (outcome.show) markMembershipDoorShown().catch(() => {});
+  // Armed only on the branch that actually navigates to the door.
+  if (outcome.show) _doorArmed = true;
   return doorRouteFor(outcome, dest);
 }

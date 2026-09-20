@@ -68,7 +68,9 @@ function sweep(storeConfigurable) {
         for (const storeEntitled of [true, false, null])
           for (const billing of BILLINGS) {
             n++;
-            if (D.decideDoor({ enabled, alreadyShown, storeConfigurable, offeringAvailable, storeEntitled, billing }).show) shown++;
+            // alreadyOnboarded:false throughout — this file is about the store
+            // guard, so it sweeps the only population rule 1b lets through.
+            if (D.decideDoor({ enabled, alreadyShown, alreadyOnboarded: false, storeConfigurable, offeringAvailable, storeEntitled, billing }).show) shown++;
           }
   return { n, shown };
 }
@@ -79,7 +81,7 @@ ok('CONTROL — a configurable store DOES open the door sometimes', control.show
   'a sweep that never opens proves nothing about one that must not');
 ok('an unconfigurable store opens it ZERO times out of 792', blocked.shown === 0, `${blocked.shown} opened`);
 ok('...and an empty offering does the same on a configurable store',
-  D.decideDoor({ enabled: true, alreadyShown: false, storeConfigurable: true, offeringAvailable: false,
+  D.decideDoor({ enabled: true, alreadyShown: false, alreadyOnboarded: false, storeConfigurable: true, offeringAvailable: false,
     storeEntitled: false, billing: { known: true, entitled: false, state: 'none' } }).show === false,
   'the Play products are all DRAFT — a paywall with no price is a dead screen');
 

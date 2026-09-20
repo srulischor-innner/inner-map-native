@@ -209,11 +209,20 @@ export const markPrivacyNoticeSeen  = () => setBool(KEYS.privacyNoticeSeen, true
 //
 // The door is the screen shown at the END of onboarding to a device that has
 // never subscribed. It has exactly two call sites, both inside
-// app/onboarding.tsx's terminal exits, and onboarding is unreachable once
-// intakeComplete is set — so the installed base and every lapsed subscriber are
-// spared by CONTROL FLOW, the way app/_layout.tsx spares them from the age gate
-// ("the ruling is a gate on FIRST-TIME signup"). This flag only stops a second
-// showing if someone re-runs the flow.
+// app/onboarding.tsx's terminal exits.
+//
+// IT USED TO SAY: "onboarding is unreachable once intakeComplete is set — so the
+// installed base and every lapsed subscriber are spared by CONTROL FLOW". Three
+// shipped paths re-enter onboarding for a user who finished it months ago: sign
+// out (app/settings.tsx), the "Reset onboarding" long-press (which has no
+// __DEV__ around it and is visible to every user at the foot of the hamburger),
+// and the boot gate's fail-closed route when the flag read is unknown after a
+// retry (app/_layout.tsx:502). Control flow was never the guard it was
+// described as, so services/membershipDecision.ts rule 1b now asks
+// hasCompletedIntakeBefore() directly and this flag stops being load-bearing on
+// its own.
+//
+// AND IT IS NO LONGER CLEARED BY resetOnboarding(). See the note there.
 //
 // Deliberately NOT in KEYS and NOT in getOnboardingState's multiGet: that call's
 // timeout path defaults its three loop-breaker flags TRUE, and a flag that says
@@ -230,6 +239,21 @@ export const markMembershipDoorShown = () => setBool(MEMBERSHIP_DOOR_SHOWN, true
 export async function hasMembershipDoorBeenShown(): Promise<boolean> {
   try { return (await AsyncStorage.getItem(MEMBERSHIP_DOOR_SHOWN)) === '1'; }
   catch { return false; }
+}
+
+/** Rule 1b's input: had this device ALREADY finished onboarding before the run
+ *  now in progress? Read at the door's prime — onboarding's mount — because both
+ *  terminal exits write this flag before they ask for the door.
+ *
+ *  THE CATCH RETURNS TRUE, which is the opposite of every other reader in this
+ *  file, and deliberately. Everywhere else "unknown" must not lock somebody out;
+ *  here "unknown" must not put a price in front of somebody who has been using
+ *  the app for a year. Both directions are the same direction — toward the
+ *  person — and a STALL lands the same way, because the only caller caps this
+ *  read and its cap path also shuts the door. */
+export async function hasCompletedIntakeBefore(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(KEYS.intakeComplete)) === '1'; }
+  catch { return true; }
 }
 
 // ---- 18+ age gate (2026-08) -------------------------------------------------
@@ -401,9 +425,13 @@ export async function markGraceNudgeShown(): Promise<void> {
   } catch { /* best-effort — a failed write just means we may re-nudge sooner */ }
 }
 
-/** Dev-only — wipes every flag so the next launch restarts onboarding.
- *  Includes the new privacy-notice flag so a dev-reset re-runs the
- *  full warm-onboarding experience, not a partial one. */
+/** Wipes the onboarding flags so the next launch restarts the flow.
+ *
+ *  NOT DEV-ONLY, whatever this docblock used to say. It has two shipped callers:
+ *  app/settings.tsx's SIGN OUT, and components/HamburgerMenu.tsx's "Reset
+ *  onboarding" long-press, which carries no __DEV__ guard and sits at the foot
+ *  of the menu for every user. Anything this function clears, it clears for real
+ *  people — which is why the membership door flag is no longer in the list. */
 export async function resetOnboarding(): Promise<void> {
   await Promise.all([
     AsyncStorage.removeItem(KEYS.hasSeenIntro),
@@ -421,10 +449,18 @@ export async function resetOnboarding(): Promise<void> {
     AsyncStorage.removeItem(KEYS.ageGateBlocked),
     AsyncStorage.removeItem(KEYS.ageGateRetryUsed),
     AsyncStorage.removeItem(AGE_SYNC_PENDING),
-    // The door flag resets with everything else, so a dev reset really does
-    // reproduce a first install — including the one screen this work adds.
-    // This is the ONLY thing that clears it; the smoke counts the references.
-    AsyncStorage.removeItem(MEMBERSHIP_DOOR_SHOWN),
+    // MEMBERSHIP_DOOR_SHOWN IS DELIBERATELY NOT HERE. It was, on the reading
+    // that this helper is a dev-only "reproduce a first install" — and under
+    // that reading clearing it is obviously right. The reading is wrong: both
+    // callers are shipped user actions, so clearing it meant a person who signs
+    // out and back in, or who long-presses a row labelled "Reset onboarding",
+    // met the paid door a second time. A reset of onboarding is not a reset of
+    // what this device has already been sold.
+    //
+    // ACCOUNT DELETION IS THE EXCEPTION AND IT CLEARS THE FLAG ITSELF
+    // (utils/localCleanup.ts). That is a different act: the account is gone,
+    // the device is genuinely starting over as somebody new, and the flag would
+    // otherwise outlive every other trace of the person who set it.
     // Read-aloud, so a reset actually resets. Not an onboarding flag, but
     // this helper is what "start again as a new person" means on a device
     // that is not being wiped, and a reset that leaves the speaker armed

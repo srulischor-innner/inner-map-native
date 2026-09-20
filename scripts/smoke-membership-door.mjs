@@ -100,12 +100,13 @@ for (const known of [true, false])
 // It is the same ten rules transposed into a second file. It catches a typo, a
 // swapped pair, a rule dropped on one side. It CANNOT catch a rule that is wrong
 // in both copies, because one reading wrote both. The assertion below it — that
-// exactly ONE of the 1584 inputs opens the door, and that it is this exact input
+// exactly ONE of the 3168 inputs opens the door, and that it is this exact input
 // — is the independent one: it does not restate the rules at all, and it is what
 // would survive if the restatement and the module were both wrong together.
 function want(i) {
   if (!i.enabled) return 'door-disabled';
   if (i.alreadyShown) return 'already-shown';
+  if (i.alreadyOnboarded) return 'already-onboarded';
   if (!i.storeConfigurable) return 'store-not-configurable';
   if (!i.offeringAvailable) return 'no-offering';
   if (i.storeEntitled === true) return 'store-entitled';
@@ -122,11 +123,12 @@ const seen = new Map();
 const bad = [];
 for (const enabled of [true, false])
   for (const alreadyShown of [true, false])
-    for (const storeConfigurable of [true, false])
-      for (const offeringAvailable of [true, false])
-        for (const storeEntitled of [true, false, null])
-          for (const billing of BILLINGS) {
-            const input = { enabled, alreadyShown, storeConfigurable, offeringAvailable, storeEntitled, billing };
+    for (const alreadyOnboarded of [true, false])
+      for (const storeConfigurable of [true, false])
+        for (const offeringAvailable of [true, false])
+          for (const storeEntitled of [true, false, null])
+            for (const billing of BILLINGS) {
+            const input = { enabled, alreadyShown, alreadyOnboarded, storeConfigurable, offeringAvailable, storeEntitled, billing };
             const got = D.decideDoor(input);
             const wr = want(input);
             n++;
@@ -137,17 +139,17 @@ for (const enabled of [true, false])
           }
 step(`the decision agrees with a transposition of the same rules on all ${n} inputs`, bad.length === 0,
   bad.join('\n         '));
-step('CONTROL — the sweep is the size it claims', n === 1584, `swept ${n}`);
+step('CONTROL — the sweep is the size it claims', n === 3168, `swept ${n}`);
 // THE INDEPENDENT STATEMENT. Not "the rules are these" but "the opening set is a
 // single point": any single-field change to the input below — any of them, in
 // any direction the sweep covers — closes the door, because there is nothing
 // else in the sweep that opens it. A rule that is wrong in both the module and
 // the restatement above would still have to move or widen this point.
 const THE_ONE_OPENER = {
-  enabled: true, alreadyShown: false, storeConfigurable: true, offeringAvailable: true,
+  enabled: true, alreadyShown: false, alreadyOnboarded: false, storeConfigurable: true, offeringAvailable: true,
   storeEntitled: false, billing: { known: true, entitled: false, state: 'none' },
 };
-step('CONTROL — exactly ONE input out of 1584 opens the door', openers.length === 1,
+step('CONTROL — exactly ONE input out of 3168 opens the door', openers.length === 1,
   `${openers.length} inputs returned show:true — a sweep that never opens proves nothing`);
 step('...and it is precisely the never-subscribed device, so every single-field change closes it',
   openers.length === 1 && JSON.stringify(openers[0]) === JSON.stringify(THE_ONE_OPENER),
@@ -188,10 +190,11 @@ console.log('\n=== 2. the composition, driven for real ===');
 const composed = new Map();
 const note = (out) => { composed.set(out.reason, out.show); return out; };
 function mk(over) {
-  const calls = { hasShown: 0, configurable: 0, offering: 0, billing: 0, storeEnt: 0 };
+  const calls = { hasShown: 0, onboardedBefore: 0, configurable: 0, offering: 0, billing: 0, storeEnt: 0 };
   const deps = {
     enabled: true, capMs: 60,
     hasShown: async () => { calls.hasShown++; return false; },
+    hasOnboardedBefore: async () => { calls.onboardedBefore++; return false; },
     storeConfigurable: async () => { calls.configurable++; return true; },
     offeringAvailable: async () => { calls.offering++; return true; },
     getBilling: async () => { calls.billing++; return { known: true, entitled: false, state: 'none' }; },
@@ -442,9 +445,11 @@ step('CONTROL — the age guard and the prime are both present', gi >= 0 && pj >
 step('the prime is guarded by the age read, in the same block, above it',
   gi >= 0 && pj > gi && !ONB.slice(gi, pj).includes('}'),
   'app/_layout.tsx hard-returns before token bootstrap for a blocked device; an ungated prime here would configure RevenueCat and read /api/billing/status for exactly that person');
-// The answer is computed once per process and bound to whatever identity exists
-// at MOUNT. services/membershipDoor.ts says so out loud and says what to do if
-// this stops being true; this is the assertion that makes it stop being silent.
+// The answer is scoped to ONE RUN of onboarding — primeDoor() starts a fresh
+// resolve on every mount and doorForExit() drops it once used. Within that run
+// it is still bound to the identity present at mount, so the negative below is
+// still worth holding: a sign-in INSIDE the flow would move the person under a
+// verdict already in flight, which no amount of cache-clearing would catch.
 step('CONTROL — onboarding still runs the phase machine it is built around',
   /setPhase\(/.test(ONB), 'if this is gone the negative below is negative about the wrong file');
 step('nothing inside onboarding can change identity mid-flow',
@@ -627,13 +632,73 @@ if (SRC) {
 
 console.log('\n=== 10. the one device flag ===');
 const OB = CODE.get('services/onboarding.ts');
+// The comment-stripped copy above is what the reference COUNTS read. The raw
+// copy is what the two assertions about hasCompletedIntakeBefore read, because
+// one of them is about the contents of a catch arm and the other would pass on
+// a docblock alone.
+const OBRAW = read('services/onboarding.ts');
 step('the door has exactly one device flag',
   OB.includes("const MEMBERSHIP_DOOR_SHOWN = 'membership.doorShown';"));
-step('...with a setter, a reader, and a clear that only the dev reset reaches',
-  (OB.match(/MEMBERSHIP_DOOR_SHOWN/g) || []).length === 4,
-  `${(OB.match(/MEMBERSHIP_DOOR_SHOWN/g) || []).length} references — declaration, setter, reader, resetOnboarding`);
-step('...and resetOnboarding clears it with everything else',
-  fnBody(OB, 'export async function resetOnboarding()').includes('MEMBERSHIP_DOOR_SHOWN'));
+step('...with a setter and a reader, and NOTHING ELSE in this file touches it',
+  (OB.match(/MEMBERSHIP_DOOR_SHOWN/g) || []).length === 3,
+  `${(OB.match(/MEMBERSHIP_DOOR_SHOWN/g) || []).length} references — declaration, setter, reader`);
+// THE INVERSION OF 2026-09-18, AND THE REASON IT IS AN ASSERTION RATHER THAN A
+// DELETED LINE. resetOnboarding() used to clear this flag, and the note beside
+// it called that "a dev reset really does reproduce a first install". Both of
+// its callers are shipped user actions — app/settings.tsx's sign-out, and a
+// "Reset onboarding" long-press with no __DEV__ around it at the foot of the
+// hamburger — so the flag that makes the door one-time was being cleared by two
+// things a real person can do, and the door came back.
+step('CONTROL — resetOnboarding was sliced and still clears the onboarding flags',
+  fnBody(OB, 'export async function resetOnboarding()').includes('KEYS.intakeComplete'),
+  'if the slice is empty the negative below is negative about nothing');
+step('resetOnboarding does NOT clear the door flag — a sign-out is not a new person',
+  !fnBody(OB, 'export async function resetOnboarding()').includes('MEMBERSHIP_DOOR_SHOWN'),
+  'clearing it here re-doors anyone who signs out and back in, or who long-presses a row labelled Reset onboarding');
+const CLEAN = CODE.get('utils/localCleanup.ts');
+step('...but ACCOUNT DELETION does, because that really is a new person',
+  /'membership\.doorShown'/.test(CLEAN),
+  'the account is gone; a flag saying this device has already been shown the price must not outlive it');
+step('...along with the two other settings that outlived the account',
+  /'journal\.shareDefault'/.test(CLEAN) && /'push\.optedIn'/.test(CLEAN),
+  'a new account on this device inherited the previous one journal-sharing choice and push answer');
+step('CONTROL — the wipe list was read and still carries the keys it always had',
+  /'innerMapUserId'/.test(CLEAN) && /'chat\.readAloudEnabled'/.test(CLEAN));
+
+console.log('\n=== 10b. the four ways an existing user reached the door ===');
+// Every one of these was live on 2026-09-18. The first three are re-entries
+// into onboarding by somebody who finished it months ago; the fourth is the
+// verdict from whoever used the device before.
+const DOORSRC = read('services/membershipDoor.ts');
+step('RULE 1b EXISTS — the door asks whether this device has onboarded before',
+  /if \(i\.alreadyOnboarded === true\) return \{ show: false, reason: 'already-onboarded' \};/.test(DEC),
+  'control flow was the only guard, and three shipped paths walk straight through it');
+step('...and it is wired to the real reader, at PRIME time',
+  /hasOnboardedBefore: hasCompletedIntakeBefore,/.test(DOORSRC)
+  && /export async function hasCompletedIntakeBefore\(\)/.test(OBRAW),
+  'both terminal exits call markIntakeComplete() before doorForExit(), so an exit-time read would be true for everyone');
+step('...and its reader answers TRUE when it cannot tell',
+  /export async function hasCompletedIntakeBefore\(\): Promise<boolean> \{[\s\S]{0,160}catch \{ return true; \}/.test(OBRAW),
+  'unknown must not put a price in front of somebody who has used the app for a year');
+step('THE CACHE IS NO LONGER PROCESS-LIFETIME — primeDoor starts a fresh resolve',
+  /export function primeDoor\(\): void \{\s*_inFlight = startResolve\(\);\s*\}/.test(DOORSRC),
+  'it used to early-return on a live _inFlight, so the next person to finish onboarding on the device got the previous person verdict');
+step('...and the answer is dropped once the exit has used it',
+  /_inFlight = null;/.test(DOORSRC),
+  'nothing reads it after the exit, and leaving it behind is what let a verdict outlive a session');
+step('...while the exit safety net still does NOT re-prime over a live one',
+  /if \(!_inFlight\) _inFlight = startResolve\(\);/.test(DOORSRC),
+  're-priming here would throw away the head start the mount bought and cost the full patience wait');
+step('DOOR MODE IS NOT A URL CLAIM — the paywall needs an in-memory arm too',
+  /const isDoor = firstParam\(params\.door\) === '1' && doorArmedAtMount\.current === true;/.test(read('app/paywall.tsx')),
+  'innermap://paywall?door=1 put any user on the one-time screen, where Not now REPLACES the stack instead of popping it');
+step('...and only a decision that actually opened the door can set it',
+  /if \(outcome\.show\) _doorArmed = true;/.test(DOORSRC)
+  && /let _doorArmed = false;/.test(DOORSRC),
+  'a cold start from a link begins with it false');
+step('...and the screen drops it when the person leaves',
+  /useEffect\(\(\) => disarmDoorMode, \[\]\);/.test(read('app/paywall.tsx')),
+  'the arm covers one transit, so a later deep link finds it cold');
 
 console.log('\n=== 11. the suite knows about both new scripts ===');
 const CI = read('scripts/ci-run-all.js');
