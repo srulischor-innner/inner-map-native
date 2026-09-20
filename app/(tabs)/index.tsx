@@ -1886,9 +1886,25 @@ export default function ChatScreen() {
   // assistant message. Dismissed by a pick, and never re-shown after: it is an
   // opening question, not a recurring prompt. The always-available control at
   // the top of the screen is how a mode gets changed after this.
+  //
+  // AND NOT IN THE FIRST SESSION AT ALL (founder ruling 2026-09-18). The first
+  // session had been asking a person who has been here for ninety seconds to
+  // pick between four ways of working they have no way to tell apart yet, and
+  // the orientation the model reads out no longer offers the choice: it now
+  // says the map gets sketched first and the question comes once there is
+  // something in it, and that what CAN be changed right now is how it talks.
+  // Boxes offering the mode contradicted that sentence on the same screen.
+  //
+  // THE TEST IS === false, NOT !== true, and the difference is the whole
+  // guard. firstSessionPending is tri-state and its UNKNOWN value is
+  // undefined; the boot path resolves it to TRUE when the status endpoint
+  // cannot answer (fail-toward-first-ever, ~line 778), so undefined only
+  // survives while boot is still in flight. Showing boxes in that window would
+  // be showing them to exactly the cohort this ruling removes them from.
   const [modeBoxesDismissed, setModeBoxesDismissed] = useState(false);
   const showModeBoxes = useMemo(() => {
     if (modeBoxesDismissed || crisisGated || typing || sending) return false;
+    if (firstSessionPending !== false) return false;
     let assistants = 0, users = 0;
     for (const m of messages) {
       if (m.role === 'assistant') assistants++;
@@ -1896,7 +1912,7 @@ export default function ChatScreen() {
     }
     // Exactly: greeting + one reply, and the person has spoken at least once.
     return users >= 1 && assistants === 2;
-  }, [modeBoxesDismissed, crisisGated, typing, sending, messages]);
+  }, [modeBoxesDismissed, crisisGated, typing, sending, messages, firstSessionPending]);
 
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
     () => messages.map((m) => (
