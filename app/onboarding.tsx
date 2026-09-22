@@ -150,6 +150,8 @@ export default function OnboardingScreen() {
   // don't-flash-the-wrong-phase reason as the other two.
   const [ageBlocked, setAgeBlocked] = useState<boolean | null>(null);
   const [ageRetryUsed, setAgeRetryUsed] = useState(false);
+  // Guards the door prime below against firing twice in one mount.
+  const primedRef = useRef(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -223,6 +225,15 @@ export default function OnboardingScreen() {
   // terms-acceptance, where it would have had zero milliseconds to settle.
   useEffect(() => {
     if (ageBlocked !== false) return;
+    // ONCE PER MOUNT, and the ref rather than a module flag is the point.
+    // primeDoor() deliberately starts a FRESH resolve every call now (a cached
+    // verdict outliving a sign-out is what that change fixed), so the
+    // idempotence has to live where "one run of onboarding" is actually known
+    // — here. A ref is per-mount: React 18's double-invoked effect shares it
+    // and primes once, while a real remount gets a new ref and re-primes,
+    // which is exactly the distinction the module-level cache could not make.
+    if (primedRef.current) return;
+    primedRef.current = true;
     primeDoor();
   }, [ageBlocked]);
 

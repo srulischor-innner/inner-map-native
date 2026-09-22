@@ -81,6 +81,17 @@ const ASYNC_KEYS_TO_CLEAR = [
   // already answered a question nobody asked it, so app/messages.tsx never
   // offered the prompt again.
   'push.optedIn',
+  // ...and the flag that actually gates the prompt. Clearing push.optedIn
+  // alone did NOT restore the prompt it claimed to restore: app/messages.tsx
+  // shows it only when BOTH are unset (`if (!optedIn && seen !== '1')`), so a
+  // device that had answered once stayed silent for the next account anyway.
+  // Two keys, one behaviour — a wipe list that clears one of them is a wipe
+  // list that reads as a fix and is not one.
+  'push.inboxPromptSeen',
+  // Rule 1b's durable half. See services/onboarding.ts: resetOnboarding
+  // deliberately leaves this alone, and a real deletion is the only thing that
+  // should make this device look like it has never onboarded.
+  'onboarding.everCompleted',
 ];
 // Anything matching one of these prefixes gets removed even if not
 // listed above — covers per-relationship intro flags like

@@ -209,7 +209,10 @@ function mk(over) {
   step('the composition opens the door for a never-subscribed device',
     out.show === true && out.reason === 'never-subscribed', JSON.stringify(out));
   step('...and it really asked all four sources',
-    calls.configurable === 1 && calls.offering === 1 && calls.billing === 1 && calls.storeEnt === 1,
+    calls.configurable === 1 && calls.offering === 1 && calls.billing === 1 && calls.storeEnt === 1
+    // ...INCLUDING rule 1b's reader. Without this the composition could simply
+    // never call it and every assertion about rule 1b would be about decideDoor.
+    && calls.onboardedBefore === 1,
     JSON.stringify(calls));
 }
 {
@@ -219,6 +222,30 @@ function mk(over) {
     out.show === false && out.reason === 'already-shown'
     && calls.configurable === 0 && calls.offering === 0 && calls.billing === 0 && calls.storeEnt === 0,
     JSON.stringify(calls));
+}
+// RULE 1b, DRIVEN FOR REAL (added 2026-09-22). The composition harness stubbed
+// hasOnboardedBefore to FALSE in every case and never read the counter it was
+// keeping, so the only shipped enforcement of "the installed base is never
+// doored" had no behavioural coverage at all — the sweep above exercises
+// decideDoor, which is the pure function, not the thing that calls it.
+{
+  const { deps, calls } = mk({ hasOnboardedBefore: async () => true });
+  const out = note(await D.resolveDoor(deps));
+  // The override replaces the counting stub, so the COUNT is proved below on
+  // the happy path instead; what this proves is the outcome and the cost.
+  step('a device that has onboarded before is never doored',
+    out.show === false && out.reason === 'already-onboarded',
+    JSON.stringify(calls) + ' ' + JSON.stringify(out));
+  step('...and it short-circuits before the store and the network',
+    calls.configurable === 0 && calls.offering === 0 && calls.billing === 0 && calls.storeEnt === 0,
+    'a returning user must cost one AsyncStorage read and nothing else: ' + JSON.stringify(calls));
+}
+{
+  // ORDER MATTERS: already-shown must still win, so the cheaper flag is read
+  // first and a device with both facts true reports the older reason.
+  const { deps } = mk({ hasShown: async () => true, hasOnboardedBefore: async () => true });
+  const out = note(await D.resolveDoor(deps));
+  step('already-shown outranks already-onboarded', out.reason === 'already-shown', JSON.stringify(out));
 }
 {
   const { deps, calls } = mk({ storeConfigurable: async () => false });
@@ -637,6 +664,7 @@ const OB = CODE.get('services/onboarding.ts');
 // one of them is about the contents of a catch arm and the other would pass on
 // a docblock alone.
 const OBRAW = read('services/onboarding.ts');
+const CLEAN = CODE.get('utils/localCleanup.ts');
 step('the door has exactly one device flag',
   OB.includes("const MEMBERSHIP_DOOR_SHOWN = 'membership.doorShown';"));
 step('...with a setter and a reader, and NOTHING ELSE in this file touches it',
@@ -652,10 +680,33 @@ step('...with a setter and a reader, and NOTHING ELSE in this file touches it',
 step('CONTROL — resetOnboarding was sliced and still clears the onboarding flags',
   fnBody(OB, 'export async function resetOnboarding()').includes('KEYS.intakeComplete'),
   'if the slice is empty the negative below is negative about nothing');
+// RULE 1b'S INPUT MUST SURVIVE A RESET, which is the defect that made the rule
+// inert on the two paths it was written for: it read KEYS.intakeComplete, and
+// resetOnboarding deletes that four lines from the note saying a sign-out is
+// not a new person.
+step('CONTROL — resetOnboarding still clears the erasable onboarding flag',
+  fnBody(OB, 'export async function resetOnboarding()').includes('KEYS.intakeComplete'),
+  'if this stopped, the negative below would be about nothing');
+step('rule 1b reads a flag resetOnboarding does NOT clear',
+  /const EVER_COMPLETED = 'onboarding\.everCompleted';/.test(OB)
+  && !fnBody(OB, 'export async function resetOnboarding()').includes('EVER_COMPLETED'),
+  'the durable flag is missing, or the reset erases it — rule 1b is then inert on sign-out and on the Reset long-press');
+step('...and markIntakeComplete writes BOTH, so the durable one is ever set',
+  /markIntakeComplete\s*=\s*\(\)\s*=>[\s\S]{0,160}EVER_COMPLETED/.test(OB),
+  'nothing writes the durable flag, so it is false for everybody');
+step('...and the reader accepts EITHER, which is what spares the installed base',
+  /ever === '1' \|\| intake === '1'/.test(OBRAW),
+  'devices that onboarded before the durable flag existed carry only intakeComplete');
+step('...and account deletion clears the durable flag too',
+  /'onboarding\.everCompleted'/.test(CLEAN),
+  'a deleted account must leave a device that looks genuinely new');
+step('...and the push prompt key that gates the prompt is cleared with its partner',
+  /'push\.inboxPromptSeen'/.test(CLEAN),
+  'app/messages.tsx needs BOTH unset to offer the prompt, so clearing push.optedIn alone restores nothing');
+
 step('resetOnboarding does NOT clear the door flag — a sign-out is not a new person',
   !fnBody(OB, 'export async function resetOnboarding()').includes('MEMBERSHIP_DOOR_SHOWN'),
   'clearing it here re-doors anyone who signs out and back in, or who long-presses a row labelled Reset onboarding');
-const CLEAN = CODE.get('utils/localCleanup.ts');
 step('...but ACCOUNT DELETION does, because that really is a new person',
   /'membership\.doorShown'/.test(CLEAN),
   'the account is gone; a flag saying this device has already been shown the price must not outlive it');
@@ -669,7 +720,18 @@ console.log('\n=== 10b. the four ways an existing user reached the door ===');
 // Every one of these was live on 2026-09-18. The first three are re-entries
 // into onboarding by somebody who finished it months ago; the fourth is the
 // verdict from whoever used the device before.
-const DOORSRC = read('services/membershipDoor.ts');
+// COMMENT-STRIPPED, because these five assertions are regexes over source and
+// every one of them matched inside a COMMENT just as happily as inside code.
+// Commenting the whole arm mechanism out left the suite green — the assertions
+// were checking that the file still DESCRIBED the mechanism, not that it had
+// one. CODE is the stripped map built above; PW_CODE is the paywall's.
+const DOORSRC = CODE.get('services/membershipDoor.ts');
+const PW_CODE = CODE.get('app/paywall.tsx');
+step('CONTROL — the stripped sources are non-empty and really lost their comments',
+  DOORSRC.length > 400 && PW_CODE.length > 400
+  && DOORSRC.length < read('services/membershipDoor.ts').length
+  && PW_CODE.length < read('app/paywall.tsx').length,
+  'stripping produced nothing, so every assertion below would pass vacuously');
 step('RULE 1b EXISTS — the door asks whether this device has onboarded before',
   /if \(i\.alreadyOnboarded === true\) return \{ show: false, reason: 'already-onboarded' \};/.test(DEC),
   'control flow was the only guard, and three shipped paths walk straight through it');
@@ -678,7 +740,7 @@ step('...and it is wired to the real reader, at PRIME time',
   && /export async function hasCompletedIntakeBefore\(\)/.test(OBRAW),
   'both terminal exits call markIntakeComplete() before doorForExit(), so an exit-time read would be true for everyone');
 step('...and its reader answers TRUE when it cannot tell',
-  /export async function hasCompletedIntakeBefore\(\): Promise<boolean> \{[\s\S]{0,160}catch \{ return true; \}/.test(OBRAW),
+  /export async function hasCompletedIntakeBefore\(\): Promise<boolean> \{[\s\S]{0,900}catch \{ return true; \}/.test(OBRAW),
   'unknown must not put a price in front of somebody who has used the app for a year');
 step('THE CACHE IS NO LONGER PROCESS-LIFETIME — primeDoor starts a fresh resolve',
   /export function primeDoor\(\): void \{\s*_inFlight = startResolve\(\);\s*\}/.test(DOORSRC),
@@ -690,14 +752,14 @@ step('...while the exit safety net still does NOT re-prime over a live one',
   /if \(!_inFlight\) _inFlight = startResolve\(\);/.test(DOORSRC),
   're-priming here would throw away the head start the mount bought and cost the full patience wait');
 step('DOOR MODE IS NOT A URL CLAIM — the paywall needs an in-memory arm too',
-  /const isDoor = firstParam\(params\.door\) === '1' && doorArmedAtMount\.current === true;/.test(read('app/paywall.tsx')),
+  /const isDoor = firstParam\(params\.door\) === '1' && doorArmedAtMount\.current === true;/.test(PW_CODE),
   'innermap://paywall?door=1 put any user on the one-time screen, where Not now REPLACES the stack instead of popping it');
 step('...and only a decision that actually opened the door can set it',
   /if \(outcome\.show\) _doorArmed = true;/.test(DOORSRC)
   && /let _doorArmed = false;/.test(DOORSRC),
   'a cold start from a link begins with it false');
 step('...and the screen drops it when the person leaves',
-  /useEffect\(\(\) => disarmDoorMode, \[\]\);/.test(read('app/paywall.tsx')),
+  /useEffect\(\(\) => disarmDoorMode, \[\]\);/.test(PW_CODE),
   'the arm covers one transit, so a later deep link finds it cold');
 
 console.log('\n=== 11. the suite knows about both new scripts ===');

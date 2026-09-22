@@ -201,7 +201,25 @@ export async function isTermsSyncPending(): Promise<boolean> {
   try { return (await AsyncStorage.getItem(TERMS_SYNC_PENDING)) === '1'; }
   catch { return false; }
 }
-export const markIntakeComplete     = () => setBool(KEYS.intakeComplete, true);
+// EVER_COMPLETED — A SECOND FLAG, BECAUSE THE FIRST ONE IS ERASABLE AND RULE
+// 1b DEPENDS ON IT (2026-09-22, found by an adversarial pass).
+//
+// Rule 1b in services/membershipDecision.ts asks "has this device finished
+// onboarding before?" and it was reading KEYS.intakeComplete — which
+// resetOnboarding() DELETES, four lines apart from the note explaining that a
+// sign-out is not a new person. So on exactly the two paths rule 1b exists to
+// defend (sign out, and the shipped "Reset onboarding" long-press) the rule
+// was inert: intakeComplete gone, rule never fires, and the only thing left
+// standing between the installed base and the paid door was
+// membership.doorShown — which is false for everyone who has never been shown
+// it, i.e. the whole installed base.
+//
+// This flag records the same fact and is NOT cleared by resetOnboarding. Only
+// account deletion clears it (utils/localCleanup.ts), on the same reasoning as
+// the door flag: the account is gone and the device really is starting over.
+const EVER_COMPLETED = 'onboarding.everCompleted';
+export const markIntakeComplete     = () =>
+  Promise.all([setBool(KEYS.intakeComplete, true), setBool(EVER_COMPLETED, true)]).then(() => {});
 export const markPrivacyNoticeSeen  = () => setBool(KEYS.privacyNoticeSeen, true);
 
 // ---- the membership door (2026-09-15) --------------------------------------
@@ -252,8 +270,18 @@ export async function hasMembershipDoorBeenShown(): Promise<boolean> {
  *  person — and a STALL lands the same way, because the only caller caps this
  *  read and its cap path also shuts the door. */
 export async function hasCompletedIntakeBefore(): Promise<boolean> {
-  try { return (await AsyncStorage.getItem(KEYS.intakeComplete)) === '1'; }
-  catch { return true; }
+  try {
+    // EITHER key counts, and the fallback is what covers the installed base.
+    // Every device that finished onboarding before EVER_COMPLETED existed has
+    // only intakeComplete, so reading the new flag alone would have doored
+    // precisely the people this rule is for. After a reset the new flag is the
+    // one still standing, which is the whole point of having two.
+    const [ever, intake] = await Promise.all([
+      AsyncStorage.getItem(EVER_COMPLETED),
+      AsyncStorage.getItem(KEYS.intakeComplete),
+    ]);
+    return ever === '1' || intake === '1';
+  } catch { return true; }
 }
 
 // ---- 18+ age gate (2026-08) -------------------------------------------------
@@ -461,6 +489,12 @@ export async function resetOnboarding(): Promise<void> {
     // (utils/localCleanup.ts). That is a different act: the account is gone,
     // the device is genuinely starting over as somebody new, and the flag would
     // otherwise outlive every other trace of the person who set it.
+    //
+    // EVER_COMPLETED IS NOT HERE EITHER, and for the same reason. It is read by
+    // the door's rule 1b; clearing it here is what made that rule inert on this
+    // exact path. KEYS.intakeComplete below IS cleared, because re-running the
+    // flow is what this helper is for — the two flags exist so that those two
+    // facts can stop being the same fact.
     // Read-aloud, so a reset actually resets. Not an onboarding flag, but
     // this helper is what "start again as a new person" means on a device
     // that is not being wiped, and a reset that leaves the speaker armed
