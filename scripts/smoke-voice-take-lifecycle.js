@@ -472,8 +472,23 @@ const APPROVED_WRITERS = {
 }
 
 // ---- B.6 THE ENTRY IS NOT AN EXIT -----------------------------------------
-step('the start SUCCESS path does NOT call resetTake (it would clear the take it just claimed)',
-  !/clearTakeSignals\(\)[\s\S]{0,400}?resetTake\(\)[\s\S]{0,200}?return true;/.test(fnBody(chat, 'startRecording')?.body || ''));
+// A BOUNDED WINDOW CANNOT HOLD THIS. stripComments blanks comments to spaces
+// and preserves every byte offset, so ~1,400 characters of blanked prose sit
+// between the ENTRY's clearTakeSignals() and the success `return true;` —
+// further than the {0,400} the old negative regex allowed, which made it
+// un-matchable and the step green even with resetTake() spliced in one line
+// above `return true`. Scan the actual span instead.
+{
+  const sr = fnBody(chat, 'startRecording')?.body || '';
+  const entryAt = sr.indexOf('clearTakeSignals()');
+  const successAt = entryAt > -1 ? sr.indexOf('return true;', entryAt) : -1;
+  const span = entryAt > -1 && successAt > -1 ? sr.slice(entryAt, successAt) : '';
+  step('the start SUCCESS path does NOT call resetTake (it would clear the take it just claimed)',
+    entryAt > -1 && successAt > -1 && !/resetTake\(\)/.test(span),
+    entryAt > -1 && successAt > -1
+      ? 'a resetTake() between the ENTRY and `return true` clears the take it just claimed'
+      : 'could not locate the ENTRY / success return in startRecording');
+}
 
 step('item 2 is self-contained — resetTake touches no recorder API and no watch symbol',
   !!resetTake && !/recorder\.|useRecorderWatch|onEncodeError/.test(resetTake.body));
@@ -514,8 +529,19 @@ if (release) {
   step('the catch is not silent — it logs, with the call site',
     !!cat && /console\.(log|warn)/.test(cat[2]) && /\$\{where\}/.test(release.body),
     'an empty catch here would be the same swallow that hid the original bug');
+  // THE CALL SITES, not a regex run against a hand-typed copy of a call.
+  // Testing /releaseAbandonedRecorder\(\s*where/ against the literal string
+  // `releaseAbandonedRecorder(where` is true by construction and says nothing
+  // about the shipped file: every call site could pass '' and the log would
+  // still name no abort path at all.
+  const releaseCalls = [...chat.matchAll(/releaseAbandonedRecorder\(\s*'([^']*)'\s*\)/g)];
   step('the release names WHERE it was called from (so the log identifies the abort path)',
-    /releaseAbandonedRecorder\(\s*where/.test(`releaseAbandonedRecorder(where`) && /where:\s*string/.test(chat.slice(release.start - 120, release.start)));
+    /where:\s*string/.test(chat.slice(release.start - 120, release.start))
+      && releaseCalls.length > 0
+      && releaseCalls.every((m) => m[1].trim().length > 0),
+    releaseCalls.length
+      ? `${releaseCalls.length} call site(s): ${releaseCalls.map((m) => JSON.stringify(m[1])).join(', ')}`
+      : 'no string-literal call sites found');
 }
 
 // ---- C.1 EVERY POST-PREPARE ABORT RELEASES — DERIVED ----------------------

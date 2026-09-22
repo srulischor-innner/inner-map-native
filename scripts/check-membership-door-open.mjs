@@ -114,7 +114,7 @@ ok('...and the key VALUE is never interpolated into a string',
   !/\$\{\s*(apiKey|keyForPlatform)\s*\}/.test(PUR),
   'the shape of the key is loggable; the key is not');
 ok('...never handed straight to a logger',
-  !/console\.[a-z]+\(\s*(apiKey|keyForPlatform)\b/.test(PUR));
+  !/console\.[a-z]+\([^;]{0,400}\b(apiKey|keyForPlatform)\b(?!\s*\?)/.test(PUR));
 ok('...and never printed in part, which is the same leak more slowly',
   !/\$\{\s*(apiKey|keyForPlatform)\s*\.\s*(slice|substring|substr|charAt|at)\b/.test(PUR));
 

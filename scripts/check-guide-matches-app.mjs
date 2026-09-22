@@ -545,7 +545,7 @@ if (barrenKinds.length) {
   for (const k of barrenKinds) {
     const label = k === 'self-like' ? youLabel : k;
     ok(`the Map card marks "${label}" as the folder that carries none of that furniture`,
-      has(MAP_CARD, label) && near(MAP_CARD, label, 'except'),
+      has(MAP_CARD, label) && near(MAP_CARD, label, 'except') && near(MAP_CARD, label, `no ${goDeeper}`),
       `${k} renders none of [${FURNITURE.join(' ')}] — an unqualified account of a folder is false there`);
   }
 } else {

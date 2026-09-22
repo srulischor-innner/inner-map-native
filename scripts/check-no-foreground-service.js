@@ -70,14 +70,25 @@ ok('no source file turns background playback on', backgroundOn.length === 0,
 // The positive half: the call sites that configure the session must still be
 // turning it OFF explicitly. "Nobody sets it to true" is also satisfied by
 // nobody setting it at all, and the library's default is not ours to rely on.
-const CONFIGURERS = ['utils/ttsStream.ts'];
-for (const rel of CONFIGURERS) {
-  const p = path.join(ROOT, rel);
-  const src = fs.existsSync(p) ? stripComments(fs.readFileSync(p, 'utf8')) : '';
-  ok(`${rel} still sets shouldPlayInBackground: false explicitly`,
-    /shouldPlayInBackground\s*:\s*false/.test(src),
-    src ? 'the explicit false is gone — the default is not ours to rely on' : 'file missing');
+// DERIVED FROM THE SWEEP, not hand-typed. The list used to be
+// ['utils/ttsStream.ts'] alone while seven of the ten call sites live in four
+// other files, so the explicit false could be dropped everywhere except
+// ttsStream.ts and this stayed green — which is exactly the "nobody sets it at
+// all" state the paragraph above rejects.
+const configurers = [];
+const silent = [];
+for (const f of files) {
+  const fsrc = stripComments(fs.readFileSync(f, 'utf8'));
+  if (!/setAudioModeAsync\s*\(\s*\{/.test(fsrc)) continue;
+  const rel = path.relative(ROOT, f);
+  configurers.push(rel);
+  if (!/shouldPlayInBackground\s*:\s*false/.test(fsrc)) silent.push(rel);
 }
+ok('the audio-session sweep found configurers at all', configurers.length >= 4,
+  `found ${configurers.length}`);
+ok('every file that configures an audio session sets shouldPlayInBackground: false explicitly',
+  silent.length === 0,
+  silent.join('\n         ') + '\n         the default is not ours to rely on');
 
 // And the plugin has to still be registered, or the permissions come back with
 // nothing saying so.

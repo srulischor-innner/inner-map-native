@@ -49,8 +49,15 @@ if (mc) {
 }
 
 // 4. the blank-screen backstop still exists
-check(/BACKSTOP seeded the transcript/.test(src),
-  'the blank-screen backstop is gone — if boot and resume both fail to seed, the user gets an empty chat with no way back');
+{
+  const bsAt = src.indexOf('// BLANK-SCREEN BACKSTOP');
+  const bsEnd = bsAt > -1 ? src.indexOf('}, [firstSessionPending, messages.length]);', bsAt) : -1;
+  const bs = bsAt > -1 && bsEnd > -1 ? src.slice(bsAt, bsEnd) : '';
+  check(/BACKSTOP seeded the transcript/.test(bs)
+    && /if \(messages\.length > 0\) return;/.test(bs)
+    && /setMessages\(\(prev\) => \[\.\.\.prev, \{ id, role: 'assistant', text: opener \}\]\)/.test(bs),
+    'the blank-screen backstop is gone — if boot and resume both fail to seed, the user gets an empty chat with no way back');
+}
 
 // 5. THE MODE CONTROL IS LIVE IN THE FIRST SESSION TOO (reversed 2026-09-10),
 // and it still cannot cost anyone their conversation.

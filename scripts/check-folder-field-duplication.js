@@ -64,7 +64,7 @@ for (const f of FOLDERS) {
   }
 
   // Every readField inside the body must come from the record too.
-  const literalKeys = [...body.matchAll(/readField\((?:part|row),\s*'([^']+)'\)/g)].map((m) => m[1]);
+  const literalKeys = [...body.matchAll(/readField\((?:part|row),\s*["'`]([^"'`]+)["'`]\)/g)].map((m) => m[1]);
   for (const k of literalKeys) {
     fail(`${f.name}: readField(..., '${k}') is a literal — use ${f.record}.<slot>.key`);
   }

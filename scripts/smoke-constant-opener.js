@@ -456,6 +456,22 @@ if (bootEffect) {
     deriv({ completedAt: null, ok: false }) === true,
     'placeholder → isFirstSession true → ORIENTATION_MESSAGE');
 
+  // 8.5 replays a HAND-TYPED copy of the derivation, so it stays green no
+  // matter what api.ts actually returns. The placeholder is the other half of
+  // the claim, and it lives one file over: every failure shape of
+  // getFirstSessionStatus must answer completedAt: null, or a genuinely new
+  // user on one flaky request is handed STANDARD_OPENER and never sees the
+  // orientation — the one thing this step says he cannot be denied.
+  const statusMethodSrc = (() => {
+    const a = apiSrc.indexOf('async getFirstSessionStatus()');
+    const b = a === -1 ? -1 : apiSrc.indexOf('\n  },', a);
+    return a === -1 || b === -1 ? null : apiSrc.slice(a, b);
+  })();
+  const failureReturns = statusMethodSrc ? (statusMethodSrc.match(/return \{[^}]*ok: false[^}]*\}/g) || []) : [];
+  step('8.5a', 'every FAILURE shape of getFirstSessionStatus answers completedAt: null',
+    failureReturns.length >= 3 && failureReturns.every((r) => /completedAt: null/.test(r)),
+    failureReturns.length ? failureReturns.join(' | ') : 'getFirstSessionStatus not located in api.ts');
+
   // The publish must sit immediately after the try/catch with nothing that can
   // throw in between: it is the only thing standing between a mode toggle and
   // a permanently empty Explore thread (the seed effect's sole remaining

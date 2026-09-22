@@ -556,8 +556,13 @@ const WHY =
         missing.length === 0, `missing from derivation: ${missing.join(', ')}`);
 
       // ---- the carve-out exists and is read by BOTH budget gates ----
-      const chatCarve = /if \(!_budget\.allow && !crisisTurn && !pastSelfClass\)/.test(srv);
-      const guideCarve = /if \(!_budget\.allow && !guideCrisisTurn && !guidePastSelfClass\)/.test(srv);
+      // CODE ONLY. A `// was: if (!_budget.allow && !crisisTurn ...)` comment
+      // left behind by a revert satisfies a raw match, and the mutation guard
+      // below cannot tell the difference -- String.replace strips a comment
+      // occurrence just as happily as a real one.
+      const srvCode = srv.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+      const chatCarve = /if \(!_budget\.allow && !crisisTurn && !pastSelfClass\)/.test(srvCode);
+      const guideCarve = /if \(!_budget\.allow && !guideCrisisTurn && !guidePastSelfClass\)/.test(srvCode);
       step(19, '/api/chat budget gate is carved out for crisis turns', chatCarve,
         'expected `if (!_budget.allow && !crisisTurn && !pastSelfClass)` in server.js');
       step(20, '/api/guide-chat budget gate is carved out for crisis turns', guideCarve,
@@ -573,7 +578,7 @@ const WHY =
       // ---- MUTATION GUARD: remove the carve-out, the assertions must fail ----
       // Without this, steps 19-21 could pass against a file that merely
       // MENTIONS the identifiers in a comment.
-      const mutated = srv
+      const mutated = srvCode
         .replace('if (!_budget.allow && !crisisTurn && !pastSelfClass)', 'if (!_budget.allow)')
         .replace('if (!_budget.allow && !guideCrisisTurn && !guidePastSelfClass)', 'if (!_budget.allow)');
       const mutantCaught =

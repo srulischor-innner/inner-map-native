@@ -243,9 +243,35 @@ for (const key of Object.keys(REVIEWED)) {
   }
 }
 
+// THE VERDICTS ARE PINNED, NOT TRUSTED. Three entries above say FIXED and
+// name the remedy, and nothing checked the remedy was still there. Removing
+// alignSelf:'stretch' from GuideSlide.tsx and the serifInkSlack padding from
+// IntegrationPanel.tsx left this check printing PASS with the ORIGINAL
+// reported bug — "Self" rendering as "Sel" on the Map tab — back on screen.
+// Proved by mutation 2026-09-22. A review note is not a guard.
+const FIX_PINS = [
+  ["utils/guideContent.ts|Self", "components/guide/GuideSlide.tsx",
+    /alignSelf: 'stretch',/, "alignSelf: 'stretch' on the title style"],
+  ["components/map/IntegrationPanel.tsx|Self", "components/map/IntegrationPanel.tsx",
+    /paddingRight: serifInkSlack\(26, 0\.3\),/, "paddingRight: serifInkSlack(26, 0.3)"],
+  ["components/map/PartFolderModal.tsx|Self", "components/map/PartFolderModal.tsx",
+    /paddingRight: serifInkSlack\(26, 0\.3\),/, "paddingRight: serifInkSlack(26, 0.3)"],
+];
+let reverted = 0;
+for (const [key, file, re, what] of FIX_PINS) {
+  if (!/^FIXED/.test(REVIEWED[key] || "")) continue;
+  let body = "";
+  try { body = fs.readFileSync(path.join(APP, file), "utf8"); } catch {}
+  if (re.test(body)) continue;
+  reverted++;
+  console.log(`\n  REVERTED ${key.replace("|", " -> ")}`);
+  console.log(`        REVIEWED calls this FIXED, but ${file} no longer has ${what}.`);
+  console.log(`        The clip is back. Restore the fix, or change the verdict here.`);
+}
+
 console.log(
-  unreviewed || missing
-    ? `\nFAIL — ${unreviewed} unreviewed, ${missing} stale.`
-    : `\nPASS — all ${found.size} at-risk strings are reviewed and accounted for.`,
+  unreviewed || missing || reverted
+    ? `\nFAIL — ${unreviewed} unreviewed, ${missing} stale, ${reverted} reverted.`
+    : `\nPASS — all ${found.size} at-risk strings are reviewed, fixed and accounted for.`,
 );
-process.exit(unreviewed || missing ? 1 : 0);
+process.exit(unreviewed || missing || reverted ? 1 : 0);

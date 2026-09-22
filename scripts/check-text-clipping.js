@@ -89,8 +89,15 @@ if (/numberOfLines/.test(rsrc)) readingProblems.push("ReadingModal truncates wit
 if (/width:\s*\d/.test(rsrc)) readingProblems.push("ReadingModal sets a numeric width");
 if (/flexDirection:\s*['"]row['"]/.test(rsrc)) {
   // the header bar is a legitimate row; only flag it if a Text style is in one
-  const rowIsBarOnly = /bar:\s*\{[^}]*flexDirection:\s*['"]row['"]/.test(rsrc);
-  if (!rowIsBarOnly) readingProblems.push("ReadingModal has a row container that is not the header bar");
+  // COUNT the row containers and require that EVERY one is the header bar.
+  // Asking only "is the bar a row?" is a whole-file substring test that
+  // excuses whatever else is a row beside it: this printed "clean" over a
+  // ReadingModal carrying a second, non-bar row container.
+  const rowCount = (rsrc.match(/flexDirection:\s*['"]row['"]/g) || []).length;
+  const barIsRow = /(?:^|\n)\s*bar:\s*\{[^}]*flexDirection:\s*['"]row['"]/.test(rsrc);
+  if (rowCount > 1 || !barIsRow) {
+    readingProblems.push(`ReadingModal has ${rowCount} row container(s); only the header bar may be one`);
+  }
 }
 console.log("\nTHE READING DOCUMENT ITSELF: " +
   (readingProblems.length ? "PROBLEMS\n   - " + readingProblems.join("\n   - ") : "clean — no truncation, no fixed width, only the header bar is a row"));

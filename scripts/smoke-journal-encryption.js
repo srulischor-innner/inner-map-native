@@ -21,60 +21,28 @@
 // The contract is small enough that drift would be caught in review.
 // ============================================================================
 
-const MIGRATION_FLAG = 'journalMigrationComplete';
-const FAIL_FLAG      = 'journalMigrationFailed';
-const ASYNC_KEY      = 'journal.entries';
-
-async function runMigrationWith(deps) {
-  try {
-    if (await deps.encGetFlag(MIGRATION_FLAG)) {
-      return { status: 'already-complete' };
-    }
-    const raw = await deps.asyncStorageGetItem(ASYNC_KEY);
-    if (raw == null) {
-      await deps.encSetFlag(MIGRATION_FLAG, true);
-      return { status: 'no-data-fresh-install' };
-    }
-    let parsed;
-    try { parsed = JSON.parse(raw); }
-    catch {
-      await deps.encSetFlag(FAIL_FLAG, true);
-      return { status: 'parse-failed' };
-    }
-    const entries = Array.isArray(parsed) ? parsed : [];
-    if (entries.length === 0) {
-      await deps.encSetFlag(MIGRATION_FLAG, true);
-      try { await deps.asyncStorageRemoveItem(ASYNC_KEY); } catch {}
-      return { status: 'no-data-empty-array' };
-    }
-    await deps.encBulkWrite(entries);
-    const written = await deps.encGetAllEntries();
-    if (!verify(entries, written)) {
-      await deps.encSetFlag(FAIL_FLAG, true);
-      return { status: 'verify-failed', source: entries.length, written: written.length };
-    }
-    await deps.encSetFlag(MIGRATION_FLAG, true);
-    try { await deps.asyncStorageRemoveItem(ASYNC_KEY); } catch {}
-    return { status: 'migrated', count: entries.length };
-  } catch (e) {
-    return { status: 'threw', message: e && e.message };
-  }
+// THE SHIPPED MODULE, NOT A COPY. services/journalMigration.ts keeps its
+// React-Native imports below the pure logic, so the region above them
+// transpiles and loads in plain Node — the same lift smoke-age-gate.js uses.
+const ts = require('typescript');
+const fsx = require('fs');
+const pathx = require('path');
+const TS_PATH = pathx.join(__dirname, '..', 'services', 'journalMigration.ts');
+const tsSrc = fsx.readFileSync(TS_PATH, 'utf8');
+const cut = tsSrc.indexOf('import AsyncStorage from');
+if (cut < 0) throw new Error('journalMigration.ts: RN import boundary not found — cannot lift the pure region');
+const pureTs = tsSrc.slice(0, cut) +
+  '\nmodule.exports = { runMigrationWith, verify, MIGRATION_FLAG, FAIL_FLAG, ASYNC_STORAGE_KEY };\n';
+const __mod = { exports: {} };
+new Function('module', 'exports', 'require',
+  ts.transpileModule(pureTs, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText
+)(__mod, __mod.exports, require);
+const { runMigrationWith, verify, MIGRATION_FLAG, FAIL_FLAG } = __mod.exports;
+const ASYNC_KEY = __mod.exports.ASYNC_STORAGE_KEY;
+if (typeof runMigrationWith !== 'function' || typeof verify !== 'function' || !MIGRATION_FLAG || !FAIL_FLAG || !ASYNC_KEY) {
+  throw new Error('journalMigration.ts did not yield the migration contract');
 }
 
-function verify(source, written) {
-  if (source.length !== written.length) return false;
-  const byId = new Map();
-  for (const w of written) {
-    if (w && typeof w.id === 'string') byId.set(w.id, w);
-  }
-  for (const e of source) {
-    if (!e || typeof e.id !== 'string') return false;
-    const w = byId.get(e.id);
-    if (!w) return false;
-    if (String(w.content || '') !== String(e.content || '')) return false;
-  }
-  return true;
-}
 
 // ============================================================================
 // Test doubles — in-memory stand-ins for the real stores.

@@ -972,8 +972,8 @@ step('COMMENT 1 (services/onboarding.ts) — no longer claims a declined minor p
 // document something that stopped being true. What must still be documented is
 // the accounting itself: what a declined device does and does not leave.
 step('COMMENT 1 (services/onboarding.ts) — the local block flag is documented',
-  /ageGateBlocked/.test(servicesOnboardingSrc),
-  'the one thing a declined device DOES persist, and it is local');
+  /^\s*\/\/.*ageGateBlocked/m.test(servicesOnboardingSrc),
+  'the one thing a declined device DOES persist, and it is local — the anchor must be PROSE, not the live identifier, which occurs five times in the code below');
 step('COMMENT 1 (services/onboarding.ts) — names the auth_identities row too',
   /auth_identities/.test(servicesOnboardingSrc));
 
@@ -983,8 +983,8 @@ step('COMMENT 1 (services/onboarding.ts) — names the auth_identities row too',
   step('COMMENT 2 (block-screen header) — no longer claims "Nothing about this person is stored, sent, or counted"',
     !!m && !/Nothing about this person is stored, sent, or counted/.test(m[0]));
   step('COMMENT 2 (block-screen header) — states that the gate precedes terms',
-  /before token bootstrap/i.test(onboardingSrc) || /age gate[\s\S]{0,80}before/i.test(onboardingSrc),
-  'the header must say the block happens upstream of every server write');
+    !!m && (/before token bootstrap/i.test(m[0]) || /age gate[\s\S]{0,80}before/i.test(m[0])),
+    'the header must say the block happens upstream of every server write');
   step('COMMENT 2 (block-screen header) — still states the four rulings it exists to hold',
     !!m && /NO CRISIS RESOURCES/.test(m[0]) && /NO SHAME/.test(m[0]) &&
     /NO CLEVERNESS ABOUT RE-ENTRY/.test(m[0]),

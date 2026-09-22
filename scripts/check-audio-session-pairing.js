@@ -105,7 +105,7 @@ const RULES = [
     // wording. `.playManaged(`, `.playbackRate(` etc. do not match — `play`
     // must be the whole member name.
     id: 'bare-play',
-    re: /[\w$\])]\s*\.\s*play\s*\(/,
+    re: /[\w$\])]\s*\??\s*\.\s*play\s*\(/,
     why: 'calls player.play() directly. play() is Function("play") { try activateSession() } — ' +
       'the exact line that stops the user’s music. Route it through playManaged() so the ' +
       'activation takes a lease that gives the session back',

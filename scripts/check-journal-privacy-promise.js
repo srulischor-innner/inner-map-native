@@ -110,8 +110,13 @@ for (const [name, src] of SURFACES.concat([['Settings row', prose(settings)]])) 
 // ---- (b) EVERY SURFACE NAMES THE CONTROL THAT DOES EXIST ------------------
 // The obligation the taken branch carries. "Settings" by name, because a
 // person who cannot find the switch has not been told where it is.
+// WHOLE-FILE /Settings/ IS NOT THE CLAIM. onboarding.tsx and the privacy policy
+// both name Settings for account deletion, data export and notifications, so a
+// bare match stays green with every mention of the JOURNAL switch removed.
+// Require the switch and the place in the SAME sentence, capital S.
+const NAMES_SETTINGS = /[^.]*\b(?:shar\w+|journal)\b[^.]*\bSettings\b|[^.]*\bSettings\b[^.]*\b(?:shar\w+|journal)\b/;
 for (const [name, src] of SURFACES) {
-  check(`${name} names Settings as where the control is`, /Settings/.test(src),
+  check(`${name} names Settings as where the control is`, NAMES_SETTINGS.test(src),
     'no longer promises per-entry, but does not say where the real control lives — vague, not true');
 }
 

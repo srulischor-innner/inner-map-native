@@ -45,13 +45,30 @@ for (const { name, line } of lines) {
 console.log('');
 
 // 1. SPECIFICITY. Two different maps must not get the same sentence — that is
-//    exactly the failure this rewrite was ordered to fix.
-const seen = new Map();
-for (const { name, line } of lines) {
-  if (seen.has(line)) failures.push(`"${name}" and "${seen.get(line)}" produce IDENTICAL copy`);
-  else seen.set(line, name);
+//    exactly the failure this rewrite was ordered to fix. The detector lives in
+//    a function so the negative control at the bottom can run THIS code rather
+//    than a copy of it.
+function duplicateCopyFailures(rows) {
+  const out = [];
+  const seen = new Map();
+  for (const { name, line } of rows) {
+    if (seen.has(line)) out.push(`"${name}" and "${seen.get(line)}" produce IDENTICAL copy`);
+    else seen.set(line, name);
+  }
+  return out;
 }
-ok('every state gets its own sentence', seen.size === STATES.length);
+const dupFailures = duplicateCopyFailures(lines);
+failures.push(...dupFailures);
+ok('every state gets its own sentence', dupFailures.length === 0);
+
+// NOTE: the NEGATIVE CONTROL block at the bottom of this file must be replaced
+// in the same commit, with:
+//
+// const controlFailures = duplicateCopyFailures(
+//   STATES.map((s) => ({ name: s.name, line: 'A reading needs the wound, both sides, and your everyday parts.' })),
+// );
+// ok('NEGATIVE CONTROL: identical copy across states would be caught',
+//   controlFailures.length === STATES.length - 1);
 
 // 2. NAMES WHAT IS THERE AND WHAT IS NOT, by the words printed on the map.
 const byName = Object.fromEntries(lines.map((l) => [l.name, l.line]));

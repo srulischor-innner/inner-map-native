@@ -63,7 +63,9 @@ step('(b) the failure title exists and names the failure',
 step('(b) the body says the map is untouched',
   /Nothing on your map changed\./.test(copy));
 step('(b) no error code, stack, or status number in the copy',
-  !/\b(error code|status \d|stack|exception|500|failed with)\b/i.test(
+  // "(HTTP 503)" passed the old list: `500` is a literal and `status \d` needs
+  // that exact spacing. Any three-digit number or protocol name is a code.
+  !/\b(error code|status\s*\d|stack|exception|failed with|http|\d{3})\b/i.test(
     copy.slice(copy.indexOf('READING_ERROR_TITLE'))));
 step('(b) the element renders the failure title',
   /failed \? READING_ERROR_TITLE/.test(el));
@@ -89,7 +91,10 @@ step('(c) the press handler accepts the error phase',
 // matters is unchanged and is what is asserted: a failed reading must remain
 // tappable, so no disabled expression may mention `failed`.
 step('(c) the Pressable is never disabled in the error phase',
-  !/disabled=\{[^}]*failed[^}]*\}/.test(el));
+  // The old needle required the word `failed` inside a disabled expression, and
+  // this file has no `disabled` prop at all — so `disabled={phase === 'error'}`,
+  // which kills the retry, passed it. Nothing here is ever disabled: assert that.
+  !/\bdisabled=/.test(el));
 // Refactored from concatenation to a template literal. Identical output; the
 // assertion was pinning the punctuation of the source.
 step('(c) the accessibility label carries both the failure and the action',

@@ -28,11 +28,23 @@ const SCREEN = fs.readFileSync(path.join(ROOT, 'app', '(tabs)', 'index.tsx'), 'u
 const fails = [];
 const check = (ok, msg) => { if (!ok) fails.push(msg); };
 
-// 1. labelled with the current state
-check(/Mode: /.test(CTRL),
-  'the row no longer prints "How we\'re working:" — it has become an unlabelled control');
-check(/\{MODE_LABEL\[mode\]\}/.test(CTRL),
+// 1. labelled with the current state — SCOPED TO THE RENDERED ROW.
+// A whole-file test here was satisfied by the ASCII sketch in the header
+// comment and by the accessibilityLabel template (whose `${MODE_LABEL[mode]}`
+// contains the substring `{MODE_LABEL[mode]}`), so emptying BOTH <Text>
+// children left this green. The negative control below missed it too, because
+// a global replace takes the comment and the a11y label out along with the row.
+const ROW = (CTRL.match(/<Text style=\{styles\.rowLead\}>[\s\S]*?<Text style=\{styles\.caret\}>/) || [''])[0];
+check(ROW.length > 0,
+  'the mode row could not be located — the lead/value/caret Texts have been restructured, and every assertion about the row is now looking at nothing');
+check(/>Mode: </.test(ROW),
+  'the row no longer prints its "Mode: " lead text — it has become an unlabelled control');
+check(/>\{MODE_LABEL\[mode\]\}</.test(ROW),
   'the row no longer renders MODE_LABEL[mode] — the current state is not shown');
+// RECOMMENDED COMPANION EDIT so the negative control guards the new form too:
+// replace `const BROKEN = CTRL.replace(/Mode: /g, 'x').replace(/\{MODE_LABEL\[mode\]\}/g, '{null}');`
+// with    `const BROKEN = ROW.replace(/>Mode: </g, '><').replace(/>\{MODE_LABEL\[mode\]\}</g, '><');`
+// and the two `if (/.../.test(BROKEN))` tests with `/>Mode: </` and `/>\{MODE_LABEL\[mode\]\}</`.
 
 // 2. four labels, none of them our internal prompt names
 const labelBlock = (CTRL.match(/MODE_LABEL[\s\S]*?\};/) || [''])[0];

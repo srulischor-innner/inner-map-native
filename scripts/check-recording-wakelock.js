@@ -74,8 +74,16 @@ const SANCTIONED_SETTERS = new Map([
 // function and must not be mistaken for the enclosing scope; a column-0
 // `const RECORD_MODE = { allowsRecording: true }` must not be swallowed by the
 // function above it and inherit that function's exemption.
+// 2026-09-22: `class`, `export class` and `export default function` were not
+// recognised here, so a set inside one INHERITED the name of the declaration
+// above it — and in ttsStream.ts that is ensureRecordingMode, a sanctioned
+// setter. Proved: an `export class AudioModeHelper` with a bare
+// allowsRecording:true, planted in ttsStream.ts, was reported as clean while
+// CONTROL 2 still printed ✓ (the control plants an `async function`, a form
+// the resolver DOES see, so it could never expose this).
 const TOP_LEVEL_DECL = [
-  /(?:^|[\r\n])(?:export[ \t]+)?(?:async[ \t]+)?function[ \t]+(\w+)/g,
+  /(?:^|[\r\n])(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?function[ \t]*\*?[ \t]*(\w+)/g,
+  /(?:^|[\r\n])(?:export[ \t]+)?(?:abstract[ \t]+)?class[ \t]+(\w+)/g,
   /(?:^|[\r\n])(?:export[ \t]+)?(?:const|let|var)[ \t]+(\w+)/g,
 ];
 

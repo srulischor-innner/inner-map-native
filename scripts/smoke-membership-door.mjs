@@ -480,7 +480,7 @@ step('the prime is guarded by the age read, in the same block, above it',
 step('CONTROL — onboarding still runs the phase machine it is built around',
   /setPhase\(/.test(ONB), 'if this is gone the negative below is negative about the wrong file');
 step('nothing inside onboarding can change identity mid-flow',
-  !/sign-in|signIn\(/.test(ONB),
+  !/sign-?in\(|authSignIn|setUserId\(|clearUserId\(/i.test(ONB),
   'the door answer is computed once, at mount; a sign-in inside this flow would bind it to the wrong person');
 
 console.log('\n=== 7. the door screen, and every way off it ===');

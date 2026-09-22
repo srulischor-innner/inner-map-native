@@ -121,8 +121,13 @@ step('(e) the belief-establishment button is still "Establish your belief"',
 // 1.36x text scaling, inside iOS's normal (non-accessibility) range.
 step('(e2) the mic label names the state',
   /const SELF_LIKE_LABEL = 'LEADING';/.test(bar));
+// Every user-visible string in this file is a const interpolated as {CONST},
+// so an anchor that only sees text typed inline after a tag can never see one.
+// Scan the whole comment-stripped body instead, minus the stored-category
+// literal that the step below requires to survive. Identifiers (SELF_LIKE_*,
+// selfLikeEnabled) carry no hyphen, so they are not matched.
 step('(e2) no user-visible "Self-like" survives in the mic bar',
-  !/(cardTitle}>|Text>)[^<]*Self-like/i.test(bar) && !/'SELF-LIKE'/.test(bar),
+  !/self-like/i.test(barCode.replace(/'self-like'/g, '')),
   'the stored category may say self-like; nothing a person READS may');
 step('(e2) the pointer sends people to YOU on the map, not to a Self-like part',
   /Tap YOU on your map/.test(bar));
