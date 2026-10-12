@@ -47,6 +47,12 @@ const ASYNC_KEYS_TO_CLEAR = [
   'push.expoToken',
   'journal.entries',          // legacy AsyncStorage journal — PR 2a stranded it
   'relationships.tabIntroSeen',
+  // Sign-in collision breadcrumb (Oct 2026). services/user.ts stashes the id
+  // this device was overwritten away from, so a stranded account can still be
+  // named. Erasure outranks recovery: the server purges account_conflicts in
+  // the delete cascade, and leaving the device copy behind would make the
+  // policy's 'removes everything stored about you on your device' false.
+  'user.previousUserIds',
   'integration_view_seen',
   'second_layer_introduced',
   'circle_view_intro_seen',

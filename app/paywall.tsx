@@ -593,6 +593,11 @@ export default function PaywallScreen() {
               </>
             ) : null}
 
+            <Text style={styles.accountNote}>
+              Your account lives on this device unless you add an email — you can
+              do that any time in Settings.
+            </Text>
+
             <Pressable
               onPress={onPurchase}
               disabled={ctaDisabled}
@@ -740,6 +745,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 19,
     marginTop: spacing.sm,
+  },
+
+  // Deliberately NOT styles.disclosure: that block is the founder-locked,
+  // character-exact price copy, and this sentence must not read as part of it
+  // or be edited by anyone changing pricing wording.
+  accountNote: {
+    color: colors.creamDim,
+    fontFamily: fonts.sans,
+    fontSize: 12,
+    lineHeight: 19,
+    marginTop: spacing.md,
+    textAlign: 'center',
   },
 
   // --- Actions -------------------------------------------------------------

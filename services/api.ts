@@ -3467,10 +3467,18 @@ export const api = {
   },
 
   /** GET /api/auth/identities. Returns the identities currently
-   *  linked to the user. Empty array means the user is anonymous —
-   *  the chat tab boot uses this to decide whether to show the
-   *  migration modal. */
+   *  linked to the user.
+   *
+   *  THERE ARE THREE STATES, NOT TWO, and collapsing them is a bug this
+   *  signature exists to prevent. `ok: true` with an empty array means the
+   *  server answered and the user genuinely is anonymous. `ok: false` means
+   *  we could not find out — offline, 5xx, malformed body — and the caller
+   *  MUST NOT treat that as anonymity. It previously returned a bare
+   *  `{ identities: [] }` for all three, so Settings told a signed-in user
+   *  on a flaky connection that their data was at risk, and the grace nudge
+   *  fired at users who had already linked an account. */
   async authListIdentities(): Promise<{
+    ok: boolean;
     identities: Array<{
       id: string;
       provider: 'apple' | 'google' | 'email';
@@ -3484,10 +3492,11 @@ export const api = {
       const res = await apiFetch('/api/auth/identities', {
         label: 'auth-list-identities', method: 'GET', headers,
       });
-      if (!res.ok) return { identities: [] };
+      if (!res.ok) return { ok: false, identities: [] };
       const j: any = await res.json().catch(() => null);
-      if (!j || !Array.isArray(j.identities)) return { identities: [] };
+      if (!j || !Array.isArray(j.identities)) return { ok: false, identities: [] };
       return {
+        ok: true,
         identities: j.identities.map((r: any) => ({
           id: String(r.id),
           provider: r.provider,
@@ -3498,7 +3507,7 @@ export const api = {
       };
     } catch (e) {
       console.warn('[auth-list-identities] threw:', (e as Error)?.message);
-      return { identities: [] };
+      return { ok: false, identities: [] };
     }
   },
 

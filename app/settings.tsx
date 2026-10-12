@@ -893,12 +893,18 @@ function AccountSection() {
   const [loading, setLoading] = useState(true);
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [addOpen, setAddOpen] = useState(false);
+  // THREE STATES. `known` is false until the server has actually answered.
+  // Rendering the anonymous block on an unanswered probe told people who had
+  // linked an account that their data was at risk — a false alarm about
+  // exactly the thing this section exists to reassure them about.
+  const [known, setKnown] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const { identities } = await api.authListIdentities();
-      setIdentities(identities as Identity[]);
+      const { ok, identities } = await api.authListIdentities();
+      setKnown(ok);
+      if (ok) setIdentities(identities as Identity[]);
     } finally {
       setLoading(false);
     }
@@ -1015,7 +1021,17 @@ function AccountSection() {
   return (
     <>
       <Text style={[styles.sectionLabel, styles.sectionLabelTop]}>ACCOUNT</Text>
-      {identities.length === 0 ? (
+      {!known && !loading ? (
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Couldn't check your account.</Text>
+            <Text style={styles.rowSub}>
+              We couldn't reach the server just now, so we can't show whether a
+              sign-in option is linked. Pull down or reopen this screen to try again.
+            </Text>
+          </View>
+        </View>
+      ) : identities.length === 0 ? (
         <>
           <View style={styles.row}>
             <View style={{ flex: 1 }}>

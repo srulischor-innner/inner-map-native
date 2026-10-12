@@ -204,8 +204,11 @@ export async function shouldShowMigrationModal(): Promise<boolean> {
     // Fresh installs go through /sign-in instead — they'd have
     // hasSeenIntro=false at this point.
     if (!state.hasSeenIntro) return false;
-    const { identities } = await api.authListIdentities();
-    return identities.length === 0;
+    // ok === false means the probe could not reach a verdict. Not knowing is
+    // not the same as being anonymous, and nagging a linked user is the louder
+    // of the two mistakes, so an unresolved probe shows nothing.
+    const { ok, identities } = await api.authListIdentities();
+    return ok && identities.length === 0;
   } catch (e) {
     console.warn('[migration-modal] shouldShow probe threw:', (e as Error)?.message);
     return false;
@@ -235,8 +238,11 @@ export async function shouldShowGraceNudge(): Promise<boolean> {
         (Date.now() - lastShownAt) < GRACE_NUDGE_INTERVAL_DAYS * 24 * 60 * 60 * 1000) {
       return false;
     }
-    const { identities } = await api.authListIdentities();
-    return identities.length === 0;
+    // Same rule as above — and it matters more here, because the throttle is
+    // stamped at DECISION time, so a nudge fired on a false positive would
+    // also burn one of the four this user ever gets.
+    const { ok, identities } = await api.authListIdentities();
+    return ok && identities.length === 0;
   } catch (e) {
     console.warn('[grace-nudge] shouldShow probe threw:', (e as Error)?.message);
     return false;

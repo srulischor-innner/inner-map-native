@@ -182,6 +182,31 @@ export async function getUserId(): Promise<string> {
  *
  * Returns the id that ended up cached (= the input, after trim).
  */
+/** Ids this device has been overwritten away from, newest last.
+ *
+ *  AsyncStorage rather than SecureStore: these are not credentials, they grant
+ *  nothing on their own, and the whole point is that they survive — SecureStore
+ *  is the store that has been observed to stall and time out on this path.
+ *  Capped so a device that churns identities cannot grow this without bound. */
+const PREV_IDS_KEY = 'user.previousUserIds';
+const PREV_IDS_MAX = 10;
+
+export async function getPreviousUserIds(): Promise<string[]> {
+  try {
+    const raw = await AsyncStorage.getItem(PREV_IDS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+async function rememberPreviousUserId(previous: string): Promise<void> {
+  const list = await getPreviousUserIds();
+  if (list[list.length - 1] === previous) return;   // idempotent on a double sign-in
+  const next = [...list.filter((x) => x !== previous), previous].slice(-PREV_IDS_MAX);
+  await AsyncStorage.setItem(PREV_IDS_KEY, JSON.stringify(next));
+  console.warn(`[user] remembered previous identity ${previous.slice(0, 8)}… (${next.length} held)`);
+}
+
 export async function setUserId(id: string): Promise<string> {
   const trimmed = String(id || '').trim();
   if (!trimmed) throw new Error('setUserId: empty id');
@@ -195,6 +220,15 @@ export async function setUserId(id: string): Promise<string> {
   // the id is UNCHANGED (the common migration case: server returns the same
   // anonymous UUID) we leave tokens alone so a same-id re-sign-in doesn't
   // needlessly churn a still-valid pair before setTokens overwrites it.
+  // BREADCRUMB, AND IT RUNS BEFORE THE OVERWRITE. Everything below this line
+  // destroys the only reference to the previous identity: clearTokens drops the
+  // pair bound to it and writeBoth replaces it in both stores. If that id held
+  // a paid subscription — which happens when a returning sign-in resolves to a
+  // different account — nothing on the device could name it afterwards.
+  //
+  // Best-effort by construction: a failure here must never block a sign-in, so
+  // it is swallowed. It is a recovery aid, not a correctness dependency.
+  if (changed && _cached) { try { await rememberPreviousUserId(_cached); } catch {} }
   if (changed) await clearTokens();
   // Cache FIRST so any in-flight getUserId() picks up the override
   // immediately, even if the disk writes stall.
