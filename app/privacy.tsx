@@ -359,6 +359,12 @@ function useAccountExport() {
         dialogTitle: 'Save your Inner Map data',
         UTI: 'public.json',
       });
+      // The export is every word of this person's account in plaintext. It was
+      // written to the cache so the share sheet could hand it on, and nothing
+      // ever removed it — so it outlived the account it described. The share
+      // sheet has already copied whatever the user chose by the time this
+      // resolves, so deleting here costs them nothing.
+      await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
     } catch (e) {
       console.warn('[settings/export] threw:', (e as Error)?.message);
       Alert.alert("Couldn't export", (e as Error)?.message || 'Unknown error');

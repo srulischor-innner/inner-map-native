@@ -81,7 +81,14 @@ export default function DeleteAccountScreen() {
           dialogTitle: 'Save your Inner Map data',
           UTI: 'public.json',
         });
+        // Remove the plaintext copy once the share sheet has had it — see the
+        // same deletion in app/privacy.tsx. This path matters more: the next
+        // thing the person does on this screen is delete their account, and
+        // without this the export outlives it in the app's cache.
+        await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
       } else {
+        // Nothing to share with, so the file IS the deliverable — tell them
+        // where it is and leave it. Deleting here would hand them nothing.
         Alert.alert('Saved', `Export file at:\n${uri}`);
       }
     } catch (e) {

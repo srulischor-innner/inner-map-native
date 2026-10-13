@@ -46,7 +46,15 @@ const ASYNC_KEYS_TO_CLEAR = [
   'faceIdEnabled',
   'push.expoToken',
   'journal.entries',          // legacy AsyncStorage journal — PR 2a stranded it
+  // The key the app actually writes is '@inner_map/partner_tab_intro_seen_v1'
+  // (app/(tabs)/relationships.tsx:69). 'relationships.tabIntroSeen' was never
+  // written by anything, so this removeItem matched nothing and the flag
+  // survived account deletion — small in content, but it is one of the two
+  // reasons "removes everything stored about you on your device" was not
+  // literally true. Both keys are listed: the real one, and the legacy name in
+  // case an old build ever wrote it.
   'relationships.tabIntroSeen',
+  '@inner_map/partner_tab_intro_seen_v1',
   // Sign-in collision breadcrumb (Oct 2026). services/user.ts stashes the id
   // this device was overwritten away from, so a stranded account can still be
   // named. Erasure outranks recovery: the server purges account_conflicts in
