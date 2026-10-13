@@ -209,11 +209,12 @@ export default function PrivacyScreen() {
 
         <Text style={styles.h2}>Your journal</Text>
         <Text style={styles.paragraph}>
-          You control each entry. Shared entries help the AI understand you
+          One setting decides this, and you can change it any time in
+          Settings. While sharing is on, entries help the AI understand you
           and are stored on our servers; a shared entry may also be analyzed
           to suggest something for your map, which lands in your inbox for you
-          to approve — nothing is added automatically. Private entries stay
-          encrypted on your device, unreadable to us.
+          to approve — nothing is added automatically. While it is off,
+          entries stay encrypted on your device, unreadable to us.
         </Text>
 
         <Text style={styles.h2}>What we don't do</Text>
@@ -225,7 +226,7 @@ export default function PrivacyScreen() {
           training
         </Bullet>
 
-        <Text style={styles.h2}>Third parties we use</Text>
+        <Text style={styles.h2}>Third parties that see what you write</Text>
         <Bullet>Anthropic: for AI conversation</Bullet>
         <Bullet>
           OpenAI: for voice-note transcription, spoken audio, and the app's
@@ -240,6 +241,12 @@ export default function PrivacyScreen() {
           features and do not retain or train on them, per our API
           agreements. Each also has its own privacy policy that governs its
           handling of data passed to it.
+        </Text>
+        <Text style={styles.paragraph}>
+          Other companies help us run Inner Map without seeing what you
+          write — hosting, our website, subscriptions, sign-in emails,
+          notification delivery, crash reports and usage analytics. The full
+          list is in our Privacy Policy.
         </Text>
 
         <Text style={styles.h2}>Your rights</Text>
