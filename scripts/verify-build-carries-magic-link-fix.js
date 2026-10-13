@@ -46,10 +46,16 @@ const ok = (name, cond, extra) => {
 // Unzip to a scratch dir. .aab/.ipa/.apk are all zips.
 const out = path.join(process.env.TEMP || '/tmp', 'verify-artifact-' + path.basename(artifact).replace(/\W/g, ''));
 fs.mkdirSync(out, { recursive: true });
+// Expand-Archive refuses any extension but .zip, so an .ipa or .aab has to be
+// handed to it under a .zip name. Copy rather than rename: the artifact is the
+// evidence and must not be altered on disk.
+const zipCopy = path.join(out, '__artifact.zip');
 try {
+  fs.copyFileSync(artifact, zipCopy);
   execFileSync('powershell', ['-NoProfile', '-Command',
-    `Expand-Archive -LiteralPath '${artifact.replace(/'/g, "''")}' -DestinationPath '${out.replace(/'/g, "''")}' -Force`],
+    `Expand-Archive -LiteralPath '${zipCopy.replace(/'/g, "''")}' -DestinationPath '${out.replace(/'/g, "''")}' -Force`],
   { stdio: 'pipe' });
+  fs.unlinkSync(zipCopy);
 } catch (e) {
   console.error('could not expand the artifact: ' + (e.stderr ? String(e.stderr).slice(0, 300) : e.message));
   process.exit(2);
@@ -70,7 +76,19 @@ ok('CONTROL — at least one JS/Hermes bundle was found inside the artifact',
 if (!candidates.length) { console.log('\nFAILURES'); process.exit(1); }
 
 const blobs = candidates.map((f) => ({ f, buf: fs.readFileSync(f) }));
-const has = (needle) => blobs.some((b) => b.buf.includes(Buffer.from(needle, 'latin1')));
+// HERMES STORES A STRING AS ASCII *OR* UTF-16, and picks per string: anything
+// with a non-ASCII character — an em dash is enough — goes in the UTF-16 table,
+// two bytes per character. An ASCII-only search therefore cannot see most of the
+// app's user-facing copy, because most of it contains a dash.
+//
+// This is not a theoretical gap. Searching only latin1 reported the paywall note
+// and the corrected journal sentence as ABSENT from a build that contains both,
+// and — the worse half — it reported the SUPERSEDED strings as absent too, so the
+// negative controls passed vacuously. A control that cannot see the thing it is
+// controlling for is not a control.
+const has = (needle) => blobs.some((b) =>
+  b.buf.includes(Buffer.from(needle, 'latin1')) ||
+  b.buf.includes(Buffer.from(needle, 'utf16le')));
 const biggest = blobs.sort((a, b) => b.buf.length - a.buf.length)[0];
 console.log(`  ..   ${blobs.length} bundle file(s), largest ${path.basename(biggest.f)} (${(biggest.buf.length / 1e6).toFixed(1)} MB)`);
 
