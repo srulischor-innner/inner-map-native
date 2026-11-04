@@ -332,24 +332,29 @@ export function AuthButtonRow({
   return (
     <View style={styles.row}>
       {appleAvailable && Platform.OS === 'ios' ? (
-        <Pressable
-          onPress={handleApple}
-          disabled={!!busy}
-          style={({ pressed }) => [
-            btnStyle, styles.btnApple,
-            pressed && { opacity: 0.85 }, busy === 'apple' && { opacity: 0.7 },
+        // Build 53 — Apple's own button (App Review 4.8, HIG). The system
+        // draws the logo and the "Continue with Apple" title, localised. White
+        // because this app's background is dark; same height and pill radius
+        // as the Google and Email rows. A tap while any sign-in is running is
+        // ignored in handleApple; the row dims and a spinner sits on top.
+        <View
+          style={[
+            styles.appleWrap,
+            { height: compact ? 44 : 52, marginBottom: compact ? 10 : 12 },
+            !!busy && { opacity: 0.7 },
           ]}
-          accessibilityLabel="Continue with Apple"
         >
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+            cornerRadius={compact ? 22 : 26}
+            style={styles.appleButton}
+            onPress={handleApple}
+          />
           {busy === 'apple' ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="logo-apple" size={18} color="#fff" style={styles.icon} />
-              <Text style={styles.btnAppleText}>Continue with Apple</Text>
-            </>
-          )}
-        </Pressable>
+            <ActivityIndicator style={StyleSheet.absoluteFill} color="#1f1f1f" />
+          ) : null}
+        </View>
       ) : null}
       <Pressable
         onPress={handleGoogle}
@@ -471,9 +476,10 @@ const styles = StyleSheet.create({
   },
   icon: { marginRight: 10 },
 
-  // Apple — solid black per Apple HIG.
-  btnApple: { backgroundColor: '#000', borderColor: '#000' },
-  btnAppleText: { color: '#fff', fontFamily: fonts.sansMedium, fontSize: 15, letterSpacing: 0.2 },
+  // Apple — the system button fills a fixed-height row; it needs an explicit
+  // width and height or it renders at zero size.
+  appleWrap: { width: '100%' },
+  appleButton: { width: '100%', height: '100%' },
 
   // Google — white per Google guidance.
   btnGoogle: { backgroundColor: '#fff', borderColor: '#dadce0' },
