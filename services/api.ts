@@ -22,6 +22,9 @@ import { emitRateLimitNotice } from '../utils/rateLimitNotice';
 // the server's own literals, lifted out of server.js at run time. A regex over
 // this file would only prove the source contains a string.
 import { isMembershipRefusal } from './membershipDecision';
+// Type-only in the other direction (m2.ts imports InboxMessage as a type), so
+// this is not a runtime cycle.
+import { parseM2Flag, type M2CardItem } from './m2';
 
 const BASE_URL: string =
   (Constants.expoConfig?.extra as any)?.apiBaseUrl ||
@@ -324,7 +327,9 @@ export type InboxMessage = {
   // 'middle_ground' added 2026-09-02. The server has written this kind since
   // ruling 2026-08-19e; the type never listed it, so the client narrowed it away
   // and it fell through to NoteCard, which cannot read its payload.
-  kind: 'pending_parts' | 'enrichment' | 'middle_ground' | 'system_note' | 'release_note';
+  // 'm2_card' is the M2 proposal row (services/m2.ts, assumption A2). Only an
+  // M2 account is ever sent one, so on the old stack this member is inert.
+  kind: 'pending_parts' | 'enrichment' | 'middle_ground' | 'system_note' | 'release_note' | 'm2_card';
   payload: {
     /** Present on session-sourced cards. */
     sessionId?: string;
@@ -334,7 +339,7 @@ export type InboxMessage = {
     source?: 'session' | 'journal';
     entryId?: string;
     entryDate?: string | null;
-    items?: {
+    items?: ({
       part: string;
       /** pending_parts items: the suggested part name + grounding context. */
       name?: string;
@@ -356,7 +361,9 @@ export type InboxMessage = {
        *  told apart from a part the person removed. Absent on older cards. */
       pid?: string;
       partExisted?: boolean;
-    }[];
+      /** m2_card items carry the pass's proposal shape on top of the above:
+       *  kind, payload, anchor, recognised, confirmed-in-chat. */
+    } & Partial<Omit<M2CardItem, 'status' | 'editedValue'>>)[];
     title?: string;
     body?: string;
   };
@@ -3210,20 +3217,25 @@ export const api = {
    *  outcomes indistinguishable, and a caller that reads `completedAt: null`
    *  as an answer demotes a RETURNING user to first-ever on one flaky
    *  request — discarding their real server callback and greeting them as if
-   *  they had never been here. Check `ok` before believing `completedAt`. */
-  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean }> {
+   *  they had never been here. Check `ok` before believing `completedAt`.
+   *
+   *  `m2` rides on the same answer (services/m2.ts, assumption A1): this is the
+   *  one boot call that says who this person is, and a second call on the boot
+   *  critical path would add its latency to a blank screen. Every failure shape
+   *  answers m2: false — the app as it is today. */
+  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; m2: boolean }> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/first-session-status', {
         label: 'first-session-status', method: 'GET', headers,
       });
-      if (!res.ok) return { completedAt: null, ok: false };
+      if (!res.ok) return { completedAt: null, ok: false, m2: false };
       const j: any = await res.json().catch(() => null);
-      if (!j || typeof j !== 'object') return { completedAt: null, ok: false };
-      return { completedAt: typeof j.completedAt === 'string' ? j.completedAt : null, ok: true };
+      if (!j || typeof j !== 'object') return { completedAt: null, ok: false, m2: false };
+      return { completedAt: typeof j.completedAt === 'string' ? j.completedAt : null, ok: true, m2: parseM2Flag(j) };
     } catch (e) {
       console.warn('[first-session-status] threw:', (e as Error)?.message);
-      return { completedAt: null, ok: false };
+      return { completedAt: null, ok: false, m2: false };
     }
   },
 

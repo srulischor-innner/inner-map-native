@@ -113,7 +113,7 @@ ok('the boxes render only when that rule says so',
   try {
     // eslint-disable-next-line no-new-func
     showModeBoxes = new Function(
-      'modeBoxesDismissed', 'crisisGated', 'typing', 'sending', 'firstSessionPending', 'messages',
+      'modeBoxesDismissed', 'crisisGated', 'typing', 'sending', 'firstSessionPending', 'messages', 'm2',
       BODY,
     );
   } catch (e) {
@@ -125,7 +125,7 @@ ok('the boxes render only when that rule says so',
     const OPENING = [{ role: 'assistant' }, { role: 'user' }, { role: 'assistant' }];
     const call = (over) => showModeBoxes(
       over.dismissed ?? false, over.crisis ?? false, over.typing ?? false, over.sending ?? false,
-      over.first, over.messages ?? OPENING,
+      over.first, over.messages ?? OPENING, over.m2 ?? false,
     );
     ok('CONTROL — a returning user at the opening shape DOES see the boxes',
       call({ first: false }) === true,
@@ -140,6 +140,14 @@ ok('the boxes render only when that rule says so',
     ok('...and a crisis still suppresses them',
       call({ first: false, crisis: true }) === false,
       'nothing that asks a person to choose how to work may sit over a referral');
+    // M2 is one prompt: there is no mode to pick, so the boxes never show on it.
+    // Every row above runs with m2 false, which is every account the server has
+    // not moved — so the old stack is still held to exactly what it was.
+    ok('an M2 account never sees them, even at the one shape that shows them',
+      call({ first: false, m2: true }) === false,
+      'M2 has one prompt; four boxes would ask a question nothing answers');
+    ok('...including an M2 account in its first session',
+      call({ first: true, m2: true }) === false);
   }
 }
 // THE DEPENDENCY, which is the other half. A memo that reads the flag but does
@@ -148,6 +156,11 @@ ok('the boxes render only when that rule says so',
 ok('the memo re-runs when the first-session answer lands',
   /\}, \[modeBoxesDismissed[^\]]*firstSessionPending[^\]]*\]/.test(chat),
   'firstSessionPending is missing from the dependency list, so the suppression is frozen at its boot-time value');
+// Same for the M2 flag: boot answering is the only event that sets it, and a
+// memo that does not list it keeps the boxes it computed before boot answered.
+ok('the memo re-runs when the M2 flag lands',
+  /\}, \[modeBoxesDismissed[^\]]*\bm2\b[^\]]*\]/.test(chat),
+  'm2 is missing from the dependency list, so an M2 account would keep boxes computed before boot answered');
 
 // ---- the mode stays visible after they go -----------------------------------
 // The founder offered two acceptable endings: everything goes, OR it collapses

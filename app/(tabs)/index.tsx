@@ -41,7 +41,12 @@ import type { BudgetRefusal, TrialFreezeRefusal } from '../../services/api';
 import { getTopUpProduct, purchase } from '../../services/purchases';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete, holdBackBoundary } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState, useAttentionState } from '../../utils/attentionState';
-import { refreshInboxStatus } from '../../services/messagesInbox';
+import { refreshInboxStatus, subscribeInbox } from '../../services/messagesInbox';
+import {
+  chatPendingCards, countMapEntries, starterMapButtonAllowed, CHAT_CARD_POLL_DELAYS_MS,
+  type ChatPendingCard,
+} from '../../services/m2';
+import { PendingMapCards } from '../../components/chat/PendingMapCards';
 import { emitBeliefChanged } from '../../utils/beliefEvents';
 // (Polish round 7) clearMapVoiceHistory removed alongside the
 // services/mapVoiceHistory module — Map Voice is now turn-based
@@ -129,6 +134,23 @@ const ORIENTATION_MESSAGE =
   "quite it' or 'It's more like X' is the most useful thing you can share.\n\n" +
   "Would you like to begin?";
 
+// THE M2 WELCOME — the first-session opener for an account on the M2 stack.
+// Verbatim from the founder's first-session.md ("Proposed welcome message").
+// It replaces ORIENTATION_MESSAGE for M2 only: that one promises four ways of
+// working and "I'll ask", and M2 has one prompt and no boxes. This one promises
+// what the M2 first conversation does — a map that builds only with their
+// say-so, and "if I ever say too much, tell me". Do not edit it here; a change
+// to this copy is the founder's, in that file.
+const M2_WELCOME =
+  "Hi. This is a place to say what's going on and be met with it, and over " +
+  "time to see the pattern in it. I'm not a person, and this isn't therapy; " +
+  "I'm something you can think out loud with, and a map of what keeps " +
+  "showing up for you builds from our conversations, only with your " +
+  "say-so. This first time I'll be a bit more active, so your map has a " +
+  "start by the end; after that it's more conversational. Start anywhere: " +
+  "what happened, what's on your mind, or what keeps happening. If I ever " +
+  "say too much, tell me, and I'll keep it shorter.";
+
 // ===== THE OPENING BUBBLE IS A CONSTANT =====
 // Founder decision, August 2026: the dynamic session-opening greeting is
 // GONE. Not gated, not capped, not made safe — removed. Every non-first-ever
@@ -190,8 +212,15 @@ const STANDARD_OPENER =
 // reachable from the two boundary resets — boot and the seed effect both wait
 // for the flag — and those two only happen to a user who has already been
 // through a session.
-function openerFor(firstSessionPending: boolean | undefined): string {
-  return firstSessionPending === true ? ORIENTATION_MESSAGE : STANDARD_OPENER;
+//
+// M2 ADDS ONE CONSTANT, NOT A LADDER. The second input is the account's M2
+// flag, and it only ever swaps which constant a FIRST session gets. With it
+// false or missing the selector answers exactly as it did before M2 existed —
+// scripts/smoke-constant-opener.js replays that across every input. Returning
+// users get STANDARD_OPENER on either stack: it names the style dials, and
+// those are honoured under one prompt as much as under four.
+function openerFor(firstSessionPending: boolean | undefined, m2?: boolean): string {
+  return firstSessionPending === true ? (m2 === true ? M2_WELCOME : ORIENTATION_MESSAGE) : STANDARD_OPENER;
 }
 
 export default function ChatScreen() {
@@ -621,6 +650,56 @@ export default function ChatScreen() {
   // "View my starter map" CTA on the completion bubble.
   const [firstSessionPending, setFirstSessionPending] = useState<boolean | undefined>(undefined);
   const router = useRouter();
+
+  // ===== M2 =====
+  // The account's chat stack, read once at boot off the first-session status
+  // (services/m2.ts, assumption A1). FALSE until boot answers and on every
+  // failure, so nothing below changes the app for anyone the server has not
+  // put on M2. The ref mirrors it for the turn callback, which outlives renders.
+  //
+  //   m2          — hides the mode boxes and the mode control, picks M2_WELCOME
+  //                 for a first session, and turns on the two things below.
+  //   chatCards   — pending cards from a yes in THIS session, shown at the end
+  //                 of the thread until the person taps one.
+  //   mapEntries  — how many things are on the map; the first-session "view my
+  //                 starter map" button waits for two.
+  const [m2, setM2] = useState(false);
+  const m2Ref = useRef(false);
+  const [chatCards, setChatCards] = useState<ChatPendingCard[]>([]);
+  const [mapEntries, setMapEntries] = useState(0);
+  const cardLookTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // The inbox cache is the one source for cards, here and in Messages, so a tap
+  // in either place resolves the card in both.
+  useEffect(() => {
+    if (!m2) return;
+    return subscribeInbox((s) => setChatCards(chatPendingCards(s.messages, sessionIdRef.current)));
+  }, [m2]);
+  useEffect(() => () => { for (const t of cardLookTimersRef.current) clearTimeout(t); }, []);
+  // After a reply finishes, look for the card its yes may have produced. The
+  // pass runs after the reply, so the card lands some seconds later; a new turn
+  // cancels the remaining looks and starts its own.
+  const lookForChatCards = useCallback(() => {
+    if (!m2Ref.current) return;
+    for (const t of cardLookTimersRef.current) clearTimeout(t);
+    cardLookTimersRef.current = CHAT_CARD_POLL_DELAYS_MS.map((ms) =>
+      setTimeout(() => { refreshInboxStatus(true).catch(() => {}); }, ms),
+    );
+  }, []);
+  const recountMapEntries = useCallback(() => {
+    if (!m2Ref.current) return;
+    api.getLatestMap()
+      .then((map) => setMapEntries(countMapEntries(map)))
+      .catch(() => { /* keep the last count; the button waits rather than guesses */ });
+  }, []);
+  // Coming back to the chat (from Messages, the map, anywhere a card could have
+  // been tapped) refreshes both.
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!m2Ref.current) return;
+      refreshInboxStatus(true).catch(() => {});
+      recountMapEntries();
+    }, [recountMapEntries]),
+  );
   // NOTE: there is no second effect fetching this. /api/first-session-status
   // used to be called TWICE at boot — here, wrapped in a retry that could
   // never fire, and again inside the boot Promise.all with no resilience at
@@ -724,7 +803,7 @@ export default function ChatScreen() {
       // First-session status is fetched alongside the map so the opening
       // bubble can be the orientation message without a second round-trip or
       // a flash of the wrong copy.
-      let firstStatus: { completedAt: string | null; ok: boolean } = { completedAt: null, ok: false };
+      let firstStatus: { completedAt: string | null; ok: boolean; m2: boolean } = { completedAt: null, ok: false, m2: false };
       try {
         [map, firstStatus] = await Promise.all([
           api.getLatestMap(),
@@ -785,6 +864,12 @@ export default function ChatScreen() {
       // standing between a mode toggle and an empty Explore thread. Keep it
       // here, at the top, ahead of all the map/mode derivation below.
       setFirstSessionPending(isFirstSession);
+      // M2 off unless the status ANSWERED and said so. A failed status already
+      // carries m2: false; the explicit ok test keeps that true even if the
+      // placeholder ever changes.
+      const isM2 = firstStatus?.ok === true && firstStatus.m2 === true;
+      m2Ref.current = isM2;
+      setM2(isM2);
 
       const md = map?.mapData || map || {};
       // Onboarding-vs-ongoing decision: "any core node filled" means
@@ -833,6 +918,7 @@ export default function ChatScreen() {
         'mapData:', JSON.stringify(md).slice(0, 200),
       );
       setMode(chosenMode);
+      if (isM2) setMapEntries(countMapEntries(map));
 
       // Seed ONLY the Process thread here. This is NOT the landing thread:
       // THE ONLY SEED PATH AT BOOT. There used to be two — this one filled the
@@ -841,7 +927,7 @@ export default function ChatScreen() {
       // blank-screen bugs the comments below and in the End Session reset
       // describe. One transcript, seeded here, and the seed effect that used to
       // fill the other one is gone.
-      const finalGreeting = openerFor(isFirstSession);
+      const finalGreeting = openerFor(isFirstSession, isM2);
       // Skip the opener if a session resume already hydrated the transcript
       // (cold-start race: the resume focus-effect can land mid-boot). The
       // lock ref is set synchronously by the resume consumer.
@@ -999,7 +1085,7 @@ export default function ChatScreen() {
     if (messages.length > 0) return;
     if (firstSessionPending === undefined) return;
     greetedRef.current = true;
-    const opener = openerFor(firstSessionPending);
+    const opener = openerFor(firstSessionPending, m2);
     console.log(
       `[chat] BACKSTOP seeded the transcript — boot and resume both left it empty (${firstSessionPending === true ? 'first-session orientation' : 'standard'} opener)`,
     );
@@ -1349,6 +1435,10 @@ export default function ChatScreen() {
         // a stopped (truncated) reply.
         const starterMapDone = !stopped && hasStarterMapComplete(finalRaw);
         updateBubble(target, false, starterMapDone ? { starterMapComplete: true } : undefined);
+        // M2: the pass reads this reply now; its card lands in a few seconds.
+        // A stopped reply was not persisted, so there is nothing to look for.
+        if (!stopped) lookForChatCards();
+        if (starterMapDone) recountMapEntries();
         if (starterMapDone) {
           // A BARE FLIP, again. This used to route through completeFirstSession
           // — a one-shot handoff that shut the opener gate, published the flip
@@ -1901,8 +1991,12 @@ export default function ChatScreen() {
   // cannot answer (fail-toward-first-ever, ~line 778), so undefined only
   // survives while boot is still in flight. Showing boxes in that window would
   // be showing them to exactly the cohort this ruling removes them from.
+  //
+  // AND NOT ON M2 AT ALL. M2 is one prompt: there are no four ways to pick
+  // between, so the boxes would ask a question nothing answers.
   const [modeBoxesDismissed, setModeBoxesDismissed] = useState(false);
   const showModeBoxes = useMemo(() => {
+    if (m2) return false;
     if (modeBoxesDismissed || crisisGated || typing || sending) return false;
     if (firstSessionPending !== false) return false;
     let assistants = 0, users = 0;
@@ -1912,15 +2006,21 @@ export default function ChatScreen() {
     }
     // Exactly: greeting + one reply, and the person has spoken at least once.
     return users >= 1 && assistants === 2;
-  }, [modeBoxesDismissed, crisisGated, typing, sending, messages, firstSessionPending]);
+  }, [modeBoxesDismissed, crisisGated, typing, sending, messages, firstSessionPending, m2]);
 
+  // M2: the starter-map button opens the map, so it waits until the map has two
+  // entries — first-session.md: "the button would open an empty map". With no
+  // handler the bubble renders no button (MessageBubble gates on it), and it
+  // appears on the same bubble the moment a tap brings the count to two. Off
+  // M2 this is always the handler, exactly as before.
+  const starterMapHandler = starterMapButtonAllowed(m2, mapEntries) ? handleViewStarterMap : undefined;
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
     () => messages.map((m) => (
       <MessageBubble
         key={m.id}
         msg={m}
         onRetry={handleRetry}
-        onViewStarterMap={handleViewStarterMap}
+        onViewStarterMap={starterMapHandler}
         onFlagKeyMoment={handleFlagKeyMoment}
         // Home-screen redesign: the opening greeting (the sole assistant
         // bubble before any user turn) renders with more presence as the
@@ -1930,7 +2030,7 @@ export default function ChatScreen() {
         isOpening={messages.length === 1 && m.role === 'assistant'}
       />
     )),
-    [messages],
+    [messages, starterMapHandler],
   );
 
   return (
@@ -2017,6 +2117,11 @@ export default function ChatScreen() {
           it has to be reachable a second time: the boxes are shown once and
           never again, so without this row a first-session person who picked
           wrong had no way back. */}
+      {/* NOT ON M2. One prompt has no mode to show or change; the row would
+          name a state nothing implements. The working mode stays at its
+          default underneath and is still sent, so the session row records
+          what it always has (docs/m2-app-assumptions.md, A7). */}
+      {m2 ? null : (
       <WorkingModeControl
         mode={workingMode}
         disabled={sending}
@@ -2029,6 +2134,7 @@ export default function ChatScreen() {
           handleModeChange(wireModeFor(next));
         }}
       />
+      )}
       <View style={styles.indicatorBar}>
         {isGenerating ? (
           <AttentionIndicator />
@@ -2073,6 +2179,14 @@ export default function ChatScreen() {
                 first-session banner already says "building your map". */}
             {bubbleList}
             {typing ? <TypingIndicator /> : null}
+            {/* M2: what a yes in chat turns into. At the end of the thread
+                until tapped; never over a crisis referral. Mounted whenever
+                M2 is on (it renders nothing with nothing to show), so a card
+                the person just added can say so for a beat after the inbox
+                refresh drops it. */}
+            {m2 && !crisisGated ? (
+              <PendingMapCards cards={chatCards} onAccepted={recountMapEntries} />
+            ) : null}
             {/* THE OPENING MODE QUESTION (founder ruling 2026-09-06).
                 Under the SECOND assistant message: the first is the greeting,
                 the second responds to what they actually said. Showing it any
@@ -2298,6 +2412,11 @@ export default function ChatScreen() {
               setLivePart(null); setLiveConfidence(null);
               if (livePartTimerRef.current) { clearTimeout(livePartTimerRef.current); livePartTimerRef.current = null; }
               gatheredNoticedRef.current = false; // re-arm gathering for the next session
+              // M2: a card from the session that just ended belongs to that
+              // session — it waits in Messages now, not under a new conversation.
+              for (const t of cardLookTimersRef.current) clearTimeout(t);
+              cardLookTimersRef.current = [];
+              setChatCards([]);
               // Inbox badge refresh — a just-ended session may have left
               // parked NOTICED items that the next sweep will bundle.
               refreshInboxStatus(true).catch(() => {});
@@ -2330,7 +2449,7 @@ export default function ChatScreen() {
               // says anyway — the same constant, on both threads, for this
               // cohort. Keep it synchronous: an await between the reset and
               // these assignments is the exact shape the gate existed to police.
-              const greeting = openerFor(firstSessionPending);
+              const greeting = openerFor(firstSessionPending, m2);
               greetedRef.current = true; // seeded on this line, not by the backstop
               // The new session opens in the DEFAULT working mode, which is
               // Light — not Explore. Ending a session and starting another

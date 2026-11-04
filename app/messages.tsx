@@ -26,6 +26,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, fonts, spacing } from '../constants/theme';
 import { api, InboxMessage } from '../services/api';
 import { refreshInboxStatus } from '../services/messagesInbox';
+import { M2_CARD_KIND, isM2Item, m2ItemCategory, m2ItemValue } from '../services/m2';
 import { getInboxPushOptIn, enableInboxPush } from '../services/push';
 import { useKeyboardInset } from '../utils/useKeyboardInset';
 
@@ -160,6 +161,8 @@ export default function MessagesScreen() {
               <EnrichmentCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
             ) : m.kind === 'middle_ground' ? (
               <PendingPartsCard key={m.id} message={m} onEditFocus={ensureEditVisible} variant={MIDDLE_GROUND_VARIANT} />
+            ) : m.kind === M2_CARD_KIND ? (
+              <PendingPartsCard key={m.id} message={m} onEditFocus={ensureEditVisible} variant={M2_VARIANT} />
             ) : (
               <NoteCard key={m.id} message={m} />
             ),
@@ -201,6 +204,9 @@ type CardVariant = {
   acceptingText: string;
   acceptedText: string;
   editA11y: string;
+  /** Optional: items this card should not render at all. Absent = every item,
+   *  which is what the two original variants have always done. */
+  showItem?: (it: any) => boolean;
 };
 
 const PENDING_PARTS_VARIANT: CardVariant = {
@@ -233,6 +239,27 @@ const MIDDLE_GROUND_VARIANT: CardVariant = {
   acceptingText: 'KEEPING\u2026',
   acceptedText: 'Kept on your map.',
   editA11y: 'Edit the wording',
+};
+
+// M2 — what the pass proposed from a conversation (services/m2.ts). A THIRD
+// variant of the same card, for the same reason the middle-ground one is: the
+// accept / edit / decline flow is the consent, and two copies of it drift. The
+// value is the thing that goes on the map, in their words; the line under it is
+// the sentence of theirs it was drawn from, so they can see why it is here.
+// Items the app cannot read are left out rather than shown as an empty row with
+// live buttons.
+const M2_VARIANT: CardVariant = {
+  kicker: (m) => `FROM A CONVERSATION${m.payload.sessionDate ? ` · ${m.payload.sessionDate}` : ''}`,
+  lede: 'Some things you said that might belong on your map. Nothing goes on it unless you add it:',
+  labelOf: (it) => (isM2Item(it) ? m2ItemValue(it) : ''),
+  editedOf: (it) => it.editedValue,
+  subOf: (it) => (typeof it.anchor === 'string' && it.anchor.trim() ? `You said: “${it.anchor.trim()}”` : null),
+  categoryOf: (it) => (isM2Item(it) ? m2ItemCategory(it) : null),
+  acceptText: 'ADD TO MAP',
+  acceptingText: 'ADDING…',
+  acceptedText: 'Added to your map.',
+  editA11y: 'Edit the wording',
+  showItem: (it) => isM2Item(it) && !!m2ItemValue(it),
 };
 
 function PendingPartsCard({ message, onEditFocus, variant = PENDING_PARTS_VARIANT }: { message: InboxMessage; onEditFocus?: EditFocusHandler; variant?: CardVariant }) {
@@ -282,6 +309,7 @@ function PendingPartsCard({ message, onEditFocus, variant = PENDING_PARTS_VARIAN
       <Text style={styles.cardKicker}>{variant.kicker(message)}</Text>
       <Text style={styles.cardLede}>{variant.lede}</Text>
       {items.map((it, i) => {
+        if (variant.showItem && !variant.showItem(it)) return null;
         const st = states[i];
         const editing = editingIdx === i;
         return (
