@@ -70,6 +70,39 @@ const ROWS: InboxMessage[] = [
           anchor: 'yes, that’s what I do',
           status: 'pending',
         },
+        // A fixer card with the fields mapping-m2 (3).md line 16 adds.
+        {
+          part: 'fixer',
+          kind: 'part',
+          source: 'chat',
+          confirmedInChat: true,
+          payload: {
+            part: 'fixer',
+            label: 'Taking on extra',
+            fields: {
+              pattern: 'I take on extra so no one sees me struggle',
+              selectivity: 'Only at work, never with friends',
+              fantasy: 'Being so good no one could ever doubt me',
+            },
+            field: 'pattern', value: 'Taking on extra', enrich: false,
+          },
+          anchor: 'yes, that’s it',
+          status: 'pending',
+        },
+        // A self-like card.
+        {
+          part: 'self-like',
+          kind: 'part',
+          source: 'chat',
+          confirmedInChat: true,
+          payload: {
+            part: 'self-like',
+            fields: { 'stands-on': 'I can ask and still be okay', 'clenched-or-open': 'Tight, most days' },
+            field: 'stands-on', value: 'I can ask and still be okay', enrich: false,
+          },
+          anchor: 'yeah, keep that',
+          status: 'pending',
+        },
         // A belief card: one value, edited as text.
         {
           part: 'self-like',

@@ -254,7 +254,7 @@ function M2ItemCard({
           ) : null}
           {fields.map(({ key }, n) => (
             <View key={key} style={styles.fieldRow}>
-              <Text style={styles.fieldLabel}>{m2FieldWords(key)}</Text>
+              <Text style={styles.fieldLabel}>{m2FieldWords(key, item.kind)}</Text>
               <TextInput
                 value={draft.fields[key] ?? ''}
                 onChangeText={(t) => setDraft((d) => ({ ...d, fields: { ...d.fields, [key]: t } }))}
@@ -263,7 +263,7 @@ function M2ItemCard({
                 autoFocus={n === 0}
                 multiline
                 blurOnSubmit
-                accessibilityLabel={`Edit ${m2FieldWords(key)}`}
+                accessibilityLabel={`Edit ${m2FieldWords(key, item.kind)}`}
               />
             </View>
           ))}
@@ -274,7 +274,7 @@ function M2ItemCard({
           {category ? <Text style={styles.category}>{category}</Text> : null}
           {rowFields.map(({ key }) => (
             <View key={key} style={styles.fieldRow}>
-              <Text style={styles.fieldLabel}>{m2FieldWords(key)}</Text>
+              <Text style={styles.fieldLabel}>{m2FieldWords(key, item.kind)}</Text>
               <Text style={styles.fieldValue}>{draft.fields[key]}</Text>
             </View>
           ))}

@@ -314,12 +314,70 @@ console.log('\n3b. what a card says, and what an edit sends');
       for (const c of [single, bundled]) if (JARGON.test(c) || RAWKEY.test(c)) leaks.push(`${k}/${part}/${field} → "${c}"`);
     }
   }
-  for (const f of FIELDS) {
-    const w = m2.m2FieldWords(f);
-    if (JARGON.test(w) || RAWKEY.test(w)) leaks.push(`field ${f} → "${w}"`);
+  // Keys the server's own field table can still send (lib/m2/rules.js),
+  // whether or not line 16 lists them, must never fall back to the generic.
+  const SERVER_KEYS = ['fear', 'what-it-built', 'agenda', 'lean', 'history', 'manner', 'memory'];
+  const generic = m2.m2FieldWords('not-a-field');
+  const unlabelled = SERVER_KEYS.filter((k) => m2.m2FieldWords(k) === generic);
+  ok('every key the server may still send has a label of its own', unlabelled.length === 0, unlabelled.join(', '));
+  for (const f of [...FIELDS, ...SERVER_KEYS, 'stands-on', 'label']) {
+    for (const kind of [undefined, 'part', 'belief', 'middle']) {
+      const w = m2.m2FieldWords(f, kind);
+      if (JARGON.test(w) || RAWKEY.test(w)) leaks.push(`field ${f} (${kind}) → "${w}"`);
+    }
   }
   ok('no framework term or raw field key reaches a card\'s category or field labels',
     leaks.length === 0, leaks.slice(0, 5).join(' | '));
+}
+{
+  // THE FIELDS A CARD MAY CARRY — mapping-m2 (3).md, line 16. The editor is
+  // generic over a card's fields, so what can go wrong is a field reaching the
+  // screen as "more about it", or two fields on one card reading the same.
+  const BY_PART = {
+    wound: ['belief', 'feeling', 'story', 'body', 'history', 'worldview', 'trigger', 'voice'],
+    fixer: ['pattern', 'selectivity', 'what-it-protects', 'how-it-shows-up', 'body', 'history', 'worldview', 'desire', 'fantasy', 'voice'],
+    skeptic: ['pattern', 'selectivity', 'what-it-protects', 'how-it-shows-up', 'body', 'history', 'worldview', 'desire', 'fantasy', 'voice'],
+    manager: ['strategy', 'when-it-fires', 'what-it-gives', 'what-it-manages', 'trigger', 'situation', 'example', 'body', 'voice', 'worldview', 'story'],
+    firefighter: ['strategy', 'when-it-fires', 'what-it-gives', 'what-it-manages', 'trigger', 'situation', 'example', 'body', 'voice', 'worldview', 'story'],
+    'self-like': ['stands-on', 'body', 'clenched-or-open'],
+  };
+  const BY_KIND = { middle: ['label', 'note'], belief: ['belief'] };
+  const generic = m2.m2FieldWords('not-a-field');
+  const problems = [];
+  const check = (who, keys, kind) => {
+    const words = keys.map((k) => m2.m2FieldWords(k, kind));
+    keys.forEach((k, i) => { if (words[i] === generic) problems.push(`${who}.${k} has no label of its own`); });
+    const dupes = words.filter((w, i) => words.indexOf(w) !== i);
+    if (dupes.length) problems.push(`${who}: two fields read "${dupes[0]}"`);
+  };
+  for (const [part, keys] of Object.entries(BY_PART)) check(part, keys, 'part');
+  for (const [kind, keys] of Object.entries(BY_KIND)) check(kind, keys, kind);
+  ok('every field mapping-m2 (3).md line 16 names has a readable label, distinct within its card',
+    problems.length === 0, problems.join(' | '));
+  ok('a belief card\'s belief is what they stand on, a wound\'s is the belief underneath',
+    m2.m2FieldWords('belief', 'belief') === m2.m2FieldWords('stands-on')
+      && m2.m2FieldWords('belief', 'part') !== m2.m2FieldWords('belief', 'belief'));
+
+  // When the founder's file is on disk, the list above must still be its
+  // line 16; when it is not, say so rather than pass quietly.
+  const SPEC = process.env.M2_MAPPING_MD
+    || path.join(process.env.USERPROFILE || process.env.HOME || '', 'Downloads', 'mapping-m2 (3).md');
+  if (fs.existsSync(SPEC)) {
+    const line = fs.readFileSync(SPEC, 'utf8').split(/\r?\n/).find((l) => l.startsWith('Fields by part')) || '';
+    const grab = (re) => ((line.match(re) || [])[1] || '').split(',').map((s) => s.trim().replace(/\.$/, '')).filter(Boolean);
+    const spec = {
+      wound: grab(/wound: ([^.]+)\./),
+      fixer: grab(/Fixer and skeptic: ([^.]+)\./),
+      manager: grab(/Manager and firefighter: ([^.]+)\./),
+      'self-like': grab(/Self-like: ([^.]+)\./),
+    };
+    const drift = Object.entries(spec)
+      .filter(([p, keys]) => JSON.stringify(keys) !== JSON.stringify(BY_PART[p]))
+      .map(([p, keys]) => `${p}: file says ${JSON.stringify(keys)}`);
+    ok('the field list above is still the founder\'s line 16', line && drift.length === 0, drift.join(' | ') || 'line not found');
+  } else {
+    console.log(`  [3c] SKIP  field-list comparison — ${SPEC} not on disk; compared on the machine that built this`);
+  }
 }
 
 // ===========================================================================

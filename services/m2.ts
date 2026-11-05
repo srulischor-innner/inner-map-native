@@ -171,6 +171,22 @@ const PART_WORDS: Record<string, string> = {
   firefighter: 'one way you cope',
 };
 
+// Every field mapping-m2 (3).md line 16 lets a card carry, and what the card
+// calls it:
+//   wound              belief, feeling, story, body, history, worldview,
+//                      trigger, voice
+//   fixer, skeptic     pattern, selectivity, what-it-protects,
+//                      how-it-shows-up, body, history, worldview, desire,
+//                      fantasy, voice
+//   manager, ff        strategy, when-it-fires, what-it-gives,
+//                      what-it-manages, trigger, situation, example, body,
+//                      voice, worldview, story
+//   self-like          stands-on, body, clenched-or-open
+//   middle             label, note
+//   belief             belief
+// Plus the pass's extras (memory, manner, fear). scripts/smoke-m2-app.mjs
+// holds the same list and fails if any of these falls back to the generic
+// label, or if two fields on one part read the same.
 const FIELD_WORDS: Record<string, string> = {
   belief: 'the belief underneath',
   feeling: 'the feeling underneath',
@@ -185,6 +201,9 @@ const FIELD_WORDS: Record<string, string> = {
   manner: 'how it speaks',
   strategy: 'what it does',
   pattern: 'what it does',
+  // "The selectivity tell": the premise is held about one person or one
+  // place and not the rest (prompts/beliefSaving.js on the server).
+  selectivity: 'who or where it shows up with',
   'what-it-protects': 'what it protects',
   'what-it-manages': 'what it keeps in check',
   'when-it-fires': 'when it steps in',
@@ -192,12 +211,26 @@ const FIELD_WORDS: Record<string, string> = {
   'how-it-shows-up': 'how it shows up',
   fear: 'what it’s afraid of',
   desire: 'what it wants',
+  fantasy: 'what it dreams of',
   history: 'where it comes from',
-  note: 'the moment',
+  'stands-on': 'what you stand on',
+  'clenched-or-open': 'tight or open',
+  // Self-like keys the server's rules still allow (lib/m2/rules.js) though
+  // line 16 no longer lists them; labelled so no card can show the generic.
+  'what-it-built': 'what you’ve built',
+  agenda: 'what it’s after',
+  lean: 'which way it leans',
+  // A middle card: label is "their words for the moment", note is "the line
+  // it came from" (mapping-m2, the pass's middle_ground payload).
+  label: 'the moment',
+  note: 'what you said',
 };
 
-/** A field's name in plain words. An unknown key never reaches the screen raw. */
-export function m2FieldWords(key: string): string {
+/** A field's name in plain words. An unknown key never reaches the screen raw.
+ *  One key reads differently by card: a belief card's `belief` is their own
+ *  ground ("what you stand on"), not a wound's belief underneath. */
+export function m2FieldWords(key: string, kind?: string): string {
+  if (kind === 'belief' && key === 'belief') return FIELD_WORDS['stands-on'];
   return FIELD_WORDS[key] || 'more about it';
 }
 
