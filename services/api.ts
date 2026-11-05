@@ -24,7 +24,10 @@ import { emitRateLimitNotice } from '../utils/rateLimitNotice';
 import { isMembershipRefusal } from './membershipDecision';
 // Type-only in the other direction (m2.ts imports InboxMessage as a type), so
 // this is not a runtime cycle.
-import { parseM2Flag, type M2CardItem } from './m2';
+import {
+  parseM2Flag, readStarterCount, parseM2Pending, parseM2Done,
+  type M2CardItem, type M2BundledEdit, type M2PendingAnswer, type M2DoneInfo,
+} from './m2';
 
 const BASE_URL: string =
   (Constants.expoConfig?.extra as any)?.apiBaseUrl ||
@@ -349,8 +352,9 @@ export type InboxMessage = {
       label?: string | null;
       field?: string;
       value?: string;
-      /** Per-item review state (server-owned). Missing = pending. */
-      status?: 'pending' | 'accepted' | 'declined';
+      /** Per-item review state (server-owned). Missing = pending. 'expired' is
+       *  only ever reported on an m2_card item past its clock. */
+      status?: 'pending' | 'accepted' | 'declined' | 'expired';
       /** The name (pending_parts) or value (enrichment) the user refined. */
       editedName?: string;
       editedValue?: string;
@@ -398,6 +402,10 @@ export type StreamCallbacks = {
   /** The server obeyed an explicit request to work differently. The label at the
    *  top updates so the state is visible; nothing is announced in the thread. */
   onModeSwitch?: (mode: string) => void;
+  /** M2 only: the done frame's `m2` block (m2-api.md) — whether a pass is
+   *  coming and the server's starter count. Never fires off M2: the server
+   *  sends no such block for an account that is not flagged. */
+  onM2Done?: (info: M2DoneInfo) => void;
   /** Crisis enforcement (June 2026) — fires when the server gated this turn
    *  (crisis_detected on the /api/chat response). The `reply` already
    *  arrived via onDelta/onDone as the referral text; this signals the chat
@@ -1117,6 +1125,11 @@ export const api = {
         if (j?.messageIds && typeof j.messageIds.user === 'string' && typeof j.messageIds.ai === 'string') {
           cb.onMessageIds?.({ user: j.messageIds.user, ai: j.messageIds.ai });
         }
+        // M2's done block, if the JSON fallback ever carries it; inert otherwise.
+        if (j?.m2) {
+          const m2Info = parseM2Done(j.m2);
+          if (m2Info) cb.onM2Done?.(m2Info);
+        }
       } catch (e) {
         if ((e as any)?.name === 'AbortError') return;
         cb.onError((e as Error)?.message || 'network error');
@@ -1202,6 +1215,10 @@ export const api = {
           cb.onDone(full);
           if (typeof evt.modeSwitch === 'string' && evt.modeSwitch) {
             cb.onModeSwitch?.(evt.modeSwitch);
+          }
+          if (evt.m2) {
+            const m2Info = parseM2Done(evt.m2);
+            if (m2Info) cb.onM2Done?.(m2Info);
           }
           if (evt.messageIds && typeof evt.messageIds.user === 'string' && typeof evt.messageIds.ai === 'string') {
             cb.onMessageIds?.({ user: evt.messageIds.user, ai: evt.messageIds.ai });
@@ -1836,8 +1853,17 @@ export const api = {
   async actOnMessage(
     messageId: string,
     itemIndices: number[],
-    edits?: Record<number, string>,
-  ): Promise<{ ok: boolean; written: number; failed: number; allResolved: boolean }> {
+    // A string per item on every card path; an object only for an M2 chat
+    // card, whose fields are bundled (services/m2.ts, assumption A2a).
+    edits?: Record<number, string | M2BundledEdit>,
+  ): Promise<{
+    ok: boolean; written: number; failed: number; allResolved: boolean;
+    /** M2 only: the server's count of tapped cards, or null when it sent none. */
+    starterCount: number | null;
+    /** M2 only: this tap completed the starter map. */
+    starterMapComplete: boolean;
+  }> {
+    const failedShape = { ok: false, written: 0, failed: itemIndices.length, allResolved: false, starterCount: null, starterMapComplete: false };
     try {
       const headers = await authHeaders();
       const body = edits && Object.keys(edits).length
@@ -1847,16 +1873,54 @@ export const api = {
         label: 'messages-act', method: 'POST', headers,
         body: JSON.stringify(body), timeoutMs: 20000,
       });
-      if (!res.ok) return { ok: false, written: 0, failed: itemIndices.length, allResolved: false };
+      if (!res.ok) return failedShape;
       const j: any = await res.json();
       // ITEM 14: the server can now say a write did not land (ok:false, with a
       // reason). Log it — this class of failure was invisible on both sides.
       if (!j?.ok) console.warn('[inbox] act reported a failed write:', j?.error || 'unknown', 'failed=', j?.failed);
-      return { ok: !!j?.ok, written: Number(j?.written || 0), failed: Number(j?.failed || 0), allResolved: !!j?.allResolved };
+      return {
+        ok: !!j?.ok, written: Number(j?.written || 0), failed: Number(j?.failed || 0), allResolved: !!j?.allResolved,
+        starterCount: readStarterCount(j),
+        starterMapComplete: j?.starterMapComplete === true,
+      };
     } catch (e) {
       console.warn('[inbox] act failed:', (e as Error)?.message);
-      return { ok: false, written: 0, failed: itemIndices.length, allResolved: false };
+      return failedShape;
     }
+  },
+
+  /** M2 only. GET /api/m2/pending?sessionId= — this session's chat-screen
+   *  cards, whether a pass is still running, and the starter count
+   *  (m2-api.md, "Polling for chat cards"). Skips the inbox sweep, so it is
+   *  cheap enough to poll after a reply. null on any failure, including the
+   *  server's 404 for an account that is not on M2. */
+  async getM2Pending(sessionId: string): Promise<M2PendingAnswer | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/m2/pending?sessionId=${encodeURIComponent(sessionId)}`, {
+        label: 'm2-pending', method: 'GET', headers, timeoutMs: 10000,
+      });
+      if (!res.ok) return null;
+      const j: any = await res.json().catch(() => null);
+      return parseM2Pending(j, sessionId);
+    } catch (e) {
+      console.warn('[m2] pending failed:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** M2 only. POST /api/m2/cards/:id/seen { itemIndices } — starts the
+   *  14-day clock on items shown on the chat screen (opening a card in
+   *  Messages stamps it through /read). Fire and forget. */
+  async markM2CardsSeen(messageId: string, itemIndices: number[]): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch(`/api/m2/cards/${encodeURIComponent(messageId)}/seen`, {
+        label: 'm2-seen', method: 'POST', headers,
+        body: JSON.stringify({ itemIndices }), timeoutMs: 10000,
+      });
+      return res.ok;
+    } catch { return false; }
   },
 
   /** POST /api/messages/:id/decline { itemIndices } — "No, doesn't resonate."
@@ -3222,20 +3286,24 @@ export const api = {
    *  `m2` rides on the same answer (services/m2.ts, assumption A1): this is the
    *  one boot call that says who this person is, and a second call on the boot
    *  critical path would add its latency to a blank screen. Every failure shape
-   *  answers m2: false — the app as it is today. */
-  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; m2: boolean }> {
+   *  answers m2: false — the app as it is today. `starterCount` is the server's
+   *  count of tapped cards when it sends one (assumption A6), else null. */
+  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null }> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/first-session-status', {
         label: 'first-session-status', method: 'GET', headers,
       });
-      if (!res.ok) return { completedAt: null, ok: false, m2: false };
+      if (!res.ok) return { completedAt: null, ok: false, m2: false, starterCount: null };
       const j: any = await res.json().catch(() => null);
-      if (!j || typeof j !== 'object') return { completedAt: null, ok: false, m2: false };
-      return { completedAt: typeof j.completedAt === 'string' ? j.completedAt : null, ok: true, m2: parseM2Flag(j) };
+      if (!j || typeof j !== 'object') return { completedAt: null, ok: false, m2: false, starterCount: null };
+      return {
+        completedAt: typeof j.completedAt === 'string' ? j.completedAt : null, ok: true,
+        m2: parseM2Flag(j), starterCount: readStarterCount(j),
+      };
     } catch (e) {
       console.warn('[first-session-status] threw:', (e as Error)?.message);
-      return { completedAt: null, ok: false, m2: false };
+      return { completedAt: null, ok: false, m2: false, starterCount: null };
     }
   },
 

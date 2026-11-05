@@ -2,27 +2,27 @@
 //
 //   npm run preview:reading      then open http://localhost:8081/m2
 //
-// WHAT IS REAL: components/chat/PendingMapCards.tsx (the card a yes in chat
-// turns into) and app/messages.tsx's MessagesScreen with its M2 variant,
+// WHAT IS REAL: components/m2/M2Cards.tsx — the card a yes in chat turns into,
+// and the same card in Messages — and app/messages.tsx's MessagesScreen,
 // unmodified, at phone width.
 //
 // WHAT IS STUBBED: the transport, and only the transport. The four inbox calls
 // are swapped for functions returning the row shapes docs/m2-app-assumptions.md
-// sets out (A2). The server's real M2 endpoints did not exist when this was
-// written, so these shapes are the app's ASSUMPTION, not a copy of server.js.
+// sets out, which match the server's docs/m2-api.md except where the Nov 5
+// rulings differ (a chat card's bundled fields). Not a copy of server.js.
 //
 // The words on the cards are INVENTED for this preview. No real user's words
 // appear in this file, and none should ever be pasted here.
 //
-//   ?case=chat           two cards waiting on the chat screen
+//   ?case=chat           the cards a yes in chat made, on the chat screen
 //   ?case=chat-failing   the write fails: the card says so and stays
-//   ?case=messages       the Messages screen with an M2 row and an old row
+//   ?case=messages       Messages: the same row, plus an old-stack row
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { api, type InboxMessage } from '../services/api';
 import { chatPendingCards } from '../services/m2';
-import { PendingMapCards } from '../components/chat/PendingMapCards';
+import { PendingMapCards } from '../components/m2/M2Cards';
 import MessagesScreen from '../app/messages';
 
 const SESSION = 'preview-session';
@@ -33,34 +33,49 @@ const ROWS: InboxMessage[] = [
     kind: 'm2_card',
     payload: {
       sessionId: SESSION,
-      sessionDate: 'Nov 4',
+      sessionDate: 'Nov 5',
       items: [
+        // A chat card: the reply's [CARD:...], fields bundled.
         {
           part: 'wound',
           kind: 'part',
-          payload: { part: 'wound', field: 'belief', value: 'If I need something, I’m too much' },
-          anchor: 'it’s like if I need something I’m automatically too much',
-          recognised: 'confirmed',
-          confirmedInChat: true,
+          source: 'chat',
+          payload: {
+            part: 'wound',
+            label: 'Needing is too much',
+            fields: { belief: 'If I need something, I’m too much', trigger: 'The moment before asking for help' },
+          },
+          said: 'yeah. that’s exactly it.',
           status: 'pending',
         },
+        // A chat card with no label: its first field is its headline.
         {
           part: 'manager',
           kind: 'part',
-          payload: { part: 'manager', label: 'the drafter', field: 'strategy', value: 'Rewrites a message until it asks for nothing' },
-          anchor: 'I rewrite it until it doesn’t really ask for anything',
-          recognised: 'confirmed',
-          confirmedInChat: true,
+          source: 'chat',
+          payload: {
+            part: 'manager',
+            fields: { strategy: 'Rewrites a message until it asks for nothing' },
+          },
+          said: 'yes, that’s what I do',
           status: 'pending',
         },
+        // An idle-pass proposal: one value, Messages only.
         {
           part: 'wound',
           kind: 'detail',
-          payload: { part: 'wound', field: 'trigger', value: 'The moment before asking for help', enrich: true },
-          anchor: 'right before I ask, every time',
+          payload: { part: 'wound', field: 'body', value: 'A tightness in the throat', enrich: true },
+          anchor: 'my throat goes tight right before I ask',
           recognised: 'partial',
-          confirmedInChat: false,
           status: 'pending',
+        },
+        // Past its clock: the list reports it, the app leaves it out.
+        {
+          part: 'fixer',
+          kind: 'detail',
+          payload: { part: 'fixer', field: 'trigger', value: 'Being left on read' },
+          anchor: 'when I get left on read',
+          status: 'expired',
         },
       ],
     },
@@ -84,15 +99,20 @@ const ROWS: InboxMessage[] = [
   },
 ];
 
+// EVERY api method these components can reach is stubbed here. The preview's
+// BASE_URL is production: an unstubbed call would send a real request.
 function stubTransport(failWrites: boolean) {
   const a = api as unknown as Record<string, unknown>;
   a.listMessages = async () => ({ messages: ROWS, unreadCount: 0, unactedCount: 3 });
   a.markMessageRead = async () => true;
-  a.actOnMessage = async () => {
+  a.markM2CardsSeen = async () => true;
+  a.getM2Pending = async () => null;
+  a.actOnMessage = async (_id: string, idx: number[], edits?: unknown) => {
+    console.log('[preview] act', JSON.stringify({ idx, edits }));
     await new Promise((r) => setTimeout(r, 700));
     return failWrites
-      ? { ok: false, written: 0, failed: 1, allResolved: false }
-      : { ok: true, written: 1, failed: 0, allResolved: false };
+      ? { ok: false, written: 0, failed: 1, allResolved: false, starterCount: null, starterMapComplete: false }
+      : { ok: true, written: 1, failed: 0, allResolved: false, starterCount: 1, starterMapComplete: false };
   };
   a.declineMessageItems = async () => {
     await new Promise((r) => setTimeout(r, 400));
@@ -113,7 +133,7 @@ export default function M2Preview() {
         <Text style={styles.userText}>yeah. that’s exactly it.</Text>
       </View>
       <Text style={styles.aiText}>
-        Then it’s yours. It’s waiting just below for you to add, in your words.
+        Then it’s yours to keep. It’s just below, waiting for you to add.
       </Text>
       <PendingMapCards cards={cards} />
     </ScrollView>

@@ -1,27 +1,29 @@
 // Smoke for the APP SIDE OF M2 — and above all for "off is today".
 //
-// M2 is the founder's locked chat design: one prompt, no mode boxes, the chat
-// never writes the map, a yes in chat becomes a card the person taps, a pass
-// proposes cards to Messages, and a new first-session welcome. It ships behind
-// an account-level flag the server reports. This file holds two claims:
+// M2 is the founder's locked chat design (mapping-m2 (2).md, first-session
+// (1).md, rulings of 2026-11-05): one prompt, no mode boxes, the chat never
+// writes the map — a yes in chat becomes a card the person taps — an idle pass
+// proposes cards to Messages, a new first-session welcome, and two lines of
+// app copy that claimed memory the app does not have are replaced. It ships
+// behind an account-level flag the server reports. This file holds two claims:
 //
-//   1. OFF IS TODAY. Every M2 path in the chat screen checks the flag before it
-//      does anything, the flag fails closed, and nothing M2 adds is reachable
-//      for an account the server has not moved.
+//   1. OFF IS TODAY. Every M2 path checks the flag before it does anything,
+//      the flag fails closed, and the legacy copy is the same string it was.
 //   2. ON DOES WHAT THE FOUNDER'S FILES SAY. The pure rules in services/m2.ts
-//      are imported and RUN, not read: which cards reach the chat screen, how
-//      the starter map's entries are counted, when the button may show.
+//      are imported and RUN, not read: which cards reach the chat screen, what
+//      an edit sends, when the starter-map button may show.
 //
 // The server's API doc did not exist when this was built; what the app assumes
 // is in docs/m2-app-assumptions.md, and the A-numbers below refer to it.
 //
 // Boots nothing, contacts no server, requires no server file. Node strips the
-// types from services/m2.ts on import (its one import is type-only).
+// types from services/m2.ts and utils/guideContent.ts on import.
 //
 //   node scripts/smoke-m2-app.mjs
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { register } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -37,10 +39,14 @@ const ok = (name, cond, extra) => {
 // Whole-line comments out, so prose that NAMES a guard cannot stand in for it.
 const codeOnly = (src) => src.split(/\r?\n/).map((l) => l.replace(/^\s*\/\/.*$/, '')).join('\n');
 
+// guideContent.ts imports '../constants/features' without an extension; the
+// same hook check-guide-matches-app.mjs uses lets Node follow it.
+register(pathToFileURL(path.join(HERE, 'lib', 'ts-extension-resolve.mjs')));
 const m2 = await import(pathToFileURL(path.join(ROOT, 'services', 'm2.ts')).href);
+const guide = await import(pathToFileURL(path.join(ROOT, 'utils', 'guideContent.ts')).href);
 
 // ===========================================================================
-// 1. THE FLAG FAILS CLOSED (A1)
+// 1. THE FLAG FAILS CLOSED
 // ===========================================================================
 console.log('\n1. the flag');
 ok('"m2" under promptStack turns it on', m2.parseM2Flag({ promptStack: 'm2' }) === true);
@@ -59,199 +65,277 @@ const api = read('services/api.ts');
   const b = a === -1 ? -1 : api.indexOf('\n  },', a);
   const body = a === -1 || b === -1 ? '' : api.slice(a, b);
   const failures = body.match(/return \{[^}]*ok: false[^}]*\}/g) || [];
-  ok('every failure shape of the status call answers m2: false',
-    failures.length >= 3 && failures.every((r) => /m2: false/.test(r)),
+  ok('every failure shape of the status call answers m2: false and no count',
+    failures.length >= 3 && failures.every((r) => /m2: false/.test(r) && /starterCount: null/.test(r)),
     failures.join(' | ') || 'getFirstSessionStatus not found');
-  ok('the success shape reads the flag through parseM2Flag and nothing else',
-    /ok: true, m2: parseM2Flag\(j\)/.test(body));
+  ok('the success shape reads the flag and the count through the pure parsers',
+    /m2: parseM2Flag\(j\), starterCount: readStarterCount\(j\)/.test(body));
 }
 
 const chatSrc = read('app/(tabs)/index.tsx');
 const chat = codeOnly(chatSrc);
 ok('boot believes the flag only when the status ANSWERED',
   /const isM2 = firstStatus\?\.ok === true && firstStatus\.m2 === true;/.test(chat));
+ok('...and publishes it for the screens outside the chat',
+  /setM2\(isM2\);\s*setM2Flag\(isM2\);/.test(chat));
 ok('m2 state starts FALSE, so nothing M2 renders before boot answers',
   /const \[m2, setM2\] = useState\(false\);/.test(chat) && /const m2Ref = useRef\(false\);/.test(chat));
+{
+  const store = codeOnly(read('services/m2Store.ts'));
+  ok('the shared flag starts FALSE and only a strict true turns it on',
+    /let m2On = false;/.test(store) && /const next = on === true;/.test(store));
+}
 
 // ===========================================================================
-// 2. OFF IS TODAY — every M2 path in the chat screen is behind the flag
+// 2. OFF IS TODAY — every M2 path is behind the flag
 // ===========================================================================
 console.log('\n2. off is today');
 {
   const sub = chat.indexOf('subscribeInbox((s) =>');
-  const effectHead = chat.lastIndexOf('useEffect(() => {', sub);
-  const window = sub > -1 && effectHead > -1 ? chat.slice(effectHead, sub) : '';
+  const head = chat.lastIndexOf('useEffect(() => {', sub);
   ok('the card subscription returns before subscribing when M2 is off',
-    /if \(!m2\) return;/.test(window), 'the inbox subscription is not guarded');
+    sub > -1 && head > -1 && /if \(!m2\) return;/.test(chat.slice(head, sub)));
+  const st = chat.indexOf('subscribeStarterComplete(');
+  const stHead = chat.lastIndexOf('useEffect(() => {', st);
+  ok('the starter-complete subscription returns before subscribing when M2 is off',
+    st > -1 && stHead > -1 && /if \(!m2\) return;/.test(chat.slice(stHead, st)));
 }
-const fnBody = (name) => {
-  const at = chat.indexOf(`const ${name} = useCallback(`);
-  return at === -1 ? '' : chat.slice(at, chat.indexOf('}, [', at));
-};
-ok('looking for chat cards is a no-op when M2 is off',
-  /^[\s\S]{0,80}if \(!m2Ref\.current\) return;/.test(fnBody('lookForChatCards').replace(/^const lookForChatCards = useCallback\(\(\) => \{/, '')));
-ok('recounting the map is a no-op when M2 is off',
-  /^[\s\S]{0,80}if \(!m2Ref\.current\) return;/.test(fnBody('recountMapEntries').replace(/^const recountMapEntries = useCallback\(\(\) => \{/, '')));
 {
-  // Located by its comment in the raw source, then read as code only.
-  const at = chatSrc.indexOf('// Coming back to the chat');
-  const focus = at === -1 ? '' : codeOnly(chatSrc.slice(at, at + 600));
+  const fn = (name) => { const at = chat.indexOf(`const ${name} = useCallback(`); return at === -1 ? '' : chat.slice(at, at + 300); };
+  ok('reading the chat cards is a no-op when M2 is off',
+    /^const readChatCards = useCallback\(async \(\): Promise<boolean> => \{\s*if \(!m2Ref\.current\) return false;/.test(fn('readChatCards')));
+  ok('looking for chat cards is a no-op when M2 is off',
+    /^const lookForChatCards = useCallback\(\(expectPass: boolean = false\) => \{\s*if \(!m2Ref\.current\) return;/.test(fn('lookForChatCards')));
+  ok('the first read on M2 waits for the flag',
+    /useEffect\(\(\) => \{\s*if \(!m2\) return;\s*readChatCards\(\)/.test(chat));
   ok('the focus refresh is a no-op when M2 is off',
-    /useFocusEffect\(\s*React\.useCallback\(\(\) => \{\s*if \(!m2Ref\.current\) return;\s*refreshInboxStatus/.test(focus),
-    at === -1 ? 'the focus effect was not found' : 'its first statement is not the flag check');
+    /useFocusEffect\(\s*React\.useCallback\(\(\) => \{\s*if \(!m2Ref\.current\) return;\s*readChatCards\(\)/.test(chat));
+  ok('the looking stops: a token cancels it, and it never runs past the ceiling',
+    /const token = \+\+cardLookTokenRef\.current;/.test(chat) && /elapsed < M2_PENDING_MAX_MS/.test(chat)
+      && m2.M2_PENDING_MAX_MS <= 60000 && m2.M2_PENDING_POLL_MS >= 2000);
 }
+{
+  // The done frame's m2 block reaches the chat only when the server sent one,
+  // which it never does for an account off M2 (m2-api.md).
+  ok('the stream hands on an m2 block only when the frame carries one',
+    /if \(evt\.m2\) \{\s*const m2Info = parseM2Done\(evt\.m2\);\s*if \(m2Info\) cb\.onM2Done\?\.\(m2Info\);/.test(codeOnly(api)));
+}
+ok('the app no longer counts map entries itself — the server counts tapped cards',
+  !/countMapEntries|getLatestMap\(\)\s*\.then/.test(chat) && !/countMapEntries/.test(read('services/m2.ts')));
+ok('boot takes the server\'s count only on M2',
+  /if \(isM2\) setStarterCount\(firstStatus\.starterCount\);/.test(chat));
 ok('the pending card renders only on M2 and never over a crisis',
-  /\{m2 && !crisisGated \? \(\s*<PendingMapCards /.test(chat));
+  /\{m2 && !crisisGated \? \(\s*<PendingMapCards cards=\{chatCards\} \/>/.test(chat));
 ok('the mode control is hidden on M2 and ONLY on M2',
   /\{m2 \? null : \(\s*<WorkingModeControl/.test(chat));
 ok('the mode boxes are suppressed on M2, first line of the rule',
   /const showModeBoxes = useMemo\(\(\) => \{\s*if \(m2\) return false;/.test(chat));
-ok('the starter-map button is gated through starterMapButtonAllowed',
-  /const starterMapHandler = starterMapButtonAllowed\(m2, mapEntries\) \? handleViewStarterMap : undefined;/.test(chat)
+ok('the starter-map button is gated through starterMapButtonAllowed on the server count',
+  /const starterMapHandler = starterMapButtonAllowed\(m2, starterCount\) \? handleViewStarterMap : undefined;/.test(chat)
     && /onViewStarterMap=\{starterMapHandler\}/.test(chat));
 ok('...and the bubble list re-renders when that gate opens',
   /\[messages, starterMapHandler\]/.test(chat));
-
-// The rule itself: off M2 the button is ALWAYS allowed, whatever the count.
 {
-  const offRows = [0, 1, 2, 5].filter((n) => m2.starterMapButtonAllowed(false, n) !== true);
+  const offRows = [null, 0, 1, 2, 5].filter((n) => m2.starterMapButtonAllowed(false, n) !== true);
   ok('OFF: the starter-map button is allowed at every count, as today',
     offRows.length === 0, `blocked at ${JSON.stringify(offRows)}`);
-  ok('ON: it waits for two entries',
+  ok('ON: it waits for the server\'s count to reach two',
     m2.starterMapButtonAllowed(true, 0) === false && m2.starterMapButtonAllowed(true, 1) === false
       && m2.starterMapButtonAllowed(true, 2) === true && m2.starterMapButtonAllowed(true, 3) === true);
+  ok('ON with no count from the server: the marker decides, as off M2 (the server gates the marker)',
+    m2.starterMapButtonAllowed(true, null) === true);
 }
 
 // ===========================================================================
-// 3. WHICH CARDS REACH THE CHAT SCREEN (A2, A4)
+// 3. WHICH CARDS REACH THE CHAT SCREEN
 // ===========================================================================
 console.log('\n3. chat cards');
 const S = 'session-now';
-const item = (over = {}) => ({
+// A chat card: the reply's [CARD:{kind,part,label,fields,said}], fields bundled.
+const chatItem = (over = {}) => ({
   kind: 'part',
-  payload: { part: 'manager', label: 'the planner', field: 'strategy', value: 'I make a list so nothing can surprise me' },
-  anchor: 'I make a list so nothing can surprise me',
-  recognised: 'confirmed',
-  confirmedInChat: true,
+  source: 'chat',
+  payload: { part: 'manager', label: 'the drafter', fields: { strategy: 'rewrites until it asks for nothing', 'when-it-fires': 'before asking' } },
+  said: 'yes, that is what I do',
+  status: 'pending',
+  ...over,
+});
+// An idle-pass proposal: one value.
+const passItem = (over = {}) => ({
+  kind: 'detail',
+  payload: { part: 'wound', field: 'trigger', value: 'the moment before asking' },
+  anchor: 'right before I ask',
+  recognised: 'partial',
+  status: 'pending',
   ...over,
 });
 const row = (items, over = {}) => ({
-  id: over.id || 'msg-1', kind: 'm2_card', payload: { sessionId: S, sessionDate: 'Nov 4', items },
-  createdAt: '2026-11-04T00:00:00Z', readAt: null, actedAt: null, expiresAt: null, ...over,
+  id: over.id || 'msg-1', kind: 'm2_card', payload: { sessionId: S, sessionDate: 'Nov 5', items },
+  createdAt: '2026-11-05T00:00:00Z', readAt: null, actedAt: null, expiresAt: null, ...over,
 });
 {
-  const got = m2.chatPendingCards([row([item()])], S);
-  ok('a yes-in-chat item from this session reaches the chat screen',
+  const got = m2.chatPendingCards([row([chatItem()])], S);
+  ok('a chat card from this session reaches the chat screen',
     got.length === 1 && got[0].messageId === 'msg-1' && got[0].itemIndex === 0);
-  ok('...under the pass\'s snake_case spelling too',
-    m2.chatPendingCards([row([item({ confirmedInChat: undefined, confirmed_in_chat: true })])], S).length === 1);
+  ok('...marked by the pass\'s field instead of a source',
+    m2.chatPendingCards([row([chatItem({ source: undefined, confirmedInChat: true })])], S).length === 1
+      && m2.chatPendingCards([row([chatItem({ source: undefined, confirmed_in_chat: true })])], S).length === 1);
+  ok('a belief card and a middle-ground card (both spellings) reach it too',
+    m2.chatPendingCards([row([
+      chatItem({ kind: 'belief', payload: { label: 'my worth', fields: { belief: 'my worth isn\'t earned' } } }),
+      chatItem({ kind: 'middle', payload: { label: 'at the sink', fields: { note: 'washing up, not bracing' } } }),
+      chatItem({ kind: 'middle_ground', payload: { label: 'on the walk', fields: { note: 'the walk home' } } }),
+    ])], S).length === 3);
 }
 {
   const cases = [
-    ['another session\'s card', [row([item()], { payload: { sessionId: 'older', items: [item()] } })]],
-    ['an item they did not say yes to in chat', [row([item({ confirmedInChat: false })])]],
-    ['an accepted item', [row([item({ status: 'accepted' })])]],
-    ['a declined item', [row([item({ status: 'declined' })])]],
-    ['an item with an empty value', [row([item({ payload: { part: 'wound', field: 'belief', value: '  ' } })])]],
-    ['an item of an unknown kind', [row([item({ kind: 'key_moment' })])]],
-    ['an old-stack pending_parts row', [{ ...row([item()]), kind: 'pending_parts' }]],
-    ['an enrichment row', [{ ...row([item()]), kind: 'enrichment' }]],
+    ['another session\'s card', [row([chatItem()], { payload: { sessionId: 'older', items: [chatItem()] } })]],
+    ['an idle-pass proposal (Messages only)', [row([passItem()])]],
+    ['an accepted item', [row([chatItem({ status: 'accepted' })])]],
+    ['a declined item', [row([chatItem({ status: 'declined' })])]],
+    ['an expired item', [row([chatItem({ status: 'expired' })])]],
+    ['an item with nothing to show', [row([chatItem({ payload: { part: 'wound', label: ' ', fields: { belief: '  ' } } })])]],
+    ['an item of an unknown kind', [row([chatItem({ kind: 'key_moment' })])]],
+    ['an old-stack pending_parts row', [{ ...row([chatItem()]), kind: 'pending_parts' }]],
   ];
   for (const [label, rows] of cases) {
     ok(`stays off the chat screen: ${label}`, m2.chatPendingCards(rows, S).length === 0);
   }
-  ok('an empty session id matches nothing', m2.chatPendingCards([row([item()])], '').length === 0);
+  ok('an empty session id matches nothing', m2.chatPendingCards([row([chatItem()])], '').length === 0);
 }
 {
-  const mixed = row([item({ status: 'accepted' }), item(), item({ confirmedInChat: false }), item()]);
+  const mixed = row([chatItem({ status: 'accepted' }), chatItem(), passItem(), chatItem()]);
   const got = m2.chatPendingCards([mixed], S).map((c) => c.itemIndex);
   ok('item indices are the row\'s own, so a tap acts on the right item',
     JSON.stringify(got) === '[1,3]', JSON.stringify(got));
 }
 
-// What the card displays — and therefore what an edit replaces (A2a).
-console.log('\n3a. what a card says');
+console.log('\n3a. the server\'s pending read and done block (m2-api.md)');
 {
-  const v = (kind, payload) => m2.m2ItemValue({ kind, payload });
-  ok('part / detail / voice show payload.value',
-    v('part', { value: 'a' }) === 'a' && v('detail', { value: 'b' }) === 'b' && v('voice', { value: 'c' }) === 'c');
-  ok('middle_ground shows its label', v('middle_ground', { label: 'standing at the sink' }) === 'standing at the sink');
-  ok('second_wound shows the wound', v('second_wound', { wound: 'I am too much' }) === 'I am too much');
-  const cat = (kind, payload) => m2.m2ItemCategory({ kind, payload });
+  const body = {
+    sessionId: S, passRunning: true, mapEntryCount: 1, starterPending: true,
+    cards: [
+      { messageId: 'msg-1', itemIndex: 0, item: chatItem() },
+      { messageId: 'msg-1', itemIndex: 1, item: passItem({ confirmedInChat: true }) },   // a pass item said yes to
+      { messageId: 'msg-1', itemIndex: 2, item: chatItem({ status: 'expired' }) },
+      { messageId: 'msg-1', itemIndex: 3, item: { kind: 'key_moment', payload: {} } },
+      { messageId: 7, itemIndex: 4, item: chatItem() },
+      { messageId: 'msg-1', itemIndex: -1, item: chatItem() },
+    ],
+  };
+  const ans = m2.parseM2Pending(body, S);
+  ok('the pending read keeps exactly the cards the chat screen can show',
+    ans && JSON.stringify(ans.cards.map((c) => c.itemIndex)) === '[0,1]', JSON.stringify(ans && ans.cards.map((c) => c.itemIndex)));
+  ok('...and carries the pass state and the server\'s count',
+    ans && ans.passRunning === true && ans.starterCount === 1 && ans.starterPending === true);
+  ok('an answer for another session is dropped', m2.parseM2Pending({ ...body, sessionId: 'other' }, S) === null);
+  ok('a non-object body is dropped', m2.parseM2Pending(null, S) === null && m2.parseM2Pending('x', S) === null);
+  const d = m2.parseM2Done({ stack: 'm2', passScheduled: true, mapEntryCount: 2, firstSession: true, starterPending: false });
+  ok('the done block reads the pass flag and the count',
+    d && d.passScheduled === true && d.starterCount === 2 && d.starterPending === false);
+  ok('a done block naming another stack, or no block, is ignored',
+    m2.parseM2Done({ stack: 'legacy', passScheduled: true }) === null && m2.parseM2Done(undefined) === null);
+  ok('chat-screen cards start their clock through the M2 seen route, item by item',
+    /api\.markM2CardsSeen\(messageId, \[itemIndex\]\)/.test(codeOnly(read('services/m2Store.ts')))
+      && /\/api\/m2\/cards\/\$\{encodeURIComponent\(messageId\)\}\/seen/.test(api));
+}
+
+console.log('\n3b. what a card says, and what an edit sends');
+{
+  const it = chatItem();
+  ok('a chat card leads with its label, with its fields in order underneath',
+    m2.m2ItemTitle(it) === 'the drafter'
+      && JSON.stringify(m2.m2ItemFieldEntries(it).map((f) => f.key)) === '["strategy","when-it-fires"]');
+  const noLabel = chatItem({ payload: { part: 'wound', fields: { belief: 'I am too much' } } });
+  ok('a chat card with no label leads with its first field', m2.m2ItemTitle(noLabel) === 'I am too much');
+  ok('a pass proposal leads with its value', m2.m2ItemTitle(passItem()) === 'the moment before asking');
+  ok('the card\'s source line is the yes it came from, or the pass\'s anchor',
+    m2.m2ItemSource(it) === 'yes, that is what I do' && m2.m2ItemSource(passItem()) === 'right before I ask');
+
+  // Edits.
+  const draft = m2.m2EditDraft(it);
+  ok('an untouched chat card sends no edit', m2.m2BuildEdit(it, draft) === undefined);
+  const e1 = m2.m2BuildEdit(it, { ...draft, fields: { ...draft.fields, strategy: 'rewrites it ten times' } });
+  ok('editing one bundled field sends only that field',
+    JSON.stringify(e1) === JSON.stringify({ fields: { strategy: 'rewrites it ten times' } }), JSON.stringify(e1));
+  const e2 = m2.m2BuildEdit(it, { ...draft, title: 'the editor' });
+  ok('editing the name sends only the label', JSON.stringify(e2) === JSON.stringify({ label: 'the editor' }), JSON.stringify(e2));
+  ok('emptying a field is not an edit — that is what "Doesn\'t fit" is for',
+    m2.m2BuildEdit(it, { ...draft, fields: { ...draft.fields, strategy: '   ' } }) === undefined);
+  const nd = m2.m2EditDraft(noLabel);
+  ok('a card with no label never invents one from its headline',
+    JSON.stringify(m2.m2BuildEdit(noLabel, { title: 'x', fields: { belief: 'I am a lot' } })) === JSON.stringify({ fields: { belief: 'I am a lot' } })
+      && m2.m2BuildEdit(noLabel, { ...nd, title: 'something else' }) === undefined);
+  const p = passItem();
+  ok('a pass proposal\'s edit is a string, the shape every card path takes',
+    m2.m2BuildEdit(p, { title: 'just before I ask', fields: {} }) === 'just before I ask'
+      && m2.m2BuildEdit(p, m2.m2EditDraft(p)) === undefined);
+}
+{
   // first-session.md: never the map's words before they have met the thing.
-  // Every kind × every part × every field the pass may send (mapping-m2.md's
-  // field lists), with and without their own label.
   const PARTS = ['wound', 'fixer', 'skeptic', 'self-like', 'manager', 'firefighter', '', 'unknown-part'];
   const FIELDS = ['belief', 'feeling', 'story', 'body', 'history', 'worldview', 'trigger', 'voice', 'pattern',
     'selectivity', 'fear', 'what-it-protects', 'how-it-shows-up', 'desire', 'fantasy', 'what-it-built', 'agenda',
     'clenched-or-open', 'lean', 'strategy', 'what-it-manages', 'when-it-fires', 'what-it-gives', 'situation',
-    'example', 'manner', 'memory', '', 'not-a-field'];
+    'example', 'manner', 'memory', 'note', '', 'not-a-field'];
+  const JARGON = /\b(wound|fixer|skeptic|firefighter|manager|self-like|unknown-part)\b/i;
+  const RAWKEY = /\b[a-z]+-[a-z]+(?:-[a-z]+)*\b/;
   const leaks = [];
-  for (const k of ['part', 'detail', 'voice', 'middle_ground', 'second_wound']) {
-    for (const p of PARTS) for (const fld of FIELDS) for (const label of ['', 'the planner']) {
-      const c = cat(k, { part: p, field: fld, label, value: 'x' }) || '';
-      if (/\b(wound|fixer|skeptic|firefighter|manager|self-like|unknown-part)\b/i.test(c) || /\b[a-z]+-[a-z]+(?:-[a-z]+)*\b/.test(c.replace('self-like', ''))) {
-        leaks.push(`${k}/${p}/${fld}/${label || '-'} → "${c}"`);
-      }
+  for (const k of ['part', 'detail', 'voice', 'middle_ground', 'middle', 'second_wound', 'belief']) {
+    for (const part of PARTS) for (const field of FIELDS) for (const label of ['', 'the planner']) {
+      const single = m2.m2ItemCategory({ kind: k, payload: { part, field, label, value: 'x' } }) || '';
+      const bundled = m2.m2ItemCategory({ kind: k, payload: { part, label, fields: { [field || 'x']: 'y' } } }) || '';
+      for (const c of [single, bundled]) if (JARGON.test(c) || RAWKEY.test(c)) leaks.push(`${k}/${part}/${field} → "${c}"`);
     }
   }
-  ok('no framework term or raw field key reaches a card\'s category line',
+  for (const f of FIELDS) {
+    const w = m2.m2FieldWords(f);
+    if (JARGON.test(w) || RAWKEY.test(w)) leaks.push(`field ${f} → "${w}"`);
+  }
+  ok('no framework term or raw field key reaches a card\'s category or field labels',
     leaks.length === 0, leaks.slice(0, 5).join(' | '));
-  ok('their own name for a part is used when they gave one',
-    /^the planner · /.test(cat('detail', { part: 'manager', label: 'the planner', field: 'trigger', value: 'x' }) || ''));
 }
 
 // ===========================================================================
-// 4. COUNTING THE STARTER MAP (A6)
+// 4. THE SERVER'S COUNT
 // ===========================================================================
-console.log('\n4. starter map entries');
+console.log('\n4. starter map count');
+ok('the count is read under each name the server may use',
+  m2.readStarterCount({ starterMapCount: 2 }) === 2 && m2.readStarterCount({ tappedCardCount: 1 }) === 1
+    && m2.readStarterCount({ mapEntryCount: 3 }) === 3);
+ok('no number, a negative, a string or a missing body is "said nothing" (null), never zero',
+  [undefined, null, {}, { starterMapCount: -1 }, { starterMapCount: '2' }, { mapEntryCount: NaN }]
+    .every((b) => m2.readStarterCount(b) === null));
 {
-  const f = (value) => ({ value, confidence: 'confirmed' });
-  ok('an empty or missing map is zero', m2.countMapEntries(null) === 0 && m2.countMapEntries({ parts: [] }) === 0);
-  ok('belief and trigger on one wound are TWO entries (first-session.md counts things, not parts)',
-    m2.countMapEntries({ parts: [{ category: 'wound', markerFields: { belief: f('not enough'), trigger: f('being ignored') } }] }) === 2);
-  ok('a coping behaviour is an entry of its own',
-    m2.countMapEntries({ parts: [
-      { category: 'wound', markerFields: { belief: f('alone') } },
-      { category: 'manager', markerFields: { strategy: f('makes lists') } },
-    ] }) === 2);
-  ok('blank values do not count',
-    m2.countMapEntries({ parts: [{ category: 'wound', markerFields: { belief: f(''), trigger: f('   '), story: { value: 3 } } }] }) === 0);
-  ok('an older row with only a corePhrase counts once',
-    m2.countMapEntries({ parts: [{ category: 'fixer', corePhrase: 'try harder', markerFields: {} }] }) === 1);
-  ok('a corePhrase does not double-count a part that has field values',
-    m2.countMapEntries({ parts: [{ category: 'wound', corePhrase: 'alone', markerFields: { belief: f('alone') } }] }) === 1);
-  ok('a node the map draws by default (unknown or self category) never counts',
-    m2.countMapEntries({ parts: [{ category: 'self', corePhrase: 'calm' }, { category: '', markerFields: { x: f('y') } }] }) === 0);
-  ok('a server-owned mapEntryCount wins over the app\'s own count',
-    m2.countMapEntries({ mapEntryCount: 1, parts: [{ category: 'wound', markerFields: { belief: f('a'), trigger: f('b') } }] }) === 1);
-  ok('...unless it is not a usable number',
-    m2.countMapEntries({ mapEntryCount: -1, parts: [{ category: 'fixer', corePhrase: 'x' }] }) === 1
-      && m2.countMapEntries({ mapEntryCount: '5', parts: [] }) === 0);
+  const store = codeOnly(read('services/m2Store.ts'));
+  ok('every accept updates the count from the server\'s answer, from either surface',
+    /if \(res\.starterCount !== null\) setStarterCount\(res\.starterCount\);/.test(store));
+  ok('"the tap completed the starter map" reaches the chat screen only on a write that landed',
+    /if \(res\.ok && res\.starterMapComplete\)/.test(store));
 }
+ok('the chat screen puts the button on the newest reply when the tap completed it',
+  /subscribeStarterComplete\(\(\) => \{\s*setFirstSessionPending\(false\);[\s\S]{0,400}starterMapComplete: true/.test(chat));
 
 // ===========================================================================
-// 5. MESSAGES (A2)
+// 5. ONE CARD, BOTH SURFACES
 // ===========================================================================
-console.log('\n5. Messages');
+console.log('\n5. Messages and the chat screen');
 const msgs = codeOnly(read('app/messages.tsx'));
-ok('an m2_card row renders through the shared accept / edit / decline card',
-  /m\.kind === M2_CARD_KIND \? \(\s*<PendingPartsCard key=\{m\.id\} message=\{m\} onEditFocus=\{ensureEditVisible\} variant=\{M2_VARIANT\} \/>/.test(msgs));
-ok('the M2 variant skips items it cannot read rather than showing live buttons on an empty row',
-  /showItem: \(it\) => isM2Item\(it\) && !!m2ItemValue\(it\)/.test(msgs)
-    && /if \(variant\.showItem && !variant\.showItem\(it\)\) return null;/.test(msgs));
-ok('the two original variants carry no showItem, so they render every item as before',
-  !/const PENDING_PARTS_VARIANT: CardVariant = \{[^}]*showItem/.test(msgs)
-    && !/const MIDDLE_GROUND_VARIANT: CardVariant = \{[^}]*showItem/.test(msgs));
-
-const card = codeOnly(read('components/chat/PendingMapCards.tsx'));
-ok('the chat card accepts and declines through the same two inbox endpoints',
-  /api\.actOnMessage\(card\.messageId, \[card\.itemIndex\], edits\)/.test(card)
-    && /api\.declineMessageItems\(card\.messageId, \[card\.itemIndex\]\)/.test(card));
-ok('the chat card says it is not on the map until they add it',
-  /It isn’t on your map until you add it\./.test(read('components/chat/PendingMapCards.tsx')));
+ok('an m2_card row renders through the shared M2 card',
+  /m\.kind === M2_CARD_KIND \? \(\s*<M2InboxCard key=\{m\.id\} message=\{m\} onEditFocus=\{ensureEditVisible\} \/>/.test(msgs));
+ok('the legacy cards carry nothing M2', !/M2_VARIANT|showItem/.test(msgs));
+const cardSrc = read('components/m2/M2Cards.tsx');
+const card = codeOnly(cardSrc);
+ok('both surfaces accept and decline through the store, so a tap updates the count wherever it happens',
+  /acceptM2Item\(messageId, itemIndex, m2BuildEdit\(item, draft\)\)/.test(card)
+    && /declineM2Item\(messageId, itemIndex\)/.test(card)
+    && !/api\.actOnMessage|api\.declineMessageItems/.test(card));
+ok('every card says it is not on the map until they add it',
+  /It isn’t on your map until you add it\./.test(cardSrc));
 ok('a failed write is said back, not shown as added',
   /if \(res\.ok\) \{[\s\S]*?onSettled\('accepted'\)[\s\S]*?\} else \{[\s\S]*?setFailed\(true\)/.test(card));
+ok('Messages leaves out items it cannot read, has nothing to show for, or that expired',
+  /isM2Item\(it\) && !!m2ItemTitle\(it\) && it\.status !== 'expired'/.test(card));
 
 // ===========================================================================
 // 6. THE WELCOME IS THE FOUNDER'S TEXT
@@ -261,20 +345,67 @@ console.log('\n6. the welcome');
   const m = chatSrc.match(/const M2_WELCOME =([\s\S]*?);\r?\n/);
   const val = m ? new Function(`return (${m[1]});`)() : null;
   ok('M2_WELCOME is a plain string in the chat screen', typeof val === 'string' && val.length > 200);
+  ok('...and keeps "this isn\'t therapy" (ruling 2026-11-05)', typeof val === 'string' && /this isn't therapy/.test(val));
   // The founder's file lives outside the repo, so CI cannot see it. When it is
   // on disk, compare byte for byte; when it is not, SAY SO, so the runner lists
-  // the skip instead of letting a green line imply this half ran.
+  // the skip instead of letting a green line imply this half ran. Only the
+  // file the ruling names is used — an older first-session.md beside it holds
+  // the superseded welcome.
   const FOUNDER = process.env.M2_FIRST_SESSION_MD
-    || path.join(process.env.USERPROFILE || process.env.HOME || '', 'Downloads', 'first-session.md');
+    || path.join(process.env.USERPROFILE || process.env.HOME || '', 'Downloads', 'first-session (1).md');
   if (fs.existsSync(FOUNDER) && typeof val === 'string') {
     const lines = fs.readFileSync(FOUNDER, 'utf8').split(/\r?\n/);
     const at = lines.findIndex((l) => /^## Proposed welcome message/.test(l));
     const para = at === -1 ? null : lines.slice(at + 1).filter((l) => l.trim() && !/^\*/.test(l))[0];
-    ok('M2_WELCOME is byte-identical to first-session.md\'s proposed welcome', para === val,
+    ok('M2_WELCOME is byte-identical to the founder\'s proposed welcome', para === val,
       para == null ? 'heading not found in the founder file' : `founder ${para.length}ch, app ${val.length}ch`);
   } else {
-    console.log(`  [6.2] SKIP  founder comparison — ${FOUNDER} not on disk; compared on the machine that built this`);
+    console.log(`  [6.3] SKIP  founder comparison — ${FOUNDER} not on disk; compared on the machine that built this`);
   }
+}
+
+// ===========================================================================
+// 7. INVENTED MEMORY, REPLACED BEHIND THE FLAG (ruling 2026-11-05)
+// ===========================================================================
+console.log('\n7. invented memory');
+{
+  ok('OFF: the Guide and onboarding get WELCOME_SLIDES itself',
+    guide.welcomeSlidesFor(false) === guide.WELCOME_SLIDES);
+  const off = guide.WELCOME_SLIDES.flatMap((s) => s.body);
+  const on = guide.welcomeSlidesFor(true).flatMap((s) => s.body);
+  const changed = off.map((p, i) => [p, on[i]]).filter(([a, b]) => a !== b);
+  ok('ON: exactly one paragraph differs, and the decks are otherwise the same',
+    on.length === off.length && changed.length === 1
+      && guide.welcomeSlidesFor(true).every((s, i) => s.title === guide.WELCOME_SLIDES[i].title),
+    `${changed.length} paragraphs differ`);
+  const [was, now] = changed[0] || ['', ''];
+  ok('the paragraph that goes is the "learns who you are" one', /learns who you are/.test(was) && /knows you/.test(was));
+  ok('its replacement claims only what the app keeps',
+    !/learns|knows you|who you are|remember|transcript/i.test(now) && /map/.test(now) && /key moments/.test(now), now);
+  for (const f of ['app/(tabs)/guide.tsx', 'app/onboarding.tsx']) {
+    const src = codeOnly(read(f));
+    ok(`${f} reads the deck through the flag`,
+      /welcomeSlidesFor\(useM2Flag\(\)\)/.test(src) && !/\bWELCOME_SLIDES\b/.test(src));
+  }
+}
+{
+  const src = read('components/map/PartFolderModal.tsx');
+  const code = codeOnly(src);
+  const grab = (name) => {
+    const m = src.match(new RegExp(`const ${name} =\\s*([\\s\\S]*?);\\r?\\n`));
+    return m ? new Function(`return (${m[1]});`)() : null;
+  };
+  const was = grab('YOU_BIOGRAPHY');
+  const now = grab('YOU_BIOGRAPHY_M2');
+  ok('the YOU folder\'s legacy text is still built from the old biography', /description: YOU_BIOGRAPHY \+ '\\n\\n' \+ YOU_REST,/.test(code));
+  ok('the old biography is the one the audit names', typeof was === 'string' && /career/.test(was) && /brilliantly/.test(was));
+  ok('the M2 biography assumes no career, no relationships, and praises nothing',
+    typeof now === 'string' && !/career|relationship|brilliant|whole life/i.test(now), now || 'not found');
+  ok('only the biography changes on M2 — the rest of the folder is the same text',
+    /return m2 && partKey === 'self-like' \? YOU_BIOGRAPHY_M2 \+ '\\n\\n' \+ YOU_REST : meta\.description;/.test(code));
+  ok('the folder reads the flag before its early return, so the hook runs every render',
+    /const m2 = useM2Flag\(\);\s*if \(!partKey\) return null;/.test(code)
+      && /\{descriptionFor\(partKey, meta, m2\)\}/.test(code));
 }
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURE(S)`} — ${pass + fail} checks`);
