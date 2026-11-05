@@ -103,16 +103,22 @@ console.log('\n2. off is today');
 {
   const fn = (name) => { const at = chat.indexOf(`const ${name} = useCallback(`); return at === -1 ? '' : chat.slice(at, at + 300); };
   ok('reading the chat cards is a no-op when M2 is off',
-    /^const readChatCards = useCallback\(async \(\): Promise<boolean> => \{\s*if \(!m2Ref\.current\) return false;/.test(fn('readChatCards')));
-  ok('looking for chat cards is a no-op when M2 is off',
-    /^const lookForChatCards = useCallback\(\(expectPass: boolean = false\) => \{\s*if \(!m2Ref\.current\) return;/.test(fn('lookForChatCards')));
+    /^const readChatCards = useCallback\(async \(\): Promise<void> => \{\s*if \(!m2Ref\.current\) return;/.test(fn('readChatCards')));
+  ok('the fallback look after a reply is a no-op when M2 is off',
+    /^const lookForChatCards = useCallback\(\(\) => \{\s*if \(!m2Ref\.current\) return;/.test(fn('lookForChatCards')));
   ok('the first read on M2 waits for the flag',
     /useEffect\(\(\) => \{\s*if \(!m2\) return;\s*readChatCards\(\)/.test(chat));
   ok('the focus refresh is a no-op when M2 is off',
     /useFocusEffect\(\s*React\.useCallback\(\(\) => \{\s*if \(!m2Ref\.current\) return;\s*readChatCards\(\)/.test(chat));
-  ok('the looking stops: a token cancels it, and it never runs past the ceiling',
-    /const token = \+\+cardLookTokenRef\.current;/.test(chat) && /elapsed < M2_PENDING_MAX_MS/.test(chat)
-      && m2.M2_PENDING_MAX_MS <= 60000 && m2.M2_PENDING_POLL_MS >= 2000);
+  // m2-api.md: "Chat cards no longer wait on a pass: the done frame's
+  // cardsAdded names them." No loop, no interval, no re-arming timer.
+  ok('no polling: nothing re-arms a look, and nothing runs on an interval',
+    !/setInterval\(/.test(chat) && !/M2_PENDING_(POLL|MAX)_MS|M2_PASS_START_GRACE_MS/.test(chat + read('services/m2.ts'))
+      && (fn('lookForChatCards').match(/setTimeout\(/g) || []).length === 1);
+  ok('after a reply the app reads only when the done frame says a card was made',
+    /onM2Done: \(info\) => \{[\s\S]{0,400}if \(info\.cardsAdded\.length > 0\) readChatCards\(\)/.test(chat));
+  ok('...and the done block cancels the fallback look queued in the same tick',
+    /onM2Done: \(info\) => \{\s*if \(cardLookTimerRef\.current\) clearTimeout\(cardLookTimerRef\.current\);/.test(chat));
 }
 {
   // The done frame's m2 block reaches the chat only when the server sent one,
@@ -226,15 +232,24 @@ console.log('\n3a. the server\'s pending read and done block (m2-api.md)');
   const ans = m2.parseM2Pending(body, S);
   ok('the pending read keeps exactly the cards the chat screen can show',
     ans && JSON.stringify(ans.cards.map((c) => c.itemIndex)) === '[0,1]', JSON.stringify(ans && ans.cards.map((c) => c.itemIndex)));
-  ok('...and carries the pass state and the server\'s count',
-    ans && ans.passRunning === true && ans.starterCount === 1 && ans.starterPending === true);
+  ok('...and carries the server\'s count',
+    ans && ans.starterCount === 1 && ans.starterPending === true);
   ok('an answer for another session is dropped', m2.parseM2Pending({ ...body, sessionId: 'other' }, S) === null);
   ok('a non-object body is dropped', m2.parseM2Pending(null, S) === null && m2.parseM2Pending('x', S) === null);
-  const d = m2.parseM2Done({ stack: 'm2', passScheduled: true, mapEntryCount: 2, firstSession: true, starterPending: false });
-  ok('the done block reads the pass flag and the count',
-    d && d.passScheduled === true && d.starterCount === 2 && d.starterPending === false);
+  // The block as m2-api.md shows it (Nov 5 rewrite).
+  const d = m2.parseM2Done({
+    stack: 'm2', passScheduled: false,
+    cardsAdded: [{ messageId: 'msg-1', itemIndex: 0 }, { messageId: 'x', itemIndex: -1 }, { itemIndex: 2 }, 'junk'],
+    mapEntryCount: 1, firstSession: true, starterPending: false,
+  });
+  ok('the done block reads the cards this reply made, dropping malformed entries',
+    d && JSON.stringify(d.cardsAdded) === JSON.stringify([{ messageId: 'msg-1', itemIndex: 0 }]), JSON.stringify(d && d.cardsAdded));
+  ok('...and the server\'s count of tapped cards',
+    d && d.starterCount === 1 && d.starterPending === false);
+  ok('a reply that made no card says so with an empty list',
+    JSON.stringify(m2.parseM2Done({ stack: 'm2', mapEntryCount: 0 }).cardsAdded) === '[]');
   ok('a done block naming another stack, or no block, is ignored',
-    m2.parseM2Done({ stack: 'legacy', passScheduled: true }) === null && m2.parseM2Done(undefined) === null);
+    m2.parseM2Done({ stack: 'legacy', cardsAdded: [] }) === null && m2.parseM2Done(undefined) === null);
   ok('chat-screen cards start their clock through the M2 seen route, item by item',
     /api\.markM2CardsSeen\(messageId, \[itemIndex\]\)/.test(codeOnly(read('services/m2Store.ts')))
       && /\/api\/m2\/cards\/\$\{encodeURIComponent\(messageId\)\}\/seen/.test(api));
@@ -248,24 +263,35 @@ console.log('\n3b. what a card says, and what an edit sends');
       && JSON.stringify(m2.m2ItemFieldEntries(it).map((f) => f.key)) === '["strategy","when-it-fires"]');
   const noLabel = chatItem({ payload: { part: 'wound', fields: { belief: 'I am too much' } } });
   ok('a chat card with no label leads with its first field', m2.m2ItemTitle(noLabel) === 'I am too much');
+  // m2-api.md: a chat card's payload.value is its name — the label, or the
+  // first field's value.
+  const asServed = chatItem({ payload: { part: 'fixer', fields: { pattern: 'I take on extra', fear: 'being seen failing' }, field: 'pattern', value: 'taking on extra' } });
+  ok('with no label, the server\'s value is the name',
+    m2.m2ItemTitle(asServed) === 'taking on extra' && m2.m2ItemHasOwnName(asServed) === true);
+  const valueIsFirst = chatItem({ payload: { part: 'wound', fields: { belief: 'I am too much' }, field: 'belief', value: 'I am too much' } });
+  ok('a value that is just the first field is not a name of its own (no repeated row)',
+    m2.m2ItemHasOwnName(valueIsFirst) === false && m2.m2ItemHasOwnName(noLabel) === false && m2.m2ItemHasOwnName(it) === true);
   ok('a pass proposal leads with its value', m2.m2ItemTitle(passItem()) === 'the moment before asking');
   ok('the card\'s source line is the yes it came from, or the pass\'s anchor',
     m2.m2ItemSource(it) === 'yes, that is what I do' && m2.m2ItemSource(passItem()) === 'right before I ask');
+  ok('a middle-ground card shows the line it came from',
+    m2.m2ItemNote({ kind: 'middle_ground', payload: { label: 'at the sink', note: 'washing up, not bracing' } }) === 'washing up, not bracing'
+      && m2.m2ItemNote(passItem()) === '');
 
-  // Edits.
+  // Edits: m2-api.md's object edit is { "<field>": "<new value>" }.
   const draft = m2.m2EditDraft(it);
   ok('an untouched chat card sends no edit', m2.m2BuildEdit(it, draft) === undefined);
   const e1 = m2.m2BuildEdit(it, { ...draft, fields: { ...draft.fields, strategy: 'rewrites it ten times' } });
-  ok('editing one bundled field sends only that field',
-    JSON.stringify(e1) === JSON.stringify({ fields: { strategy: 'rewrites it ten times' } }), JSON.stringify(e1));
-  const e2 = m2.m2BuildEdit(it, { ...draft, title: 'the editor' });
-  ok('editing the name sends only the label', JSON.stringify(e2) === JSON.stringify({ label: 'the editor' }), JSON.stringify(e2));
+  ok('editing one bundled field sends only that field, flat',
+    JSON.stringify(e1) === JSON.stringify({ strategy: 'rewrites it ten times' }), JSON.stringify(e1));
+  const e3 = m2.m2BuildEdit(it, { ...draft, fields: { strategy: 'a', 'when-it-fires': 'b' } });
+  ok('editing two fields sends both', JSON.stringify(e3) === JSON.stringify({ strategy: 'a', 'when-it-fires': 'b' }), JSON.stringify(e3));
+  ok('the name is not editable: a changed headline alone sends nothing',
+    m2.m2BuildEdit(it, { ...draft, title: 'the editor' }) === undefined);
   ok('emptying a field is not an edit — that is what "Doesn\'t fit" is for',
     m2.m2BuildEdit(it, { ...draft, fields: { ...draft.fields, strategy: '   ' } }) === undefined);
-  const nd = m2.m2EditDraft(noLabel);
-  ok('a card with no label never invents one from its headline',
-    JSON.stringify(m2.m2BuildEdit(noLabel, { title: 'x', fields: { belief: 'I am a lot' } })) === JSON.stringify({ fields: { belief: 'I am a lot' } })
-      && m2.m2BuildEdit(noLabel, { ...nd, title: 'something else' }) === undefined);
+  ok('a card with no label edits its fields like any other',
+    JSON.stringify(m2.m2BuildEdit(noLabel, { title: 'x', fields: { belief: 'I am a lot' } })) === JSON.stringify({ belief: 'I am a lot' }));
   const p = passItem();
   ok('a pass proposal\'s edit is a string, the shape every card path takes',
     m2.m2BuildEdit(p, { title: 'just before I ask', fields: {} }) === 'just before I ask'
@@ -406,6 +432,24 @@ console.log('\n7. invented memory');
   ok('the folder reads the flag before its early return, so the hook runs every render',
     /const m2 = useM2Flag\(\);\s*if \(!partKey\) return null;/.test(code)
       && /\{descriptionFor\(partKey, meta, m2\)\}/.test(code));
+}
+{
+  // The end-session fallback (other-surfaces-audit.md, SessionSummaryModal.tsx
+  // :203-204): "Your map has been updated" on every fallback, written or not.
+  const src = read('components/session/SessionSummaryModal.tsx');
+  const code = codeOnly(src);
+  const grab = (name) => {
+    const m = src.match(new RegExp(`const ${name} = ('[^']*');`));
+    return m ? new Function(`return (${m[1]});`)() : null;
+  };
+  const was = grab('FALLBACK');
+  const now = grab('FALLBACK_M2');
+  ok('OFF: the summary fallback is the same sentence pair as before',
+    was === 'This session has been saved to your journal. Your map has been updated.', String(was));
+  ok('ON: it keeps the journal sentence and drops the map claim',
+    now === 'This session has been saved to your journal.' && !/map/i.test(now), String(now));
+  ok('the modal picks between them on the flag, read on every render',
+    /const m2 = useM2Flag\(\);/.test(code) && /\{m2 \? FALLBACK_M2 : FALLBACK\}/.test(code));
 }
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURE(S)`} — ${pass + fail} checks`);

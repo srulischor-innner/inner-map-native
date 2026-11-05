@@ -35,29 +35,49 @@ const ROWS: InboxMessage[] = [
       sessionId: SESSION,
       sessionDate: 'Nov 5',
       items: [
-        // A chat card: the reply's [CARD:...], fields bundled.
+        // A chat card as m2-api.md shows it: the reply's [CARD:...], fields
+        // bundled, `value` the card's name, `anchor` the yes.
         {
           part: 'wound',
           kind: 'part',
           source: 'chat',
+          confirmedInChat: true,
           payload: {
             part: 'wound',
             label: 'Needing is too much',
             fields: { belief: 'If I need something, I’m too much', trigger: 'The moment before asking for help' },
+            field: 'belief',
+            value: 'Needing is too much',
+            enrich: false,
           },
-          said: 'yeah. that’s exactly it.',
+          anchor: 'yeah. that’s exactly it.',
           status: 'pending',
         },
-        // A chat card with no label: its first field is its headline.
+        // A chat card with no label: `value` is its first field, which stands
+        // in as the headline and is not repeated underneath.
         {
           part: 'manager',
           kind: 'part',
           source: 'chat',
+          confirmedInChat: true,
           payload: {
             part: 'manager',
             fields: { strategy: 'Rewrites a message until it asks for nothing' },
+            field: 'strategy',
+            value: 'Rewrites a message until it asks for nothing',
+            enrich: false,
           },
-          said: 'yes, that’s what I do',
+          anchor: 'yes, that’s what I do',
+          status: 'pending',
+        },
+        // A belief card: one value, edited as text.
+        {
+          part: 'self-like',
+          kind: 'belief',
+          source: 'chat',
+          confirmedInChat: true,
+          payload: { belief: 'My worth isn’t earned', value: 'My worth isn’t earned' },
+          anchor: 'yes. keep that one',
           status: 'pending',
         },
         // An idle-pass proposal: one value, Messages only.

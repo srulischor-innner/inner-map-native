@@ -31,7 +31,7 @@ import { colors, fonts, spacing } from '../../constants/theme';
 import type { InboxMessage } from '../../services/api';
 import {
   isM2Item, m2BuildEdit, m2EditDraft, m2FieldWords, m2ItemCategory, m2ItemFieldEntries,
-  m2ItemIsBundled, m2ItemSource, m2ItemTitle,
+  m2ItemHasOwnName, m2ItemIsBundled, m2ItemNote, m2ItemSource, m2ItemTitle,
   type ChatPendingCard, type M2CardItem, type M2EditDraft,
 } from '../../services/m2';
 import { acceptM2Item, declineM2Item, markM2CardShown } from '../../services/m2Store';
@@ -161,9 +161,12 @@ function M2ItemCard({
   const fields = m2ItemFieldEntries(item);
   const category = m2ItemCategory(item);
   const source = m2ItemSource(item);
-  // On a chat card the headline is the label; if it has none, the headline IS
-  // its first field, so the field inputs are what edits it.
-  const titleEditable = !bundled || (typeof item.payload.label === 'string' && !!item.payload.label.trim());
+  const note = m2ItemNote(item);
+  // A pass proposal's headline is its one value, and that is what EDIT edits.
+  // A chat card's headline is its name, which is not editable (m2BuildEdit says
+  // why); its fields are. When it has no name of its own, its first field
+  // stands in as the headline and is not repeated underneath.
+  const ownName = m2ItemHasOwnName(item);
   const [draft, setDraft] = useState<M2EditDraft>(() => m2EditDraft(item));
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -201,7 +204,7 @@ function M2ItemCard({
     }
   }
 
-  const shownTitle = titleEditable ? draft.title : (fields[0] ? draft.fields[fields[0].key] : draft.title);
+  const shownTitle = !bundled || ownName ? draft.title : draft.fields[fields[0].key];
 
   if (outcome) {
     return (
@@ -223,7 +226,7 @@ function M2ItemCard({
 
   // The rows under the headline: every bundled field, except the first when it
   // is already the headline.
-  const rowFields = titleEditable ? fields : fields.slice(1);
+  const rowFields = ownName ? fields : fields.slice(1);
 
   return (
     <View
@@ -234,7 +237,8 @@ function M2ItemCard({
 
       {editing ? (
         <>
-          {titleEditable ? (
+          {bundled && ownName ? <Text style={styles.title}>{shownTitle}</Text> : null}
+          {!bundled ? (
             <TextInput
               ref={firstInput}
               value={draft.title}
@@ -256,7 +260,7 @@ function M2ItemCard({
                 onChangeText={(t) => setDraft((d) => ({ ...d, fields: { ...d.fields, [key]: t } }))}
                 style={styles.fieldInput}
                 selectionColor={colors.amber}
-                autoFocus={!titleEditable && n === 0}
+                autoFocus={n === 0}
                 multiline
                 blurOnSubmit
                 accessibilityLabel={`Edit ${m2FieldWords(key)}`}
@@ -276,6 +280,12 @@ function M2ItemCard({
           ))}
         </>
       )}
+      {note ? (
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>{m2FieldWords('note')}</Text>
+          <Text style={styles.fieldValue}>{note}</Text>
+        </View>
+      ) : null}
 
       {surface === 'inbox' && source ? (
         <Text style={styles.source}>{`You said: “${source}”`}</Text>

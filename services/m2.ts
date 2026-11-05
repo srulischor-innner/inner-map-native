@@ -128,12 +128,29 @@ export function m2ItemValue(it: M2CardItem): string {
   }
 }
 
-/** The card's headline. A chat card leads with its name (the marker's label,
- *  "2–6 words, their words"), falling back to its first field; a pass
- *  proposal leads with its value. */
+/** The card's headline. A chat card leads with its name: the marker's label
+ *  ("2–6 words, their words"), else the server's `value`, which m2-api.md
+ *  defines as that same name (label or first field), else its first field. A
+ *  pass proposal leads with its value. */
 export function m2ItemTitle(it: M2CardItem): string {
-  if (m2ItemIsBundled(it)) return str(it.payload.label) || m2ItemFieldEntries(it)[0].value;
+  if (m2ItemIsBundled(it)) {
+    return str(it.payload.label) || str(it.payload.value) || m2ItemFieldEntries(it)[0].value;
+  }
   return m2ItemValue(it);
+}
+
+/** Whether a chat card's headline is a name of its own, rather than its first
+ *  field standing in for one. */
+export function m2ItemHasOwnName(it: M2CardItem): boolean {
+  if (!m2ItemIsBundled(it)) return false;
+  const first = m2ItemFieldEntries(it)[0].value;
+  const name = str(it.payload.label) || str(it.payload.value);
+  return !!name && name !== first;
+}
+
+/** A middle-ground card's "the line it came from", shown under its label. */
+export function m2ItemNote(it: M2CardItem): string {
+  return it.kind === 'middle_ground' || it.kind === 'middle' ? str(it.payload.note) : '';
 }
 
 /** Where the card came from, for the line under it in Messages. */
@@ -259,8 +276,9 @@ export function chatPendingCards(messages: InboxMessage[], sessionId: string): C
 // Editing before accepting
 // ---------------------------------------------------------------------------
 
-/** A chat card's edit: only what changed. */
-export type M2BundledEdit = { label?: string; fields?: Record<string, string> };
+/** A chat card's edit: m2-api.md's object edit, `{ "<field>": "<new value>" }`,
+ *  which "replaces just those fields". Only the fields that changed. */
+export type M2BundledEdit = Record<string, string>;
 
 /** The draft the edit UI holds: the headline, plus each bundled field. */
 export type M2EditDraft = { title: string; fields: Record<string, string> };
@@ -273,26 +291,25 @@ export function m2EditDraft(it: M2CardItem): M2EditDraft {
 
 /** What goes in /act's `edits[i]`, or undefined when nothing changed.
  *  A pass proposal edits its one value, as a string — the shape every card
- *  path already takes. A chat card's fields are bundled, so its edit is an
- *  object carrying only the label and the fields that changed. An edit that
- *  empties something is ignored for that piece: emptying is what "Doesn't
- *  fit" is for. */
+ *  path already takes. A chat card's fields are bundled, so its edit is the
+ *  object form, carrying only the fields that changed.
+ *
+ *  A chat card's NAME is not editable. m2-api.md's only rename is a text edit
+ *  on a several-field card, and one edit carries one shape, so a rename and a
+ *  field change could not go in the same tap; and the name reaches the map
+ *  only for a manager or firefighter. An edit that empties a field is ignored
+ *  for that field: emptying is what "Doesn't fit" is for. */
 export function m2BuildEdit(it: M2CardItem, draft: M2EditDraft): string | M2BundledEdit | undefined {
   if (!m2ItemIsBundled(it)) {
     const v = draft.title.trim();
     return v && v !== m2ItemValue(it) ? v : undefined;
   }
-  const out: M2BundledEdit = {};
-  const label = draft.title.trim();
-  const originalLabel = str(it.payload.label);
-  if (originalLabel && label && label !== originalLabel) out.label = label;
-  const fields: Record<string, string> = {};
+  const fields: M2BundledEdit = {};
   for (const { key, value } of m2ItemFieldEntries(it)) {
     const next = (draft.fields[key] ?? '').trim();
     if (next && next !== value) fields[key] = next;
   }
-  if (Object.keys(fields).length) out.fields = fields;
-  return out.label !== undefined || out.fields ? out : undefined;
+  return Object.keys(fields).length ? fields : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,10 +318,10 @@ export function m2BuildEdit(it: M2CardItem, draft: M2EditDraft): string | M2Bund
 
 /** "The server counts tapped cards for the starter-map button" (ruling
  *  2026-11-05). The app does not count anything itself: it reads the server's
- *  number wherever the server sends one — the first-session status at
- *  boot and the accept response after a tap. Three names are read because the
- *  doc that fixes the name does not exist yet. null means the server said
- *  nothing, which is not the same as zero. */
+ *  `mapEntryCount` — the number of accepted M2 card items (m2-api.md) — from
+ *  the done frame, the accept response and /api/m2/pending. Two other names
+ *  are still read so a rename on the server cannot silently zero the button.
+ *  null means the server said nothing, which is not the same as zero. */
 export function readStarterCount(body: unknown): number | null {
   if (!body || typeof body !== 'object') return null;
   const b = body as Record<string, unknown>;
@@ -328,19 +345,13 @@ export function starterMapButtonAllowed(m2: boolean, count: number | null): bool
 }
 
 // ---------------------------------------------------------------------------
-// When to look for a chat card (m2-api.md, "Polling for chat cards")
+// Reading the chat cards (m2-api.md, "Polling")
 // ---------------------------------------------------------------------------
 
 /** GET /api/m2/pending?sessionId= — the chat screen's own read, which skips
- *  the inbox sweep. The app looks once when a reply finishes (a [CARD:...]
- *  card is made with the reply), then every few seconds for as long as the
- *  server says a pass is still running, up to a ceiling. */
-export const M2_PENDING_POLL_MS = 3000;
-export const M2_PENDING_MAX_MS = 45000;
-/** When the done frame says a pass was scheduled, how long the app keeps
- *  looking before the server reports it running. */
-export const M2_PASS_START_GRACE_MS = 10000;
-
+ *  the inbox sweep. No polling any more: the card is made on the yes, and the
+ *  reply's done frame names it in `cardsAdded`, so the app reads once when
+ *  that list is non-empty — plus at M2 boot and on focus. */
 export type M2PendingAnswer = {
   cards: ChatPendingCard[];
   passRunning: boolean;
@@ -371,15 +382,28 @@ export function parseM2Pending(body: unknown, sessionId: string): M2PendingAnswe
   };
 }
 
-/** The done frame's `m2` block: whether a pass is coming, and the count. */
-export type M2DoneInfo = { passScheduled: boolean; starterCount: number | null; starterPending: boolean };
+/** The done frame's `m2` block: the cards this reply made, and the count.
+ *  (`passScheduled` is always false now that the pass runs at idle; it is not
+ *  read.) */
+export type M2DoneInfo = {
+  cardsAdded: { messageId: string; itemIndex: number }[];
+  starterCount: number | null;
+  starterPending: boolean;
+};
 
 export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
   if (!m2Block || typeof m2Block !== 'object') return null;
-  const b = m2Block as { stack?: unknown; passScheduled?: unknown; starterPending?: unknown };
+  const b = m2Block as { stack?: unknown; cardsAdded?: unknown; starterPending?: unknown };
   if (b.stack !== undefined && b.stack !== 'm2') return null;
+  const cardsAdded: { messageId: string; itemIndex: number }[] = [];
+  for (const c of Array.isArray(b.cardsAdded) ? b.cardsAdded : []) {
+    const o = c as { messageId?: unknown; itemIndex?: unknown };
+    if (o && typeof o.messageId === 'string' && Number.isInteger(o.itemIndex) && (o.itemIndex as number) >= 0) {
+      cardsAdded.push({ messageId: o.messageId, itemIndex: o.itemIndex as number });
+    }
+  }
   return {
-    passScheduled: b.passScheduled === true,
+    cardsAdded,
     starterCount: readStarterCount(m2Block),
     starterPending: b.starterPending === true,
   };

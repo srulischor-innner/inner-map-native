@@ -42,11 +42,7 @@ import { getTopUpProduct, purchase } from '../../services/purchases';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete, holdBackBoundary } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState, useAttentionState } from '../../utils/attentionState';
 import { refreshInboxStatus, subscribeInbox } from '../../services/messagesInbox';
-import {
-  chatPendingCards, starterMapButtonAllowed,
-  M2_PENDING_POLL_MS, M2_PENDING_MAX_MS, M2_PASS_START_GRACE_MS,
-  type ChatPendingCard,
-} from '../../services/m2';
+import { chatPendingCards, starterMapButtonAllowed, type ChatPendingCard } from '../../services/m2';
 import { setM2Flag, setStarterCount, useStarterCount, subscribeStarterComplete } from '../../services/m2Store';
 import { PendingMapCards } from '../../components/m2/M2Cards';
 import { emitBeliefChanged } from '../../utils/beliefEvents';
@@ -684,37 +680,30 @@ export default function ChatScreen() {
     return subscribeInbox((s) => setChatCards(chatPendingCards(s.messages, sessionIdRef.current)));
   }, [m2]);
   useEffect(() => () => { if (cardLookTimerRef.current) clearTimeout(cardLookTimerRef.current); }, []);
-  // One read of this session's chat cards and the starter count. Resolves to
-  // whether the server says a pass is still running. An answer for a session
-  // that has since ended is dropped.
-  const readChatCards = useCallback(async (): Promise<boolean> => {
-    if (!m2Ref.current) return false;
+  // One read of this session's chat cards and the starter count. An answer for
+  // a session that has since ended is dropped.
+  const readChatCards = useCallback(async (): Promise<void> => {
+    if (!m2Ref.current) return;
     const sid = sessionIdRef.current;
     const ans = await api.getM2Pending(sid);
-    if (!ans || sid !== sessionIdRef.current) return false;
+    if (!ans || sid !== sessionIdRef.current) return;
     setChatCards(ans.cards);
     if (ans.starterCount !== null) setStarterCount(ans.starterCount);
-    return ans.passRunning;
   }, []);
-  // After a reply finishes, look for the card its yes produced. A [CARD:...]
-  // card is made with the reply, so the first look is at once; while the
-  // server says a pass is running (or one was scheduled and has not started
-  // yet) the app keeps looking every few seconds, up to a ceiling. A new turn,
-  // or End Session, cancels any look still waiting.
-  const lookForChatCards = useCallback((expectPass: boolean = false) => {
+  // After a reply finishes. The card is made on the yes, with the reply, and
+  // the done frame's m2 block names it (cardsAdded) — so there is no polling:
+  // onM2Done reads once when that list has something in it. This queued read
+  // is only the fallback for a done frame that carried no m2 block at all;
+  // onM2Done, which fires in the same tick, cancels it. A new turn or End
+  // Session cancels it too.
+  const lookForChatCards = useCallback(() => {
     if (!m2Ref.current) return;
     if (cardLookTimerRef.current) clearTimeout(cardLookTimerRef.current);
     const token = ++cardLookTokenRef.current;
-    const started = Date.now();
-    const look = async () => {
-      const running = await readChatCards();
-      if (token !== cardLookTokenRef.current) return;
-      const elapsed = Date.now() - started;
-      const again = elapsed < M2_PENDING_MAX_MS
-        && (running || (expectPass && elapsed < M2_PASS_START_GRACE_MS));
-      cardLookTimerRef.current = again ? setTimeout(look, M2_PENDING_POLL_MS) : null;
-    };
-    cardLookTimerRef.current = setTimeout(look, 0);
+    cardLookTimerRef.current = setTimeout(() => {
+      cardLookTimerRef.current = null;
+      if (token === cardLookTokenRef.current) readChatCards().catch(() => {});
+    }, 0);
   }, [readChatCards]);
   // On M2 from boot, and on every return to the chat (from Messages, the map,
   // anywhere a card could have been tapped): the cards and the count. At boot
@@ -1487,7 +1476,9 @@ export default function ChatScreen() {
         // a stopped (truncated) reply.
         const starterMapDone = !stopped && hasStarterMapComplete(finalRaw);
         updateBubble(target, false, starterMapDone ? { starterMapComplete: true } : undefined);
-        // M2: a yes in this reply has just become a card on the server. A
+        // M2: a yes in this reply has just become a card on the server. Queue
+        // the fallback read; the done frame's m2 block, a moment later, either
+        // cancels it or replaces it with a read of the cards it names. A
         // stopped reply was not persisted, so there is nothing to look for.
         if (!stopped) lookForChatCards();
         if (starterMapDone) {
@@ -1678,12 +1669,15 @@ export default function ChatScreen() {
               chatModeRef.current = wireModeFor(mode as WorkingMode);
               setChatMode(wireModeFor(mode as WorkingMode));
             },
-            // M2's done block. Fires in the same tick as onDone, so it
-            // replaces the plain look finishTurn just queued with one that
-            // knows whether a pass is coming. Never fires off M2.
+            // M2's done block. Fires in the same tick as onDone, so it cancels
+            // the fallback read finishTurn just queued, and reads only when
+            // this reply made a card. Never fires off M2.
             onM2Done: (info) => {
+              if (cardLookTimerRef.current) clearTimeout(cardLookTimerRef.current);
+              cardLookTimerRef.current = null;
+              cardLookTokenRef.current++;
               if (info.starterCount !== null) setStarterCount(info.starterCount);
-              lookForChatCards(info.passScheduled);
+              if (info.cardsAdded.length > 0) readChatCards().catch(() => {});
             },
             onMessageIds: (ids) => {
               // Round 9 RAG — stamp serverMessageId onto the most
