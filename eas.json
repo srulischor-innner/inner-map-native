@@ -23,6 +23,20 @@
         "APP_VARIANT": "preview"
       }
     },
+    "staging": {
+      "distribution": "internal",
+      "environment": "preview",
+      "ios": {
+        "simulator": false
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_VARIANT": "staging",
+        "STAGING_API_BASE_URL": ""
+      }
+    },
     "production": {
       "autoIncrement": true,
       "ios": {

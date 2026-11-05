@@ -364,7 +364,37 @@ const VARIANTS = {
     androidPackage:   'com.srulischor.innermap',
     name:             'Inner Map',
   },
+  // STAGING (2026-11-05, founder go): an internal build of the M2 branch for
+  // the founder's own device, talking to a staging server rather than
+  // production. Same internal slot as dev/preview, never the store identifier,
+  // so it cannot be confused with or overwrite the App Store install. Its API
+  // URL comes from the staging profile's env in eas.json, and the config
+  // REFUSES to evaluate without one (see stagingApiBaseUrl below): a staging
+  // build that silently fell back to production would put test conversations
+  // on the live server.
+  staging: {
+    bundleIdentifier: 'com.srulischor.innermap.dev',
+    androidPackage:   'com.srulischor.innermap.dev',
+    name:             'Inner Map Staging',
+  },
 };
+
+const PRODUCTION_API_BASE_URL = 'https://inner-map-production.up.railway.app';
+
+// The staging server's base URL, from STAGING_API_BASE_URL (set in eas.json's
+// staging profile). Throws unless it is an absolute https URL that is not the
+// production server, so a misconfigured staging build fails at config time —
+// on the developer's machine and on the builder alike — instead of shipping.
+function stagingApiBaseUrl() {
+  const raw = String(process.env.STAGING_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^\s/]+/i.test(raw)) {
+    throw new Error(`[app.config] staging build needs STAGING_API_BASE_URL as an https URL (got "${raw}")`);
+  }
+  if (raw.toLowerCase() === PRODUCTION_API_BASE_URL) {
+    throw new Error('[app.config] STAGING_API_BASE_URL is the production server; a staging build must not point there');
+  }
+  return raw;
+}
 
 module.exports = () => {
   // Variant selection MUST use APP_VARIANT (set per-profile in eas.json
@@ -398,6 +428,11 @@ module.exports = () => {
       package: variant.androidPackage,
     },
   };
+  // Only the staging variant changes the server. Every other profile keeps
+  // base.expo.extra exactly as it is.
+  if (profile === 'staging') {
+    expo.extra = { ...base.expo.extra, apiBaseUrl: stagingApiBaseUrl() };
+  }
 
   return { expo };
 };
