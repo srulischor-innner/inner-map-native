@@ -34,7 +34,7 @@
       },
       "env": {
         "APP_VARIANT": "staging",
-        "STAGING_API_BASE_URL": ""
+        "STAGING_API_BASE_URL": "https://inner-map-staging-staging.up.railway.app"
       }
     },
     "production": {
