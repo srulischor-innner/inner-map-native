@@ -47,6 +47,19 @@ The founder's sources match the server's copies byte for byte, checked on 2026-1
 | **`chatMode` ignored** | Still sent, defaulting to `explore` because M2 has no mode control. |
 | **A first session can end after 4+ user turns** when a new one starts (ruling (d), still open). | Read from `completedAt` at boot, as always. |
 
+## The welcome, skipping, and building the starter map later (founder, 2026-11-08)
+
+**Status: proposed to the chat-stack session on 2026-11-08, not yet confirmed.** The app is built against the proposal below. If the server settles on different shapes, the change goes in `services/api.ts` (`getFirstSessionStatus`, `getM2Welcome`, `m2StarterMap`).
+
+| What | Endpoint | The app |
+|---|---|---|
+| **Welcome at boot** | `GET /api/first-session-status` → `m2Welcome`. The server picks the first-conversation text, or "Welcome back…" with "Last time, …" filled or left out, or omits the field once the starter map is finished. | Read only on M2 and only through `sanitizeM2Welcome`, which refuses anything that isn't plain words: over 900 characters, brackets, braces, tags, control characters. Shown when the first session isn't done. Otherwise the opener is the fallback, `M2_WELCOME` (the founder's first-conversation text, exactly). A finished first session gets the standard opener, as before. |
+| **Welcome after End Session** | `GET /api/m2/welcome` → `{ welcome }` | Read while the summary is up and placed on Continue. Nothing is awaited between opener and transcript, which the opener smoke still checks. If the read fails or comes in after Continue, the fallback shows. |
+| **Skip the starter map for now** | `POST /api/m2/starter-map` `{ sessionId, action: "skip" }` → `{ ok }` | A chip under the "Building your starter map" banner, on M2, while the overlay is on, never over a crisis. On `ok: true`, and only for the session it asked about, the chip and banner go for the rest of that session. Nothing else changes: not the first-session flag, the welcome, or the count. |
+| **Build my starter map** | `POST /api/m2/starter-map` `{ sessionId, action: "start" }` → `{ ok, welcome }` | A button on the empty map (M2), which replaces "START BUILDING" there. The chat asks the server first, and a refusal changes nothing on screen. If no words of theirs are in this conversation yet, it becomes the starter-map conversation. If there are, the app asks first and then opens a new one; the old one is already saved. It opens with `welcome`, or the fallback. |
+
+Off M2 none of these is read or shown. The opener selector ignores a server text, the banner is `firstSessionPending` alone, and the map keeps its old button.
+
 ## The fields a card can carry (mapping-m2 (3).md, line 16)
 
 The editor shows every bundled field with its own input, labelled in plain words. Every field line 16 names has its own label, and no two fields on one card share a label. The smoke checks both, and when the founder's file is on disk it also checks its list still matches line 16.

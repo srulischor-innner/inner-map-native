@@ -25,7 +25,7 @@ import { isMembershipRefusal } from './membershipDecision';
 // Type-only in the other direction (m2.ts imports InboxMessage as a type), so
 // this is not a runtime cycle.
 import {
-  parseM2Flag, readStarterCount, parseM2Pending, parseM2Done,
+  parseM2Flag, readStarterCount, parseM2Pending, parseM2Done, sanitizeM2Welcome,
   type M2CardItem, type M2BundledEdit, type M2PendingAnswer, type M2DoneInfo,
 } from './m2';
 
@@ -1923,6 +1923,46 @@ export const api = {
     } catch { return false; }
   },
 
+  /** M2 only. GET /api/m2/welcome — the welcome for the NEXT conversation,
+   *  chosen by the server (founder, 2026-11-08): read while the End Session
+   *  summary is up, placed when they tap Continue. Sanitized; null on any
+   *  failure, which the caller turns into the first-conversation fallback. */
+  async getM2Welcome(): Promise<string | null> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/m2/welcome', {
+        label: 'm2-welcome', method: 'GET', headers, timeoutMs: 10000,
+      });
+      if (!res.ok) return null;
+      const j: any = await res.json().catch(() => null);
+      return sanitizeM2Welcome(j?.welcome);
+    } catch (e) {
+      console.warn('[m2] welcome failed:', (e as Error)?.message);
+      return null;
+    }
+  },
+
+  /** M2 only. POST /api/m2/starter-map { sessionId, action } (founder,
+   *  2026-11-08). "skip": the rest of this session runs without the
+   *  starter-map overlay, and nothing else changes. "start": this session
+   *  runs WITH it, and the answer may carry the welcome to open it with.
+   *  ok is true only when the server said so. */
+  async m2StarterMap(sessionId: string, action: 'skip' | 'start'): Promise<{ ok: boolean; welcome: string | null }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/m2/starter-map', {
+        label: `m2-starter-${action}`, method: 'POST', headers,
+        body: JSON.stringify({ sessionId, action }), timeoutMs: 15000,
+      });
+      if (!res.ok) return { ok: false, welcome: null };
+      const j: any = await res.json().catch(() => null);
+      return { ok: j?.ok === true, welcome: sanitizeM2Welcome(j?.welcome) };
+    } catch (e) {
+      console.warn(`[m2] starter-map ${action} failed:`, (e as Error)?.message);
+      return { ok: false, welcome: null };
+    }
+  },
+
   /** POST /api/messages/:id/decline { itemIndices } — "No, doesn't resonate."
    *  Marks the given items declined (terminal); never writes to the map. */
   async declineMessageItems(
@@ -3287,23 +3327,26 @@ export const api = {
    *  one boot call that says who this person is, and a second call on the boot
    *  critical path would add its latency to a blank screen. Every failure shape
    *  answers m2: false — the app as it is today. `starterCount` is the server's
-   *  count of tapped cards when it sends one (assumption A6), else null. */
-  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null }> {
+   *  count of tapped cards when it sends one, else null. `m2Welcome` is the
+   *  server's welcome for this conversation (founder, 2026-11-08), already
+   *  through sanitizeM2Welcome — null when absent or unusable. */
+  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null; m2Welcome: string | null }> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/first-session-status', {
         label: 'first-session-status', method: 'GET', headers,
       });
-      if (!res.ok) return { completedAt: null, ok: false, m2: false, starterCount: null };
+      if (!res.ok) return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null };
       const j: any = await res.json().catch(() => null);
-      if (!j || typeof j !== 'object') return { completedAt: null, ok: false, m2: false, starterCount: null };
+      if (!j || typeof j !== 'object') return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null };
       return {
         completedAt: typeof j.completedAt === 'string' ? j.completedAt : null, ok: true,
         m2: parseM2Flag(j), starterCount: readStarterCount(j),
+        m2Welcome: parseM2Flag(j) ? sanitizeM2Welcome(j.m2Welcome) : null,
       };
     } catch (e) {
       console.warn('[first-session-status] threw:', (e as Error)?.message);
-      return { completedAt: null, ok: false, m2: false, starterCount: null };
+      return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null };
     }
   },
 

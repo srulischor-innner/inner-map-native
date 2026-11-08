@@ -43,7 +43,9 @@ import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersFo
 import { setAttentionState, setNoticedPart, resetAttentionState, useAttentionState } from '../../utils/attentionState';
 import { refreshInboxStatus, subscribeInbox } from '../../services/messagesInbox';
 import { chatPendingCards, starterMapButtonAllowed, type ChatPendingCard } from '../../services/m2';
-import { setM2Flag, setStarterCount, useStarterCount, subscribeStarterComplete } from '../../services/m2Store';
+import {
+  setM2Flag, setStarterCount, useStarterCount, subscribeStarterComplete, consumeStarterMapRequest,
+} from '../../services/m2Store';
 import { PendingMapCards } from '../../components/m2/M2Cards';
 import { emitBeliefChanged } from '../../utils/beliefEvents';
 // (Polish round 7) clearMapVoiceHistory removed alongside the
@@ -132,23 +134,22 @@ const ORIENTATION_MESSAGE =
   "quite it' or 'It's more like X' is the most useful thing you can share.\n\n" +
   "Would you like to begin?";
 
-// THE M2 WELCOME — the first-session opener for an account on the M2 stack.
-// Verbatim from the founder's first-session (1).md, line 33 ("Proposed welcome
-// message"; ruling 2026-11-05, which also keeps "this isn't therapy"). It
-// replaces ORIENTATION_MESSAGE for M2 only: that one promises four ways of
-// working and "I'll ask", and M2 has one prompt and no boxes. This one promises
-// what the M2 first conversation does — a map that builds only with their
-// say-so, and "if I ever say too much, tell me". Do not edit it here; a change
-// to this copy is the founder's, in that file.
+// THE M2 WELCOME — the first-conversation fallback for an account on the M2
+// stack. On M2 the SERVER chooses the welcome (founder, 2026-11-08): this text
+// for a first conversation, a "Welcome back" one while the starter map is
+// unfinished. The app shows whichever the server sends and falls back to this,
+// exactly, when the server sends nothing usable. Verbatim from the founder's
+// Nov 8 fixes, which replaced the Nov 5 welcome (first-session (1).md line 33):
+// "The slides already explain the app, so the welcome no longer does." It
+// replaces ORIENTATION_MESSAGE for M2 only. Do not edit it here; a change to
+// this copy is the founder's.
 const M2_WELCOME =
-  "Hi. This is a place to bring what's going on: something that happened, a " +
-  "feeling that won't let go, a pattern you keep running into. I'll help you " +
-  "see why it keeps happening, the parts of you involved and the belief " +
-  "underneath, and how to step back from it instead of being run by it. As we " +
-  "talk, a map of your inner system builds, only with your say-so. I'm not a " +
-  "person, and this isn't therapy. This first time I'll be a bit more active, " +
-  "so your map has a start by the end. Start anywhere. If I ever say too much, " +
-  "tell me, and I'll keep it shorter.";
+  "Welcome. I'm glad you're here. Before anything else, we'll build the start " +
+  "of your map together, so the first conversation is a little different: " +
+  "I'll ask a bit more than I usually will, and when something sounds like it " +
+  "belongs on your map, I'll offer it, and you decide. What we build today is " +
+  "a rough sketch; it gets sharper as we go, and if something I say doesn't " +
+  "fit, say so. After that, it's your space. Start wherever you like.";
 
 // ===== THE OPENING BUBBLE IS A CONSTANT =====
 // Founder decision, August 2026: the dynamic session-opening greeting is
@@ -212,14 +213,21 @@ const STANDARD_OPENER =
 // for the flag — and those two only happen to a user who has already been
 // through a session.
 //
-// M2 ADDS ONE CONSTANT, NOT A LADDER. The second input is the account's M2
-// flag, and it only ever swaps which constant a FIRST session gets. With it
-// false or missing the selector answers exactly as it did before M2 existed —
-// scripts/smoke-constant-opener.js replays that across every input. Returning
-// users get STANDARD_OPENER on either stack: it names the style dials, and
-// those are honoured under one prompt as much as under four.
-function openerFor(firstSessionPending: boolean | undefined, m2?: boolean): string {
-  return firstSessionPending === true ? (m2 === true ? M2_WELCOME : ORIENTATION_MESSAGE) : STANDARD_OPENER;
+// M2 ADDS ONE CONSTANT AND ONE SERVER TEXT, NOT A LADDER. The second input is
+// the account's M2 flag; the third is the welcome the M2 server chose (founder,
+// 2026-11-08), already through services/m2.ts sanitizeM2Welcome, or null.
+//   - M2 off: the third input is IGNORED and the selector answers exactly as
+//     it did before M2 existed — scripts/smoke-constant-opener.js replays that
+//     across every input.
+//   - M2 on, starter map unfinished: the server's welcome, else M2_WELCOME.
+//   - Everyone whose first session is done: STANDARD_OPENER, on either stack.
+// The selector still touches no ref, no state and no clock: the server text is
+// handed in by the caller, which read it off the first-session status (boot)
+// or /api/m2/welcome (End Session) before calling.
+function openerFor(firstSessionPending: boolean | undefined, m2?: boolean, m2Welcome?: string | null): string {
+  if (firstSessionPending !== true) return STANDARD_OPENER;
+  if (m2 !== true) return ORIENTATION_MESSAGE;
+  return typeof m2Welcome === 'string' && m2Welcome ? m2Welcome : M2_WELCOME;
 }
 
 export default function ChatScreen() {
@@ -727,6 +735,7 @@ export default function ChatScreen() {
     if (!m2) return;
     return subscribeStarterComplete(() => {
       setFirstSessionPending(false);
+      setStarterStarted(false);
       setMessages((prev) => {
         if (prev.some((m) => m.starterMapComplete)) return prev;
         for (let i = prev.length - 1; i >= 0; i--) {
@@ -739,6 +748,40 @@ export default function ChatScreen() {
       });
     });
   }, [m2]);
+
+  // ===== M2: THE STARTER MAP, SKIPPED OR STARTED (founder, 2026-11-08) =====
+  //   m2WelcomeRef   — the welcome the server chose for the conversation that
+  //                    opens next: off the first-session status at boot, off
+  //                    /api/m2/welcome while the End Session summary is up, off
+  //                    the start call for "Build my starter map". Handed to
+  //                    openerFor, which ignores it off M2.
+  //   starterSkipped — "Skip the starter map for now" was tapped and the server
+  //                    took it: the rest of THIS session runs without the
+  //                    starter-map overlay. It flips nothing else — the starter
+  //                    map stays unfinished and the returning welcome still
+  //                    applies next time — so it resets with the session.
+  //   starterStarted — this session was opened by "Build my starter map": the
+  //                    overlay runs even for someone whose first session is
+  //                    done. Also per session.
+  const m2WelcomeRef = useRef<string | null>(null);
+  const [starterSkipped, setStarterSkipped] = useState(false);
+  const [starterSkipBusy, setStarterSkipBusy] = useState(false);
+  const [starterStarted, setStarterStarted] = useState(false);
+  const handleSkipStarterMap = useCallback(async () => {
+    if (!m2Ref.current || starterSkipBusy) return;
+    setStarterSkipBusy(true);
+    Haptics.selectionAsync().catch(() => {});
+    const sid = sessionIdRef.current;
+    const res = await api.m2StarterMap(sid, 'skip');
+    setStarterSkipBusy(false);
+    // Only on the server's yes, and only for the session it was asked about.
+    if (!res.ok || sid !== sessionIdRef.current) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      return;
+    }
+    setStarterSkipped(true);
+    setStarterStarted(false);
+  }, [starterSkipBusy]);
   // NOTE: there is no second effect fetching this. /api/first-session-status
   // used to be called TWICE at boot — here, wrapped in a retry that could
   // never fire, and again inside the boot Promise.all with no resilience at
@@ -842,8 +885,8 @@ export default function ChatScreen() {
       // First-session status is fetched alongside the map so the opening
       // bubble can be the orientation message without a second round-trip or
       // a flash of the wrong copy.
-      let firstStatus: { completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null } =
-        { completedAt: null, ok: false, m2: false, starterCount: null };
+      let firstStatus: { completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null; m2Welcome: string | null } =
+        { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null };
       try {
         [map, firstStatus] = await Promise.all([
           api.getLatestMap(),
@@ -912,6 +955,9 @@ export default function ChatScreen() {
       setM2(isM2);
       setM2Flag(isM2);
       if (isM2) setStarterCount(firstStatus.starterCount);
+      // The server's welcome for this conversation, kept for the backstop
+      // seed. Off M2 it is never read (openerFor ignores it).
+      m2WelcomeRef.current = isM2 ? firstStatus.m2Welcome : null;
 
       const md = map?.mapData || map || {};
       // Onboarding-vs-ongoing decision: "any core node filled" means
@@ -968,7 +1014,7 @@ export default function ChatScreen() {
       // blank-screen bugs the comments below and in the End Session reset
       // describe. One transcript, seeded here, and the seed effect that used to
       // fill the other one is gone.
-      const finalGreeting = openerFor(isFirstSession, isM2);
+      const finalGreeting = openerFor(isFirstSession, isM2, m2WelcomeRef.current);
       // Skip the opener if a session resume already hydrated the transcript
       // (cold-start race: the resume focus-effect can land mid-boot). The
       // lock ref is set synchronously by the resume consumer.
@@ -996,6 +1042,70 @@ export default function ChatScreen() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ===== "BUILD MY STARTER MAP" CONSUMER (M2, founder 2026-11-08) =====
+  // The button on the empty map arms services/m2Store's one-shot request and
+  // routes here. The server is asked FIRST ("start" for the session that will
+  // carry it); only on its yes does the screen change, so a refusal leaves the
+  // conversation exactly as it was.
+  //   - No words of theirs in this conversation yet: it becomes the starter-map
+  //     conversation, same session id, opener replaced.
+  //   - Their words are already in it: a new conversation, after they say so.
+  //     The old one is not lost: every reply is saved as it lands.
+  // Everything here goes through refs and setters, because the focus callback
+  // below keeps the first render's closure.
+  const startStarterMapConversation = () => {
+    if (!m2Ref.current) return;
+    const hasTurns = historyRef.current.some((h) => h.role === 'user');
+    const begin = async () => {
+      // A reply still streaming is kept as far as it got, as Stop does.
+      stopTurnRef.current?.();
+      const sid = hasTurns ? uuidv4() : sessionIdRef.current;
+      const res = await api.m2StarterMap(sid, 'start');
+      if (!res.ok) {
+        Alert.alert('Couldn’t start that just now', 'Please try again in a moment.');
+        return;
+      }
+      cancelTTSStream();
+      resetAttentionState();
+      setChatSessionActive(false);
+      if (cardLookTimerRef.current) clearTimeout(cardLookTimerRef.current);
+      cardLookTimerRef.current = null;
+      cardLookTokenRef.current++;
+      setChatCards([]);
+      setLivePart(null); setLiveConfidence(null);
+      gatheredNoticedRef.current = false;
+      hasEngagedRef.current = false;
+      resumeLockedModeRef.current = null;
+      sessionIdRef.current = sid;
+      setStarterSkipped(false);
+      setStarterStarted(true);
+      m2WelcomeRef.current = res.welcome;
+      // A starter-map conversation opens with the starter-map welcome whatever
+      // the first-session flag says: the person asked for one.
+      const greeting = openerFor(true, m2Ref.current, m2WelcomeRef.current);
+      greetedRef.current = true; // seeded on this line, not by the backstop
+      setMessages([{ id: uuidv4(), role: 'assistant', text: greeting }]);
+      historyRef.current = [{ role: 'assistant', content: greeting }];
+    };
+    if (!hasTurns) { begin(); return; }
+    // MICROCOPY — flagged for the copy pass.
+    Alert.alert(
+      'Start a new conversation?',
+      'Your starter map gets a conversation of its own. This one is already saved in your history.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Start', onPress: () => { begin(); } },
+      ],
+    );
+  };
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!consumeStarterMapRequest()) return;
+      startStarterMapConversation();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
+  );
 
   // ===== PENDING CHAT MESSAGE CONSUMER =====
   // Cross-tab handoff for "Establish your belief" in PartFolderModal:
@@ -1126,7 +1236,7 @@ export default function ChatScreen() {
     if (messages.length > 0) return;
     if (firstSessionPending === undefined) return;
     greetedRef.current = true;
-    const opener = openerFor(firstSessionPending, m2);
+    const opener = openerFor(firstSessionPending, m2, m2WelcomeRef.current);
     console.log(
       `[chat] BACKSTOP seeded the transcript — boot and resume both left it empty (${firstSessionPending === true ? 'first-session orientation' : 'standard'} opener)`,
     );
@@ -1493,6 +1603,7 @@ export default function ChatScreen() {
           // plus the banner and the CTA. Nothing to sequence, nothing to
           // refresh, no echo of the marker that can fabricate a boundary.
           setFirstSessionPending(false);
+          setStarterStarted(false); // M2: a started starter-map session is done too
           console.log('[first-session] STARTER_MAP_COMPLETE — banner cleared, CTA on');
         }
 
@@ -2067,6 +2178,9 @@ export default function ChatScreen() {
   // a tap brings the count to two. Off M2 this is always the handler, exactly
   // as before.
   const starterMapHandler = starterMapButtonAllowed(m2, starterCount) ? handleViewStarterMap : undefined;
+  // M2: whether this session runs the starter-map overlay — a first session,
+  // or one opened by "Build my starter map" — and the person has not skipped it.
+  const starterOverlayOn = (firstSessionPending === true || starterStarted) && !starterSkipped;
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
     () => messages.map((m) => (
       <MessageBubble
@@ -2137,12 +2251,31 @@ export default function ChatScreen() {
           /api/first-session-status and gets a non-null value back.
           Visual: thin italic pill in dim amber — ambient, not heavy
           header. */}
-      {firstSessionPending === true ? (
+      {/* On M2 the banner follows the starter-map overlay, which the person
+          can switch off for this session (skip) or on for one (Build my starter
+          map). Off M2 it is exactly what it was: firstSessionPending alone. */}
+      {(m2 ? starterOverlayOn : firstSessionPending === true) ? (
         <View style={styles.firstSessionBanner} pointerEvents="none">
           <Text style={styles.firstSessionBannerText}>
             Building your starter map
           </Text>
         </View>
+      ) : null}
+      {/* SKIP THE STARTER MAP FOR NOW (founder, 2026-11-08). Tells the server;
+          the rest of this session runs without the starter-map overlay. It
+          flips nothing — the map stays unfinished, and the returning welcome
+          still applies next time. Never over a crisis referral. */}
+      {m2 && starterOverlayOn && !crisisGated ? (
+        <Pressable
+          onPress={handleSkipStarterMap}
+          disabled={starterSkipBusy}
+          hitSlop={8}
+          style={[styles.starterSkipChip, starterSkipBusy && { opacity: 0.5 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Skip the starter map for now"
+        >
+          <Text style={styles.starterSkipChipText}>Skip the starter map for now</Text>
+        </Pressable>
       ) : null}
       {/* THE TWO-PILL MODE TOGGLE IS GONE. It switched between two transcripts,
           and there is one. Leaving it would also have left the screen showing
@@ -2411,6 +2544,16 @@ export default function ChatScreen() {
             // session"). The map state and parts data persist on the
             // server underneath both threads regardless.
             setEndingTransition(true);
+            // M2: the welcome for the conversation that opens next is the
+            // server's call (founder, 2026-11-08) — read it now, while the
+            // summary is up, so Continue can place it with nothing awaited.
+            // Cleared first: the welcome this session opened with is not the
+            // next one's. A read that has not landed by Continue leaves the
+            // fallback text.
+            m2WelcomeRef.current = null;
+            if (m2Ref.current) {
+              api.getM2Welcome().then((w) => { m2WelcomeRef.current = w; }).catch(() => {});
+            }
             const turnMode = wireModeFor(workingModeRef.current);
             const turnThread = threadFor();
             const transcriptForSave = turnThread.historyRef.current.slice();
@@ -2471,6 +2614,9 @@ export default function ChatScreen() {
               cardLookTimerRef.current = null;
               cardLookTokenRef.current++;
               setChatCards([]);
+              // Skip and start were for the session that just ended.
+              setStarterSkipped(false);
+              setStarterStarted(false);
               // Inbox badge refresh — a just-ended session may have left
               // parked NOTICED items that the next sweep will bundle.
               refreshInboxStatus(true).catch(() => {});
@@ -2503,7 +2649,7 @@ export default function ChatScreen() {
               // says anyway — the same constant, on both threads, for this
               // cohort. Keep it synchronous: an await between the reset and
               // these assignments is the exact shape the gate existed to police.
-              const greeting = openerFor(firstSessionPending, m2);
+              const greeting = openerFor(firstSessionPending, m2, m2WelcomeRef.current);
               greetedRef.current = true; // seeded on this line, not by the backstop
               // The new session opens in the DEFAULT working mode, which is
               // Light — not Explore. Ending a session and starting another
@@ -2626,6 +2772,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(230,180,122,0.08)',
     borderWidth: 0.5,
     borderColor: 'rgba(230,180,122,0.25)',
+  },
+  // M2: "Skip the starter map for now". Quieter than the banner above it —
+  // an option, not a call to action.
+  starterSkipChip: {
+    alignSelf: 'center',
+    marginBottom: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 0.5,
+    borderColor: 'rgba(240,237,232,0.18)',
+  },
+  starterSkipChipText: {
+    color: colors.creamDim,
+    fontSize: 12,
+    letterSpacing: 0.2,
   },
   firstSessionBannerText: {
     color: colors.amber,

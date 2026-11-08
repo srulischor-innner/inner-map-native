@@ -422,30 +422,100 @@ ok('Messages leaves out items it cannot read, has nothing to show for, or that e
   /isM2Item\(it\) && !!m2ItemTitle\(it\) && it\.status !== 'expired'/.test(card));
 
 // ===========================================================================
-// 6. THE WELCOME IS THE FOUNDER'S TEXT
+// 6. THE WELCOME (founder, 2026-11-08)
 // ===========================================================================
 console.log('\n6. the welcome');
 {
+  // The fallback is the founder's first-conversation text, exactly. It came in
+  // the founder's Nov 8 fixes, not in a file, so its record is here: change it
+  // only with the founder's words.
+  const FOUNDER_FIRST_CONVERSATION = "Welcome. I'm glad you're here. Before anything else, we'll build the start of your map together, so the first conversation is a little different: I'll ask a bit more than I usually will, and when something sounds like it belongs on your map, I'll offer it, and you decide. What we build today is a rough sketch; it gets sharper as we go, and if something I say doesn't fit, say so. After that, it's your space. Start wherever you like.";
   const m = chatSrc.match(/const M2_WELCOME =([\s\S]*?);\r?\n/);
   const val = m ? new Function(`return (${m[1]});`)() : null;
-  ok('M2_WELCOME is a plain string in the chat screen', typeof val === 'string' && val.length > 200);
-  ok('...and keeps "this isn\'t therapy" (ruling 2026-11-05)', typeof val === 'string' && /this isn't therapy/.test(val));
-  // The founder's file lives outside the repo, so CI cannot see it. When it is
-  // on disk, compare byte for byte; when it is not, SAY SO, so the runner lists
-  // the skip instead of letting a green line imply this half ran. Only the
-  // file the ruling names is used — an older first-session.md beside it holds
-  // the superseded welcome.
-  const FOUNDER = process.env.M2_FIRST_SESSION_MD
-    || path.join(process.env.USERPROFILE || process.env.HOME || '', 'Downloads', 'first-session (1).md');
-  if (fs.existsSync(FOUNDER) && typeof val === 'string') {
-    const lines = fs.readFileSync(FOUNDER, 'utf8').split(/\r?\n/);
-    const at = lines.findIndex((l) => /^## Proposed welcome message/.test(l));
-    const para = at === -1 ? null : lines.slice(at + 1).filter((l) => l.trim() && !/^\*/.test(l))[0];
-    ok('M2_WELCOME is byte-identical to the founder\'s proposed welcome', para === val,
-      para == null ? 'heading not found in the founder file' : `founder ${para.length}ch, app ${val.length}ch`);
-  } else {
-    console.log(`  [6.3] SKIP  founder comparison — ${FOUNDER} not on disk; compared on the machine that built this`);
+  ok('M2_WELCOME is the founder\'s first-conversation text, byte for byte',
+    val === FOUNDER_FIRST_CONVERSATION, typeof val === 'string' ? `${val.length}ch` : 'not found');
+  ok('...and passes its own guard, so the fallback can never be refused',
+    m2.sanitizeM2Welcome(val) === val);
+
+  // The guard on the server's text: what reaches the screen is plain words.
+  const W = m2.sanitizeM2Welcome;
+  ok('a plain server welcome passes, trimmed and with line endings normalised',
+    W('  Welcome back.\r\nWe\'re still building the start of your map.  ') === 'Welcome back.\nWe\'re still building the start of your map.');
+  const refused = [
+    ['not a string', 42], ['null', null], ['empty', '   '],
+    ['too long', 'x'.repeat(m2.M2_WELCOME_MAX_CHARS + 1)],
+    ['an unfilled placeholder', 'Welcome back. Last time, [filled by the server from their map or last session].'],
+    ['a marker', 'Welcome back. [CHAT_META:{"detectedPart":"wound"}]'],
+    ['JSON', '{"welcome":"Welcome back."}'],
+    ['a tag', 'Welcome <b>back</b>'],
+    ['a control character', 'Welcome\u0007 back'],
+  ];
+  const leaked = refused.filter(([, v]) => W(v) !== null).map(([label]) => label);
+  ok('anything that is not plain words is refused, and the fallback shows instead',
+    leaked.length === 0, leaked.join(', '));
+
+  // Where the server's text comes from, and that it is read only on M2.
+  const apiCode = codeOnly(api);
+  ok('the boot welcome is read only for a flagged account, through the guard',
+    /m2Welcome: parseM2Flag\(j\) \? sanitizeM2Welcome\(j\.m2Welcome\) : null,/.test(apiCode));
+  {
+    const a = api.indexOf('async getFirstSessionStatus()');
+    const b = a === -1 ? -1 : api.indexOf('\n  },', a);
+    const body = a === -1 || b === -1 ? '' : api.slice(a, b);
+    const failures = body.match(/return \{[^}]*ok: false[^}]*\}/g) || [];
+    ok('every failure shape of the status call answers m2Welcome: null',
+      failures.length >= 3 && failures.every((r) => /m2Welcome: null/.test(r)));
   }
+  ok('boot hands the server\'s text to the selector only on M2',
+    /m2WelcomeRef\.current = isM2 \? firstStatus\.m2Welcome : null;/.test(chat)
+      && /const finalGreeting = openerFor\(isFirstSession, isM2, m2WelcomeRef\.current\);/.test(chat));
+  ok('End Session clears the old welcome and reads the next one only on M2, before Continue',
+    /m2WelcomeRef\.current = null;\s*if \(m2Ref\.current\) \{\s*api\.getM2Welcome\(\)\.then\(\(w\) => \{ m2WelcomeRef\.current = w; \}\)/.test(chat));
+}
+
+// ===========================================================================
+// 6a. SKIP THE STARTER MAP, AND BUILD IT LATER (founder, 2026-11-08)
+// ===========================================================================
+console.log('\n6a. skip and build');
+{
+  ok('the skip chip is the founder\'s words, on M2 only, while the overlay is on, never over a crisis',
+    /\{m2 && starterOverlayOn && !crisisGated \? \(\s*<Pressable\s*onPress=\{handleSkipStarterMap\}/.test(chat)
+      && />Skip the starter map for now<\/Text>/.test(chatSrc));
+  ok('the overlay is on for a first session or a started one, and off once skipped',
+    /const starterOverlayOn = \(firstSessionPending === true \|\| starterStarted\) && !starterSkipped;/.test(chat));
+  ok('OFF M2 the banner is exactly what it was: firstSessionPending alone',
+    /\{\(m2 \? starterOverlayOn : firstSessionPending === true\) \? \(/.test(chat));
+  {
+    const at = chat.indexOf('const handleSkipStarterMap = useCallback(');
+    const body = at === -1 ? '' : chat.slice(at, chat.indexOf('}, [starterSkipBusy]);', at));
+    ok('skip tells the server, and the chip goes only on its yes, for the session it was asked about',
+      /api\.m2StarterMap\(sid, 'skip'\)/.test(body)
+        && /if \(!res\.ok \|\| sid !== sessionIdRef\.current\) \{[\s\S]*?return;\s*\}\s*setStarterSkipped\(true\);/.test(body));
+    ok('skip flips nothing else: no first-session flag, no welcome, no count',
+      !/setFirstSessionPending|m2WelcomeRef|setStarterCount/.test(body));
+  }
+  ok('skip and start reset with the session they belonged to',
+    /setStarterSkipped\(false\);\s*setStarterStarted\(false\);/.test(chat));
+  {
+    const at = chat.indexOf('const startStarterMapConversation = () => {');
+    const body = at === -1 ? '' : chat.slice(at, chat.indexOf('useFocusEffect(', at));
+    const ask = body.indexOf("api.m2StarterMap(sid, 'start')");
+    const refusal = body.indexOf('if (!res.ok) {');
+    const firstChange = body.search(/setMessages\(|sessionIdRef\.current = sid|setStarterStarted\(true\)/);
+    ok('"Build my starter map" asks the server first, and a refusal changes nothing on screen',
+      ask > -1 && refusal > ask && firstChange > refusal);
+    ok('...opens with the starter-map welcome through the one selector',
+      /const greeting = openerFor\(true, m2Ref\.current, m2WelcomeRef\.current\);/.test(body));
+    ok('...and asks before replacing a conversation that already has their words in it',
+      /if \(!hasTurns\) \{ begin\(\); return; \}\s*Alert\.alert\(/.test(body));
+  }
+  const mapSrc = codeOnly(read('app/(tabs)/map.tsx'));
+  ok('the empty map offers "Build my starter map" on M2, and routes through the one-shot request',
+    /\{m2\s*&& view === 'triangle'\s*&& loadStatus === 'loaded'\s*&& layers\.length === 0 \? \(/.test(mapSrc)
+      && /requestStarterMap\(\);\s*router\.push\('\/'\);/.test(mapSrc)
+      && />Build my starter map<\/Text>/.test(mapSrc));
+  ok('OFF M2 the empty map keeps its old button, exactly as it was',
+    /\{!m2\s*&& view === 'triangle'\s*&& loadStatus === 'loaded'\s*&& layers\.length === 0\s*&& firstSessionDoneAt === null \? \(/.test(mapSrc));
 }
 
 // ===========================================================================

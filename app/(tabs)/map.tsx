@@ -27,6 +27,7 @@ import { IntegrationPanel } from '../../components/map/IntegrationPanel';
 import { subscribeMapActivation } from '../../utils/mapActivation';
 import { subscribeBeliefChanged } from '../../utils/beliefEvents';
 import { markMapSeen, refreshMapSeenStatus } from '../../services/mapSeen';
+import { useM2Flag, requestStarterMap } from '../../services/m2Store';
 
 const INTEGRATION_VIEW_SEEN_KEY = 'integration_view_seen';
 const SECOND_LAYER_INTRODUCED_KEY = 'second_layer_introduced';
@@ -202,6 +203,8 @@ export default function MapScreen() {
   // or null); 'error' = network/transport failure (catch block hit).
   const [loadStatus, setLoadStatus] = useState<'idle' | 'loaded' | 'error'>('idle');
   const router = useRouter();
+  // M2: the empty map offers "Build my starter map" (founder, 2026-11-08).
+  const m2 = useM2Flag();
   const loadMap = useCallback(async () => {
     try {
       const [res, ps, journey] = await Promise.all([
@@ -861,7 +864,32 @@ export default function MapScreen() {
             either Android or iOS. The edge case (firstSessionDone
             but map somehow empty) was unreachable in practice and
             rendered an un-actionable text-only overlay; dropped. */}
-        {view === 'triangle'
+        {/* M2: BUILD MY STARTER MAP (founder, 2026-11-08) — so they can come
+            back to it, whether the first session was skipped, ran out, or is
+            still to come. It opens a starter-map conversation in the chat
+            (services/m2Store's one-shot request). Same place and style as the
+            button below, which it replaces on M2. */}
+        {m2
+          && view === 'triangle'
+          && loadStatus === 'loaded'
+          && layers.length === 0 ? (
+          <View style={styles.mapEmptyOverlay} pointerEvents="box-none">
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                requestStarterMap();
+                router.push('/');
+              }}
+              style={styles.mapEmptyCta}
+              accessibilityLabel="Build my starter map"
+              accessibilityRole="button"
+            >
+              <Text style={styles.mapEmptyCtaText}>Build my starter map</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {!m2
+          && view === 'triangle'
           && loadStatus === 'loaded'
           && layers.length === 0
           && firstSessionDoneAt === null ? (

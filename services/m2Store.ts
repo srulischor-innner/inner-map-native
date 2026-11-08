@@ -115,3 +115,17 @@ export function markM2CardShown(messageId: string, itemIndex: number): void {
   seen.add(key);
   api.markM2CardsSeen(messageId, [itemIndex]).catch(() => {});
 }
+
+// "Build my starter map" (founder, 2026-11-08): the button on the empty map
+// asks the chat to open a starter-map conversation. A one-shot handoff, like
+// utils/pendingChatMessage: the map arms it and routes to the chat; the chat
+// consumes it on focus, so warm navigation reaches it too.
+let starterMapRequested = false;
+export function requestStarterMap(): void {
+  starterMapRequested = true;
+}
+export function consumeStarterMapRequest(): boolean {
+  const was = starterMapRequested;
+  starterMapRequested = false;
+  return was;
+}

@@ -29,12 +29,20 @@
 //
 // M2 (2026-11-04) ADDS ONE CONSTANT AND NO LADDER. An account the server has
 // put on the M2 stack gets M2_WELCOME in place of ORIENTATION_MESSAGE in its
-// first session — the founder's text, verbatim, from first-session.md. The
-// selector's second input is that flag and nothing else. So the invariant
-// holds per stack: with M2 off the app can open with exactly the two strings
-// above, as before; with M2 on, exactly M2_WELCOME and STANDARD_OPENER. Every
-// assertion that predates M2 runs with the flag absent, which is every account
-// the server has not moved.
+// first session. The selector's second input is that flag and nothing else.
+//
+// M2, 2026-11-08 (founder): ONE SERVER TEXT, ON M2 ONLY. While the starter
+// map is unfinished the M2 server chooses the welcome (a first-conversation
+// one, or a "Welcome back" one it fills from their map), and the app shows it
+// — through services/m2.ts sanitizeM2Welcome, falling back to M2_WELCOME. That
+// is the selector's third input. What this file still proves:
+//   - M2 off: the third input is IGNORED; the app can open with exactly the
+//     two strings above, as before, for every input;
+//   - M2 on: a first/unfinished session gets the server's text or M2_WELCOME,
+//     and everyone else gets STANDARD_OPENER — never ORIENTATION_MESSAGE;
+//   - the selector stays pure: the text is handed in, never fetched.
+// Every assertion that predates M2 runs with the flag absent, which is every
+// account the server has not moved.
 //
 // The bulk of what follows is therefore ABSENCE checks. That is deliberate:
 // the greeting grew back four times because each round left a hook in place
@@ -130,6 +138,7 @@ function compile(expr, params) {
 const stripTypes = (s) => s
   .replace(/:\s*boolean\s*\|\s*undefined/g, '')
   .replace(/\?:\s*boolean/g, '')
+  .replace(/\?:\s*string\s*\|\s*null/g, '')
   .replace(/:\s*string\s*\|\s*null/g, '')
   .replace(/:\s*string/g, '')
   .replace(/:\s*any/g, '');
@@ -241,9 +250,20 @@ if (selectorSrc && ORIENTATION && STANDARD && M2W) {
     'true→M2_WELCOME, false/undefined→standard');
   // The flag is tested with === true, so a truthy non-boolean off the wire
   // cannot switch the copy.
-  const looseM2 = [1, 'true', 'm2', {}, []].filter((f) => openerFor(true, f) !== ORIENTATION);
-  step(2.9, 'only m2 === true switches the copy — truthy non-booleans do not',
+  const looseM2 = [1, 'true', 'm2', {}, []].filter((f) => openerFor(true, f, 'SERVER TEXT') !== ORIENTATION);
+  step(2.9, 'only m2 === true switches the copy — truthy non-booleans do not, server text or not',
     looseM2.length === 0, looseM2.length ? `switched on ${JSON.stringify(looseM2)}` : '5 truthy shapes checked');
+
+  // THE SERVER'S WELCOME (founder, 2026-11-08).
+  const offWithText = inputs.filter((v) => openerFor(v, false, 'SERVER TEXT') !== openerFor(v));
+  step(2.10, 'M2 OFF: a server text handed in is IGNORED, for every input',
+    offWithText.length === 0, offWithText.length ? `differs for ${JSON.stringify(offWithText)}` : `${inputs.length} inputs`);
+  step(2.11, 'M2 ON: a first/unfinished session shows the server\'s welcome when there is one',
+    openerFor(true, true, 'Welcome back. SERVER TEXT') === 'Welcome back. SERVER TEXT');
+  step(2.12, 'M2 ON: no usable server text falls back to M2_WELCOME, exactly',
+    [undefined, null, ''].every((t) => openerFor(true, true, t) === M2W));
+  step(2.13, 'M2 ON: a finished first session gets STANDARD_OPENER whatever the server text',
+    [false, undefined].every((v) => openerFor(v, true, 'SERVER TEXT') === STANDARD));
 }
 
 // ===========================================================================
@@ -259,8 +279,8 @@ if (selectorSrc && ORIENTATION && STANDARD && M2W) {
 // reply. Changing how we work must never wipe what was said.
 
 const openerForCalls = (idxCode.replace(/function openerFor\(/, '').match(/openerFor\(/g) || []).length;
-step(3, 'the selector is called at all three placement sites', openerForCalls === 3,
-  `openerFor( × ${openerForCalls} calls (expected 3: boot, backstop, end session)`);
+step(3, 'the selector is called at all four placement sites', openerForCalls === 4,
+  `openerFor( × ${openerForCalls} calls (expected 4: boot, backstop, end session, M2 build-my-starter-map)`);
 
 // Every assignment feeding an opening bubble must be `= openerFor(...)`. If a
 // call site ever reintroduces a ladder — a ternary, a `||` fallback, a ref —
@@ -387,8 +407,8 @@ if (seedEffect) {
 // therefore seed both threads by hand and leave this true.
 step(5.5, 'the seed latch is never re-armed — every emptier of the transcript refills it',
   !/greetedRef\.current = false/.test(idxCode)
-    && (idxCode.match(/greetedRef\.current = true/g) || []).length === 4,
-  `${(idxCode.match(/greetedRef\.current = true/g) || []).length} set-true sites (boot, backstop, resume consumer, End Session), 0 re-arms`);
+    && (idxCode.match(/greetedRef\.current = true/g) || []).length === 5,
+  `${(idxCode.match(/greetedRef\.current = true/g) || []).length} set-true sites (boot, backstop, resume consumer, End Session, M2 starter map), 0 re-arms`);
 
 // ===========================================================================
 // PART 5 — THE BOUNDARY RESETS ARE SYNCHRONOUS
@@ -419,8 +439,8 @@ function assertBoundaryReset(n, label, block) {
     between !== null && !/\bawait\b/.test(between),
     between === null ? 'ordering not found' : `${between.length}ch between, no await`);
   step(`${n}a`, `${label}: the opener comes from the selector, never from a payload`,
-    /const greeting = openerFor\(firstSessionPending, m2\);/.test(block) && !/\bapi\./.test(block),
-    'greeting = openerFor(firstSessionPending, m2), no api call in the block');
+    /const greeting = openerFor\(firstSessionPending, m2, m2WelcomeRef\.current\);/.test(block) && !/\bapi\./.test(block),
+    'greeting = openerFor(firstSessionPending, m2, m2WelcomeRef.current), no api call in the block');
   // THE REGRESSION THIS CATCHES: leaving the Explore thread empty and relying
   // on the seed effect to refill it. The effect's deps cannot be trusted to
   // change at a boundary (End Session re-sets chatMode to 'explore' when the

@@ -45,6 +45,35 @@ export function parseM2Flag(statusBody: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// The welcome (founder, 2026-11-08)
+// ---------------------------------------------------------------------------
+
+/** Two welcomes, chosen by the SERVER by whether the starter map is finished:
+ *  the first-conversation one, and a "Welcome back" one whose middle sentence
+ *  the server fills from their map or last session. The app shows whichever
+ *  the server sends; with nothing usable it falls back to the first-
+ *  conversation text (index.tsx's M2_WELCOME), exactly.
+ *
+ *  This is the one opener that comes off the wire, on M2 only, and only for a
+ *  person whose starter map is unfinished. The August ruling made every
+ *  opener a compile-time constant because model-made openers kept asserting
+ *  things; this text is the server's own, not a model's, and the guard below
+ *  is what stands between it and the screen. Anything it rejects becomes the
+ *  constant — never a blank, never a partial. */
+export const M2_WELCOME_MAX_CHARS = 900;
+
+export function sanitizeM2Welcome(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (!t || t.length > M2_WELCOME_MAX_CHARS) return null;
+  // Brackets and braces never belong in a welcome: they are a marker, a JSON
+  // leak, or the founder's unfilled "[filled by the server …]" placeholder.
+  if (/[[\]{}<>]/.test(t)) return null;
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(t)) return null;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
 // Cards
 // ---------------------------------------------------------------------------
 
