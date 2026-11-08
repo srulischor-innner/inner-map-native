@@ -125,7 +125,7 @@ export type M2CardItem = {
   confirmedInChat?: boolean;
   confirmed_in_chat?: boolean;
   /** Server-owned. "expired" is how the list reports a card past its clock. */
-  status?: 'pending' | 'accepted' | 'declined' | 'expired';
+  status?: 'pending' | 'accepted' | 'declined' | 'expired' | 'superseded';
   /** What the person changed the wording to before accepting, server-owned. */
   editedValue?: string;
 };
@@ -460,11 +460,32 @@ export function parseM2Pending(body: unknown, sessionId: string): M2PendingAnswe
   };
 }
 
-/** The done frame's `m2` block: the cards this reply made, and the count.
- *  (`passScheduled` is always false now that the pass runs at idle; it is not
- *  read.) */
+/** One card's key, the same on every surface: its inbox row and item index. */
+export function m2CardKey(messageId: string, itemIndex: number): string {
+  return `${messageId}#${itemIndex}`;
+}
+
+/** Where a card stands on the chat screen. "pending" is the only state with
+ *  buttons. "settled" means the server no longer lists it as pending and has
+ *  not said why: greyed, and claiming nothing. */
+export type M2CardStatus = 'pending' | 'accepted' | 'declined' | 'superseded' | 'expired' | 'settled';
+
+/** A card a reply resolved without a tap: a no, or a corrected offer that
+ *  replaces it (founder, card timing). */
+export type M2CardResolved = {
+  messageId: string;
+  itemIndex: number;
+  status: 'declined' | 'superseded';
+  /** The card that replaces a superseded one, when the server says. */
+  replacedBy: { messageId: string; itemIndex: number } | null;
+};
+
+/** The done frame's `m2` block: the cards this reply made, the earlier cards
+ *  it resolved, and the count. (`passScheduled` is always false now that the
+ *  pass runs at idle; it is not read.) */
 export type M2DoneInfo = {
   cardsAdded: { messageId: string; itemIndex: number }[];
+  cardsResolved: M2CardResolved[];
   starterCount: number | null;
   starterPending: boolean;
   /** Whether this turn ran with the starter-map overlay (Nov 8). */
@@ -472,20 +493,40 @@ export type M2DoneInfo = {
   starterMapFinished: boolean | null;
 };
 
+const cardRef = (o: unknown): { messageId: string; itemIndex: number } | null => {
+  const r = o as { messageId?: unknown; itemIndex?: unknown } | null;
+  return r && typeof r.messageId === 'string' && Number.isInteger(r.itemIndex) && (r.itemIndex as number) >= 0
+    ? { messageId: r.messageId, itemIndex: r.itemIndex as number }
+    : null;
+};
+
+/** CARD TIMING (founder): the card comes with the offer, the tap is the yes,
+ *  and a no or a corrected offer resolves it. The resolved list's field name
+ *  and shape are the chat stack's to set; this is the one place that reads
+ *  them. */
+const RESOLVED_FIELD = 'cardsResolved';
+
 export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
   if (!m2Block || typeof m2Block !== 'object') return null;
-  const b = m2Block as { stack?: unknown; cardsAdded?: unknown; starterPending?: unknown };
+  const b = m2Block as Record<string, unknown> & { stack?: unknown; cardsAdded?: unknown; starterPending?: unknown };
   if (b.stack !== undefined && b.stack !== 'm2') return null;
   const cardsAdded: { messageId: string; itemIndex: number }[] = [];
   for (const c of Array.isArray(b.cardsAdded) ? b.cardsAdded : []) {
-    const o = c as { messageId?: unknown; itemIndex?: unknown };
-    if (o && typeof o.messageId === 'string' && Number.isInteger(o.itemIndex) && (o.itemIndex as number) >= 0) {
-      cardsAdded.push({ messageId: o.messageId, itemIndex: o.itemIndex as number });
-    }
+    const r = cardRef(c);
+    if (r) cardsAdded.push(r);
+  }
+  const cardsResolved: M2CardResolved[] = [];
+  const rawResolved = b[RESOLVED_FIELD];
+  for (const c of Array.isArray(rawResolved) ? rawResolved : []) {
+    const r = cardRef(c);
+    const status = (c as { status?: unknown })?.status;
+    if (!r || (status !== 'declined' && status !== 'superseded')) continue;
+    cardsResolved.push({ ...r, status, replacedBy: cardRef((c as { replacedBy?: unknown }).replacedBy) });
   }
   const starter = parseM2Starter(m2Block);
   return {
     cardsAdded,
+    cardsResolved,
     starterCount: readStarterCount(m2Block),
     starterPending: b.starterPending === true,
     starterOverlay: starter.overlay,

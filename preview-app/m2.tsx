@@ -17,12 +17,13 @@
 //   ?case=chat           the cards a yes in chat made, on the chat screen
 //   ?case=chat-failing   the write fails: the card says so and stays
 //   ?case=messages       Messages: the same row, plus an old-stack row
+//   ?case=timing         card timing: one reply's cards in every state
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { api, type InboxMessage } from '../services/api';
 import { chatPendingCards } from '../services/m2';
-import { PendingMapCards } from '../components/m2/M2Cards';
+import { PendingMapCards, M2InlineCards } from '../components/m2/M2Cards';
 import MessagesScreen from '../app/messages';
 
 const SESSION = 'preview-session';
@@ -178,6 +179,23 @@ export default function M2Preview() {
   useMemo(() => stubTransport(which === 'chat-failing'), [which]);
 
   if (which === 'messages') return <MessagesScreen />;
+
+  if (which === 'timing') {
+    // One reply's cards as the chat screen draws them under it: an offer still
+    // open, one a later "no" declined, one a corrected offer replaced, and
+    // one tapped. Only the open one has buttons.
+    const offered = chatPendingCards(ROWS, SESSION);
+    const states = ['pending', 'declined', 'superseded', 'accepted'] as const;
+    const entries = offered.slice(0, 4).map((card, i) => ({ card, status: states[i] }));
+    return (
+      <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+        <Text style={styles.aiText}>
+          It sounds like the moment before asking is where it bites. Would you want that on your map?
+        </Text>
+        <M2InlineCards entries={entries} onSettled={() => {}} />
+      </ScrollView>
+    );
+  }
 
   const cards = chatPendingCards(ROWS, SESSION);
   return (

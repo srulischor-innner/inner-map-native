@@ -42,11 +42,13 @@ import { getTopUpProduct, purchase } from '../../services/purchases';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete, holdBackBoundary } from '../../utils/markers';
 import { setAttentionState, setNoticedPart, resetAttentionState, useAttentionState } from '../../utils/attentionState';
 import { refreshInboxStatus, subscribeInbox } from '../../services/messagesInbox';
-import { chatPendingCards, starterMapButtonAllowed, type ChatPendingCard } from '../../services/m2';
+import {
+  chatPendingCards, m2CardKey, starterMapButtonAllowed, type ChatPendingCard, type M2CardStatus,
+} from '../../services/m2';
 import {
   setM2Flag, setStarterCount, useStarterCount, subscribeStarterComplete, consumeStarterMapRequest,
 } from '../../services/m2Store';
-import { PendingMapCards } from '../../components/m2/M2Cards';
+import { PendingMapCards, M2InlineCards } from '../../components/m2/M2Cards';
 import { emitBeliefChanged } from '../../utils/beliefEvents';
 // (Polish round 7) clearMapVoiceHistory removed alongside the
 // services/mapVoiceHistory module — Map Voice is now turn-based
@@ -671,15 +673,45 @@ export default function ChatScreen() {
   //                  M2_WELCOME for a first session, and turns on the rest.
   //                  Also published to services/m2Store for the screens
   //                  outside the chat (the Guide, the map's folders).
-  //   chatCards    — pending cards from a yes in THIS session, shown at the
-  //                  end of the thread until the person taps one.
+  //   cardRegistry — every card THIS session offered, by card key, with where
+  //                  it stands. Card timing (founder): a card comes with the
+  //                  offer and shows under that reply — live while pending,
+  //                  greyed once tapped, declined or replaced. Server reads
+  //                  add pending cards; the done frame and taps move them on.
   //   starterCount — the SERVER's count of tapped cards (ruling 2026-11-05),
   //                  or null when it has sent none; the first-session "view my
   //                  starter map" button waits for two. Updated by every tap,
   //                  here or in Messages, through the store.
   const [m2, setM2] = useState(false);
   const m2Ref = useRef(false);
-  const [chatCards, setChatCards] = useState<ChatPendingCard[]>([]);
+  const [cardRegistry, setCardRegistry] = useState<Record<string, { card: ChatPendingCard; status: M2CardStatus }>>({});
+  // Pending cards from a server read go in. A card this screen already knows
+  // as resolved stays resolved; a pending one takes the newest item. When the
+  // read is the session's whole pending list (/api/m2/pending), a card it no
+  // longer lists is no longer pending: it greys out, claiming nothing.
+  const mergePendingCards = useCallback((cards: ChatPendingCard[], wholeList: boolean) => {
+    setCardRegistry((prev) => {
+      const next = { ...prev };
+      const listed = new Set<string>();
+      for (const c of cards) {
+        const k = m2CardKey(c.messageId, c.itemIndex);
+        listed.add(k);
+        if (!next[k] || next[k].status === 'pending') next[k] = { card: c, status: 'pending' };
+      }
+      if (wholeList) {
+        for (const [k, e] of Object.entries(next)) {
+          if (e.status === 'pending' && !listed.has(k)) next[k] = { ...e, status: 'settled' };
+        }
+      }
+      return next;
+    });
+  }, []);
+  // A tap here, or the server's word, moves a known card on. Only a pending
+  // card moves: nothing un-resolves.
+  const settleCard = useCallback((key: string, status: M2CardStatus) => {
+    setCardRegistry((prev) => (prev[key] && prev[key].status === 'pending'
+      ? { ...prev, [key]: { ...prev[key], status } } : prev));
+  }, []);
   const starterCount = useStarterCount();
   const cardLookTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cardLookTokenRef = useRef(0);
@@ -688,8 +720,8 @@ export default function ChatScreen() {
   // listening to it too means a tap in either place resolves the card in both.
   useEffect(() => {
     if (!m2) return;
-    return subscribeInbox((s) => setChatCards(chatPendingCards(s.messages, sessionIdRef.current)));
-  }, [m2]);
+    return subscribeInbox((s) => mergePendingCards(chatPendingCards(s.messages, sessionIdRef.current), false));
+  }, [m2, mergePendingCards]);
   useEffect(() => () => { if (cardLookTimerRef.current) clearTimeout(cardLookTimerRef.current); }, []);
   // One read of this session's chat cards and the starter count. An answer for
   // a session that has since ended is dropped.
@@ -698,7 +730,7 @@ export default function ChatScreen() {
     const sid = sessionIdRef.current;
     const ans = await api.getM2Pending(sid);
     if (!ans || sid !== sessionIdRef.current) return;
-    setChatCards(ans.cards);
+    mergePendingCards(ans.cards, true);
     if (ans.starterCount !== null) setStarterCount(ans.starterCount);
   }, []);
   // After a reply finishes. The card is made on the yes, with the reply, and
@@ -1083,7 +1115,7 @@ export default function ChatScreen() {
       if (cardLookTimerRef.current) clearTimeout(cardLookTimerRef.current);
       cardLookTimerRef.current = null;
       cardLookTokenRef.current++;
-      setChatCards([]);
+      setCardRegistry({});
       setLivePart(null); setLiveConfidence(null);
       gatheredNoticedRef.current = false;
       hasEngagedRef.current = false;
@@ -1798,7 +1830,20 @@ export default function ChatScreen() {
               cardLookTimerRef.current = null;
               cardLookTokenRef.current++;
               if (info.starterCount !== null) setStarterCount(info.starterCount);
-              if (info.cardsAdded.length > 0) readChatCards().catch(() => {});
+              // CARD TIMING (founder): the cards this reply offered show under
+              // this reply, so the bubble learns their keys; one read fetches
+              // what they say.
+              if (info.cardsAdded.length > 0) {
+                const keys = info.cardsAdded.map((c) => m2CardKey(c.messageId, c.itemIndex));
+                turnThread.setMessages((prev) => prev.map((m) => (m.id === streamId
+                  ? { ...m, m2CardKeys: [...(m.m2CardKeys || []), ...keys.filter((k) => !(m.m2CardKeys || []).includes(k))] }
+                  : m)));
+                readChatCards().catch(() => {});
+              }
+              // Earlier cards this reply resolved without a tap — a no, or a
+              // corrected offer — grey out where they are. Applied before the
+              // read above lands, so that read cannot put them back.
+              for (const r of info.cardsResolved) settleCard(m2CardKey(r.messageId, r.itemIndex), r.status);
               // Whether this turn ran with the starter-map overlay, and whether
               // the starter map is now finished (m2-api.md, Nov 8).
               if (info.starterOverlay !== null) setStarterOverlay(info.starterOverlay);
@@ -2196,10 +2241,22 @@ export default function ChatScreen() {
   // as before.
   const starterMapHandler = starterMapButtonAllowed(m2, starterCount) ? handleViewStarterMap : undefined;
 
+  // M2: the cards each reply offered, drawn under it (card timing, founder).
+  // Never while a crisis owns the screen. A card that is pending but belongs
+  // to no bubble — a read that came without its reply's done frame — still
+  // shows, at the end of the thread, as before.
+  const settleTappedCard = useCallback((key: string, o: 'accepted' | 'declined') => settleCard(key, o), [settleCard]);
+  const attachedCardKeys = useMemo(() => new Set(messages.flatMap((m) => m.m2CardKeys || [])), [messages]);
+  const unattachedCards = useMemo(
+    () => Object.entries(cardRegistry)
+      .filter(([k, e]) => e.status === 'pending' && !attachedCardKeys.has(k))
+      .map(([, e]) => e.card),
+    [cardRegistry, attachedCardKeys],
+  );
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
     () => messages.map((m) => (
+      <React.Fragment key={m.id}>
       <MessageBubble
-        key={m.id}
         msg={m}
         onRetry={handleRetry}
         onViewStarterMap={starterMapHandler}
@@ -2211,8 +2268,15 @@ export default function ChatScreen() {
         // new state.
         isOpening={messages.length === 1 && m.role === 'assistant'}
       />
+      {m2 && !crisisGated && m.m2CardKeys && m.m2CardKeys.length > 0 ? (
+        <M2InlineCards
+          entries={m.m2CardKeys.map((k) => cardRegistry[k]).filter(Boolean)}
+          onSettled={settleTappedCard}
+        />
+      ) : null}
+      </React.Fragment>
     )),
-    [messages, starterMapHandler],
+    [messages, starterMapHandler, m2, crisisGated, cardRegistry, settleTappedCard],
   );
 
   return (
@@ -2380,13 +2444,14 @@ export default function ChatScreen() {
                 first-session banner already says "building your map". */}
             {bubbleList}
             {typing ? <TypingIndicator /> : null}
-            {/* M2: what a yes in chat turns into. At the end of the thread
-                until tapped; never over a crisis referral. Mounted whenever
-                M2 is on (it renders nothing with nothing to show), so a card
-                the person just added can say so for a beat after the inbox
-                refresh drops it. */}
+            {/* M2: the FALLBACK for a pending card no reply claims (a read
+                that came without its reply's done frame). Cards a reply
+                offered draw under that reply, in bubbleList above. Never over
+                a crisis referral. Mounted whenever M2 is on (it renders
+                nothing with nothing to show), so a card just added here can
+                say so for a beat after the refresh drops it. */}
             {m2 && !crisisGated ? (
-              <PendingMapCards cards={chatCards} />
+              <PendingMapCards cards={unattachedCards} />
             ) : null}
             {/* THE OPENING MODE QUESTION (founder ruling 2026-09-06).
                 Under the SECOND assistant message: the first is the greeting,
@@ -2632,7 +2697,7 @@ export default function ChatScreen() {
               if (cardLookTimerRef.current) clearTimeout(cardLookTimerRef.current);
               cardLookTimerRef.current = null;
               cardLookTokenRef.current++;
-              setChatCards([]);
+              setCardRegistry({});
               // The next conversation's overlay is the server's word, read
               // with its welcome; a skip was for the conversation that ended.
               setStarterOverlay(m2Ref.current && (nextOverlayRef.current ?? firstSessionPending === true));

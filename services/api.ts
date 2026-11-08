@@ -354,7 +354,7 @@ export type InboxMessage = {
       value?: string;
       /** Per-item review state (server-owned). Missing = pending. 'expired' is
        *  only ever reported on an m2_card item past its clock. */
-      status?: 'pending' | 'accepted' | 'declined' | 'expired';
+      status?: 'pending' | 'accepted' | 'declined' | 'expired' | 'superseded';
       /** The name (pending_parts) or value (enrichment) the user refined. */
       editedName?: string;
       editedValue?: string;

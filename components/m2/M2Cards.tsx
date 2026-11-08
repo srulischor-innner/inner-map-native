@@ -1,11 +1,14 @@
 // M2 CARDS — the one place anything reaches the map under M2.
 //
-// "The chat never writes the map." When the person says yes in chat, the
-// reply carries a [CARD:...] marker, the server makes the card, and it shows
-// here at the end of the conversation until they tap it. When the session goes
-// idle a pass proposes more, which wait in Messages. Their tap is the write;
-// until then every card says plainly that it is not on the map yet, so nothing
-// reads as saved that is not.
+// "The chat never writes the map." CARD TIMING (founder): the card comes WITH
+// the chat's offer, in the same reply, and shows under that reply. It reads
+// as a choice — "add to your map" or "not now" — never as the confirmation of
+// something already agreed, because nothing is: the tap is the yes and the
+// only write. A typed yes writes nothing, so the card stays tappable until the
+// conversation ends. A no, or a corrected offer, resolves it from the server's
+// side: the card greys out in place with no buttons, and a corrected offer's
+// new card shows under the reply that made it. When the session goes idle a
+// pass proposes more, which wait in Messages.
 //
 // ONE CARD, BOTH SURFACES. M2ItemCard is what the chat screen shows and what
 // Messages shows, and both go through services/m2Store's acceptM2Item and
@@ -14,8 +17,8 @@
 // what keeps the consent behaviour from drifting between the two.
 //
 // Three actions: ADD writes it, EDIT changes the wording first (each bundled
-// field on a chat card, the one value on a pass proposal), and "Doesn't fit"
-// declines it for good.
+// field on a chat card, the one value on a pass proposal), and "Not now"
+// declines it (the server treats that as final).
 //
 // Never rendered while a crisis owns the chat screen (the caller gates it), on
 // the same rule as the mode boxes and the billing sheets.
@@ -30,13 +33,17 @@ import * as Haptics from 'expo-haptics';
 import { colors, fonts, spacing } from '../../constants/theme';
 import type { InboxMessage } from '../../services/api';
 import {
-  isM2Item, m2BuildEdit, m2EditDraft, m2FieldWords, m2ItemCategory, m2ItemFieldEntries,
+  isM2Item, m2BuildEdit, m2CardKey, m2EditDraft, m2FieldWords, m2ItemCategory, m2ItemFieldEntries,
   m2ItemHasOwnName, m2ItemIsBundled, m2ItemNote, m2ItemSource, m2ItemTitle,
-  type ChatPendingCard, type M2CardItem, type M2EditDraft,
+  type ChatPendingCard, type M2CardItem, type M2CardStatus, type M2EditDraft,
 } from '../../services/m2';
 import { acceptM2Item, declineM2Item, markM2CardShown } from '../../services/m2Store';
 
+/** What a tap did. */
 type Outcome = 'accepted' | 'declined';
+/** Every state a card can show without buttons: what a tap did, or what the
+ *  server says happened to it. */
+type Resolved = Exclude<M2CardStatus, 'pending'>;
 type Surface = 'chat' | 'inbox';
 type EditFocusHandler = (node: { measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void } | null) => void;
 
@@ -45,7 +52,18 @@ type EditFocusHandler = (node: { measureInWindow?: (cb: (x: number, y: number, w
  *  conversation. */
 const RESOLVED_LINGER_MS = 3500;
 
-const keyOf = (c: ChatPendingCard) => `${c.messageId}#${c.itemIndex}`;
+const keyOf = (c: ChatPendingCard) => m2CardKey(c.messageId, c.itemIndex);
+
+// What a resolved card says under its title. "settled" says nothing: the
+// server stopped listing it as pending without saying why, so the card makes
+// no claim. MICROCOPY — flagged for the copy pass.
+const RESOLVED_WORDS: Record<Resolved, string | null> = {
+  accepted: 'Added to your map.',
+  declined: 'Left off your map.',
+  superseded: 'Replaced by the newer offer below.',
+  expired: 'No longer waiting.',
+  settled: null,
+};
 
 // ===========================================================================
 // The chat screen's cards
@@ -103,6 +121,42 @@ export function PendingMapCards({ cards }: { cards: ChatPendingCard[] }) {
 }
 
 // ===========================================================================
+// Under the reply that offered them (card timing, founder)
+// ===========================================================================
+
+/** The cards one reply offered, drawn under that reply. Each is live while
+ *  pending and greyed with no buttons once it is anything else; the chat
+ *  screen owns the statuses, so a card a later reply declined or replaced
+ *  greys out where it is. */
+export function M2InlineCards({
+  entries, onSettled,
+}: {
+  entries: { card: ChatPendingCard; status: M2CardStatus }[];
+  onSettled: (key: string, o: Outcome) => void;
+}) {
+  // The card's 14-day clock starts the first time it is shown here.
+  useEffect(() => {
+    for (const e of entries) if (e.status === 'pending') markM2CardShown(e.card.messageId, e.card.itemIndex);
+  }, [entries]);
+  if (entries.length === 0) return null;
+  return (
+    <View style={styles.inlineWrap}>
+      {entries.map(({ card, status }) => (
+        <M2ItemCard
+          key={keyOf(card)}
+          surface="chat"
+          messageId={card.messageId}
+          itemIndex={card.itemIndex}
+          item={card.item}
+          outcome={status === 'pending' ? null : status}
+          onSettled={(o) => onSettled(keyOf(card), o)}
+        />
+      ))}
+    </View>
+  );
+}
+
+// ===========================================================================
 // Messages: one M2 row, every item in it
 // ===========================================================================
 
@@ -153,7 +207,7 @@ function M2ItemCard({
   messageId: string;
   itemIndex: number;
   item: M2CardItem;
-  outcome: Outcome | null;
+  outcome: Resolved | null;
   onSettled: (o: Outcome) => void;
   onEditFocus?: EditFocusHandler;
 }) {
@@ -206,20 +260,26 @@ function M2ItemCard({
 
   const shownTitle = !bundled || ownName ? draft.title : draft.fields[fields[0].key];
 
+  // Resolved: greyed, no buttons. Under its reply it stays as the record of
+  // what was offered and what happened to it.
   if (outcome) {
+    const said = RESOLVED_WORDS[outcome];
     return (
-      <View style={surface === 'chat' ? [styles.chatCard, styles.chatCardResolved] : null}>
-        {surface === 'inbox' ? <Text style={[styles.title, styles.titleDim]}>{shownTitle}</Text> : null}
-        <View style={styles.resolvedRow}>
-          <Ionicons
-            name={outcome === 'accepted' ? 'checkmark-circle' : 'close-circle-outline'}
-            size={15}
-            color={outcome === 'accepted' ? colors.amber : colors.creamFaint}
-          />
-          <Text style={outcome === 'accepted' ? styles.resolvedText : styles.resolvedTextDim}>
-            {outcome === 'accepted' ? 'Added to your map.' : 'Left off your map.'}
-          </Text>
-        </View>
+      <View
+        style={surface === 'chat' ? [styles.chatCard, styles.chatCardResolved] : null}
+        accessibilityLabel={said ? `${shownTitle}: ${said}` : shownTitle}
+      >
+        <Text style={[styles.title, styles.titleDim]}>{shownTitle}</Text>
+        {said ? (
+          <View style={styles.resolvedRow}>
+            <Ionicons
+              name={outcome === 'accepted' ? 'checkmark-circle' : 'close-circle-outline'}
+              size={15}
+              color={outcome === 'accepted' ? colors.amber : colors.creamFaint}
+            />
+            <Text style={outcome === 'accepted' ? styles.resolvedText : styles.resolvedTextDim}>{said}</Text>
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -231,9 +291,9 @@ function M2ItemCard({
   return (
     <View
       style={surface === 'chat' ? styles.chatCard : null}
-      accessibilityLabel={surface === 'chat' ? 'Waiting for you to add to your map' : undefined}
+      accessibilityLabel={surface === 'chat' ? 'Offered for your map' : undefined}
     >
-      {surface === 'chat' ? <Text style={styles.kicker}>WAITING FOR YOU TO ADD</Text> : null}
+      {surface === 'chat' ? <Text style={styles.kicker}>FOR YOUR MAP</Text> : null}
 
       {editing ? (
         <>
@@ -290,7 +350,9 @@ function M2ItemCard({
       {surface === 'inbox' && source ? (
         <Text style={styles.source}>{`You said: “${source}”`}</Text>
       ) : null}
-      <Text style={styles.note}>It isn’t on your map until you add it.</Text>
+      {/* In Messages the line still says where things stand. Under the offer
+          in chat the two buttons say it: it is a choice, not a confirmation. */}
+      {surface === 'inbox' ? <Text style={styles.note}>It isn’t on your map until you add it.</Text> : null}
 
       {failed ? (
         <View style={styles.resolvedRow}>
@@ -306,7 +368,7 @@ function M2ItemCard({
           style={[styles.btnAccept, busy && styles.btnDim]}
           accessibilityLabel={`Add to your map: ${shownTitle}`}
         >
-          <Text style={styles.btnAcceptText}>{busy ? 'ADDING…' : 'ADD TO MY MAP'}</Text>
+          <Text style={styles.btnAcceptText}>{busy ? 'ADDING…' : 'ADD TO YOUR MAP'}</Text>
         </Pressable>
         <Pressable
           onPress={() => setEditing((e) => !e)}
@@ -320,9 +382,9 @@ function M2ItemCard({
           onPress={decline}
           disabled={busy}
           style={[styles.btn, busy && styles.btnDim]}
-          accessibilityLabel={`Leave this off your map: ${shownTitle}`}
+          accessibilityLabel={`Not now: ${shownTitle}`}
         >
-          <Text style={styles.btnTextDim}>Doesn’t fit</Text>
+          <Text style={styles.btnTextDim}>Not now</Text>
         </Pressable>
       </View>
     </View>
@@ -333,6 +395,7 @@ function M2ItemCard({
 // shade warmer so it reads as live rather than archived.
 const styles = StyleSheet.create({
   chatWrap: { marginTop: spacing.sm },
+  inlineWrap: { marginTop: 2, marginBottom: spacing.sm },
   chatCard: {
     borderWidth: 0.5,
     borderColor: 'rgba(230,180,122,0.35)',

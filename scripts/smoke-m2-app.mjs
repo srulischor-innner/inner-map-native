@@ -116,7 +116,7 @@ console.log('\n2. off is today');
     !/setInterval\(/.test(chat) && !/M2_PENDING_(POLL|MAX)_MS|M2_PASS_START_GRACE_MS/.test(chat + read('services/m2.ts'))
       && (fn('lookForChatCards').match(/setTimeout\(/g) || []).length === 1);
   ok('after a reply the app reads only when the done frame says a card was made',
-    /onM2Done: \(info\) => \{[\s\S]{0,400}if \(info\.cardsAdded\.length > 0\) readChatCards\(\)/.test(chat));
+    /onM2Done: \(info\) => \{[\s\S]{0,700}if \(info\.cardsAdded\.length > 0\) \{[\s\S]{0,500}readChatCards\(\)\.catch/.test(chat));
   ok('...and the done block cancels the fallback look queued in the same tick',
     /onM2Done: \(info\) => \{\s*if \(cardLookTimerRef\.current\) clearTimeout\(cardLookTimerRef\.current\);/.test(chat));
 }
@@ -130,8 +130,9 @@ ok('the app no longer counts map entries itself — the server counts tapped car
   !/countMapEntries|getLatestMap\(\)\s*\.then/.test(chat) && !/countMapEntries/.test(read('services/m2.ts')));
 ok('boot takes the server\'s count only on M2',
   /if \(isM2\) setStarterCount\(firstStatus\.starterCount\);/.test(chat));
-ok('the pending card renders only on M2 and never over a crisis',
-  /\{m2 && !crisisGated \? \(\s*<PendingMapCards cards=\{chatCards\} \/>/.test(chat));
+ok('cards render only on M2 and never over a crisis — under their reply, and the unclaimed fallback',
+  /\{m2 && !crisisGated && m\.m2CardKeys && m\.m2CardKeys\.length > 0 \? \(\s*<M2InlineCards/.test(chat)
+    && /\{m2 && !crisisGated \? \(\s*<PendingMapCards cards=\{unattachedCards\} \/>/.test(chat));
 ok('the mode control is hidden on M2 and ONLY on M2',
   /\{m2 \? null : \(\s*<WorkingModeControl/.test(chat));
 ok('the mode boxes are suppressed on M2, first line of the rule',
@@ -139,8 +140,8 @@ ok('the mode boxes are suppressed on M2, first line of the rule',
 ok('the starter-map button is gated through starterMapButtonAllowed on the server count',
   /const starterMapHandler = starterMapButtonAllowed\(m2, starterCount\) \? handleViewStarterMap : undefined;/.test(chat)
     && /onViewStarterMap=\{starterMapHandler\}/.test(chat));
-ok('...and the bubble list re-renders when that gate opens',
-  /\[messages, starterMapHandler\]/.test(chat));
+ok('...and the bubble list re-renders when that gate opens, or a card under a reply moves on',
+  /\[messages, starterMapHandler, m2, crisisGated, cardRegistry, settleTappedCard\]/.test(chat));
 {
   const offRows = [null, 0, 1, 2, 5].filter((n) => m2.starterMapButtonAllowed(false, n) !== true);
   ok('OFF: the starter-map button is allowed at every count, as today',
@@ -414,8 +415,60 @@ ok('both surfaces accept and decline through the store, so a tap updates the cou
   /acceptM2Item\(messageId, itemIndex, m2BuildEdit\(item, draft\)\)/.test(card)
     && /declineM2Item\(messageId, itemIndex\)/.test(card)
     && !/api\.actOnMessage|api\.declineMessageItems/.test(card));
-ok('every card says it is not on the map until they add it',
-  /It isn’t on your map until you add it\./.test(cardSrc));
+ok('in Messages a card still says it is not on the map until they add it',
+  /\{surface === 'inbox' \? <Text style=\{styles\.note\}>It isn’t on your map until you add it\.<\/Text> : null\}/.test(cardSrc));
+
+// CARD TIMING (founder): the card comes with the offer, the tap is the yes.
+console.log('\n5a. card timing');
+{
+  ok('under the offer the card reads as a choice: "ADD TO YOUR MAP" / "Not now"',
+    />\{busy \? 'ADDING…' : 'ADD TO YOUR MAP'\}</.test(cardSrc) && />Not now<\/Text>/.test(cardSrc)
+      && /<Text style=\{styles\.kicker\}>FOR YOUR MAP<\/Text>/.test(cardSrc));
+  ok('...and nothing on it reads as something already agreed',
+    !/WAITING FOR YOU TO ADD|ADD TO MY MAP|Doesn’t fit/.test(cardSrc));
+  {
+    // The resolved branch: everything from `if (outcome) {` to its return's end.
+    const at = card.indexOf('  if (outcome) {');
+    const branch = at === -1 ? '' : card.slice(at, card.indexOf('\n  }\n', at) + 4);
+    ok('a resolved card — tapped, declined, replaced, expired or settled — has no buttons',
+      branch.length > 100 && !/<Pressable/.test(branch) && /styles\.titleDim/.test(branch));
+  }
+  ok('each resolution has its own words, and "settled" claims nothing',
+    /declined: 'Left off your map\.',/.test(card) && /superseded: 'Replaced by the newer offer below\.',/.test(card)
+      && /settled: null,/.test(card));
+
+  // The done frame's resolutions (field name set by the chat stack; one reader).
+  const d = m2.parseM2Done({
+    stack: 'm2', cardsAdded: [{ messageId: 'msg-1', itemIndex: 2 }],
+    cardsResolved: [
+      { messageId: 'msg-1', itemIndex: 0, status: 'declined' },
+      { messageId: 'msg-1', itemIndex: 1, status: 'superseded', replacedBy: { messageId: 'msg-1', itemIndex: 2 } },
+      { messageId: 'msg-1', itemIndex: 3, status: 'accepted' },
+      { messageId: 7, itemIndex: 4, status: 'declined' },
+    ],
+  });
+  ok('a reply\'s declined and superseded cards are read, with what replaces them; anything else is dropped',
+    JSON.stringify(d.cardsResolved) === JSON.stringify([
+      { messageId: 'msg-1', itemIndex: 0, status: 'declined', replacedBy: null },
+      { messageId: 'msg-1', itemIndex: 1, status: 'superseded', replacedBy: { messageId: 'msg-1', itemIndex: 2 } },
+    ]), JSON.stringify(d.cardsResolved));
+  ok('a done frame with no resolutions has an empty list', JSON.stringify(m2.parseM2Done({ stack: 'm2' }).cardsResolved) === '[]');
+
+  // The chat screen's registry.
+  ok('the cards a reply offered attach to that reply\'s bubble',
+    /m\.id === streamId\s*\? \{ \.\.\.m, m2CardKeys:/.test(chat));
+  ok('the reply\'s resolutions grey cards out where they are',
+    /for \(const r of info\.cardsResolved\) settleCard\(m2CardKey\(r\.messageId, r\.itemIndex\), r\.status\);/.test(chat));
+  ok('only a pending card moves on: nothing un-resolves',
+    /prev\[key\] && prev\[key\]\.status === 'pending'/.test(chat));
+  ok('a server read keeps resolved cards resolved, and greys a card the whole pending list no longer has',
+    /if \(!next\[k\] \|\| next\[k\]\.status === 'pending'\) next\[k\] = \{ card: c, status: 'pending' \};/.test(chat)
+      && /if \(e\.status === 'pending' && !listed\.has\(k\)\) next\[k\] = \{ \.\.\.e, status: 'settled' \};/.test(chat)
+      && /mergePendingCards\(ans\.cards, true\);/.test(chat));
+  ok('a typed yes writes nothing: no path but a tap accepts a card',
+    (read('app/(tabs)/index.tsx').match(/acceptM2Item\(/g) || []).length === 0
+      && /acceptM2Item\(messageId, itemIndex, m2BuildEdit\(item, draft\)\)/.test(card));
+}
 ok('a failed write is said back, not shown as added',
   /if \(res\.ok\) \{[\s\S]*?onSettled\('accepted'\)[\s\S]*?\} else \{[\s\S]*?setFailed\(true\)/.test(card));
 ok('Messages leaves out items it cannot read, has nothing to show for, or that expired',
