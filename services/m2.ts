@@ -126,6 +126,14 @@ export type M2CardItem = {
   confirmed_in_chat?: boolean;
   /** Server-owned. "expired" is how the list reports a card past its clock. */
   status?: 'pending' | 'accepted' | 'declined' | 'expired' | 'superseded';
+  /** Why a declined item was declined (founder, round 4): "no" (their typed
+   *  no) or "user" ("Not now"). Older staging rows may still say "untapped" or
+   *  "left-off" until the server reopens them; those rules are withdrawn. */
+  declinedReason?: string;
+  /** Still untapped when its conversation went idle: it stays pending and is
+   *  a proposal in Messages from then on, tappable there and under its reply. */
+  carriedOver?: boolean;
+  carriedOverAt?: string;
   /** What the person changed the wording to before accepting, server-owned. */
   editedValue?: string;
 };
@@ -470,19 +478,45 @@ export function m2CardKey(messageId: string, itemIndex: number): string {
  *  not said why: greyed, and claiming nothing. */
 export type M2CardStatus = 'pending' | 'accepted' | 'declined' | 'superseded' | 'expired' | 'settled';
 
+/** "Left off your map." is said ONLY for a typed no or "Not now" (founder,
+ *  round 4: "Untapped is not declined. Only 'Not now' or a no declines a
+ *  card."). A declined item for any other reason — the withdrawn "untapped"
+ *  and "left-off", or none given — greys out claiming nothing until the
+ *  server reopens it. Everything else is the server's status as it stands. */
+export function m2ItemShownStatus(it: M2CardItem): M2CardStatus {
+  switch (it.status ?? 'pending') {
+    case 'pending': return 'pending';
+    case 'accepted': return 'accepted';
+    case 'declined': return it.declinedReason === 'no' || it.declinedReason === 'user' ? 'declined' : 'settled';
+    case 'superseded': return 'superseded';
+    case 'expired': return 'expired';
+    default: return 'settled';
+  }
+}
+
 /** A card a reply resolved without a tap: a no, or a corrected offer that
  *  replaces it (founder, card timing). */
 export type M2CardResolved = {
   messageId: string;
   itemIndex: number;
   status: 'declined' | 'superseded';
-  /** Why: "no" (their answer was a no), "left-off" (the reply said it won't
-   *  add it), "corrected" (superseded). null for anything else. */
+  /** Why: "no" (their typed no) or "corrected" (superseded). "left-off" is a
+   *  withdrawn rule, still parsed so an old frame reads; null for anything
+   *  else. */
   reason: 'no' | 'left-off' | 'corrected' | null;
   /** The card that replaces a superseded one; it is in the same reply's
    *  cardsAdded. */
   replacedBy: { messageId: string; itemIndex: number } | null;
 };
+
+/** What a reply's resolution shows under the card: a decline is "Left off your
+ *  map." only when the reason is their no; any other decline greys out
+ *  claiming nothing (round 4). A supersede is always "Replaced…", in every
+ *  conversation. */
+export function m2ResolvedShownStatus(r: M2CardResolved): M2CardStatus {
+  if (r.status === 'superseded') return 'superseded';
+  return r.reason === 'no' ? 'declined' : 'settled';
+}
 
 /** The done frame's `m2` block: the cards this reply made, the earlier cards
  *  it resolved, and the count. (`passScheduled` is always false now that the

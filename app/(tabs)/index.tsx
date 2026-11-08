@@ -43,7 +43,7 @@ import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersFo
 import { setAttentionState, setNoticedPart, resetAttentionState, useAttentionState } from '../../utils/attentionState';
 import { refreshInboxStatus, subscribeInbox } from '../../services/messagesInbox';
 import {
-  chatPendingCards, m2CardKey, starterMapButtonAllowed, type ChatPendingCard, type M2CardStatus,
+  chatPendingCards, m2CardKey, m2ResolvedShownStatus, starterMapButtonAllowed, type ChatPendingCard, type M2CardStatus,
 } from '../../services/m2';
 import {
   setM2Flag, setStarterCount, useStarterCount, subscribeStarterComplete, consumeStarterMapRequest,
@@ -1843,7 +1843,7 @@ export default function ChatScreen() {
               // Earlier cards this reply resolved without a tap — a no, or a
               // corrected offer — grey out where they are. Applied before the
               // read above lands, so that read cannot put them back.
-              for (const r of info.cardsResolved) settleCard(m2CardKey(r.messageId, r.itemIndex), r.status);
+              for (const r of info.cardsResolved) settleCard(m2CardKey(r.messageId, r.itemIndex), m2ResolvedShownStatus(r));
               // Whether this turn ran with the starter-map overlay, and whether
               // the starter map is now finished (m2-api.md, Nov 8).
               if (info.starterOverlay !== null) setStarterOverlay(info.starterOverlay);

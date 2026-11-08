@@ -60,18 +60,17 @@ The founder's sources match the server's copies byte for byte, checked on 2026-1
 
 Off M2 none of these is read or shown. The opener selector ignores a server text, the banner is `firstSessionPending` alone, and the map keeps its old button.
 
-## Card timing: the card comes with the offer (founder, 2026-11-08)
+## Card timing: the card comes with the offer (founder, 2026-11-08, through round 4)
 
-The card now appears in the same reply as the chat's offer. The tap is the yes and the only write. A no, no tap, or a corrected offer means it isn't added. The shape below is the chat-stack session's, sent on 2026-11-08; staging doesn't have it yet.
+The card appears in the same reply as the chat's offer. The tap is the yes and the only write. **Untapped is not declined** (round 4): only "Not now" or a typed no declines a card. A card still untapped when the conversation goes idle carries over to Messages, still pending and tappable there as well as under its reply. It's written once, wherever it's tapped, and a tap in Messages counts toward the starter map. A corrected offer's card replaces the earlier one in every conversation, not only the starter map. On staging as `27fd1183`, from the chat-stack session's round-4 note.
 
 | Server | The app |
 |---|---|
 | The done frame's `m2.cardsAdded: [{ messageId, itemIndex }]`: the cards this reply made. | Each card is drawn under that reply (`ChatMsg.m2CardKeys`) and stays there for the rest of the conversation. It reads as a choice: "FOR YOUR MAP", with "ADD TO YOUR MAP", "EDIT" and "Not now". |
-| `m2.cardsResolved: [{ messageId, itemIndex, status, reason, replacedBy? }]`, always present. `status` is `declined` (reason `no` or `left-off`) or `superseded` (reason `corrected`, `replacedBy` naming the new card in this reply's `cardsAdded`). | The card greys out where it is, with no buttons: "Left off your map." or "Replaced by the newer offer below." The new card shows under the reply that made it. Only a pending card ever moves on. |
-| Item status `pending`, `accepted`, `declined`, `superseded` or `expired`. An idle decline (`declinedReason: "untapped"`) comes with no reply. | Anything but `pending` is finished. A card that `/api/m2/pending` stops listing greys out without claiming why, which covers an idle decline. In Messages, superseded items are hidden like expired ones, since the replacement is the one to decide on. |
+| `m2.cardsResolved: [{ messageId, itemIndex, status, reason, replacedBy? }]`, always present. `status` is `declined` (reason `no`) or `superseded` (reason `corrected`, with `replacedBy` naming the new card in this reply's `cardsAdded`). | `m2ResolvedShownStatus`: the card greys out where it is, with no buttons. A decline with reason `no` reads "Left off your map."; any other decline claims nothing. A supersede reads "Replaced by the newer offer below.", and the new card shows under the reply that made it. Only a pending card ever moves on. |
+| Item status `pending`, `accepted`, `declined`, `superseded` or `expired`. `declinedReason` is `no` or `user`. A carried-over item stays `pending`, with `carriedOver: true` and `carriedOverAt`. Older `untapped`/`left-off` declines reopen as pending at the next idle sweep (`reopenedFrom`). | `m2ItemShownStatus`: "Left off your map." only for `declinedReason` `no` or `user`. Any other decline greys out claiming nothing, until the server reopens it. A carried-over card is still pending: it stays tappable under its reply (`/api/m2/pending` keeps listing it) and in Messages. In Messages, superseded and expired items are hidden. |
 | `act` on a card that isn't pending writes nothing: `ok` with `written: 0`. | The card greys out and claims nothing. It never says "Added to your map." for a write that didn't happen. |
-
-A typed yes writes nothing, so a pending card stays tappable until the conversation ends.
+| No done frame announces a carry-over. | The app sees it on its next read; nothing on screen changes for it. |
 
 ## The fields a card can carry (mapping-m2 (3).md, line 16)
 

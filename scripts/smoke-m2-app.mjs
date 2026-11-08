@@ -462,8 +462,34 @@ console.log('\n5a. card timing');
   // The chat screen's registry.
   ok('the cards a reply offered attach to that reply\'s bubble',
     /m\.id === streamId\s*\? \{ \.\.\.m, m2CardKeys:/.test(chat));
-  ok('the reply\'s resolutions grey cards out where they are',
-    /for \(const r of info\.cardsResolved\) settleCard\(m2CardKey\(r\.messageId, r\.itemIndex\), r\.status\);/.test(chat));
+  ok('the reply\'s resolutions grey cards out where they are, through the shown-status rule',
+    /for \(const r of info\.cardsResolved\) settleCard\(m2CardKey\(r\.messageId, r\.itemIndex\), m2ResolvedShownStatus\(r\)\);/.test(chat));
+
+  // ROUND 4 (founder): "Untapped is not declined. Only 'Not now' or a no
+  // declines a card." "Left off your map." is for those two alone.
+  const S = (status, declinedReason, extra = {}) => m2.m2ItemShownStatus({ kind: 'part', payload: { value: 'x' }, status, declinedReason, ...extra });
+  ok('"Left off your map." only for a typed no or "Not now"',
+    S('declined', 'no') === 'declined' && S('declined', 'user') === 'declined');
+  ok('...a decline for any other reason (the withdrawn "untapped", "left-off", or none) claims nothing',
+    S('declined', 'untapped') === 'settled' && S('declined', 'left-off') === 'settled' && S('declined', undefined) === 'settled');
+  ok('a carried-over card is still pending, still tappable',
+    S('pending', undefined, { carriedOver: true, carriedOverAt: '2026-11-08T12:00:00Z' }) === 'pending' && S(undefined, undefined) === 'pending');
+  ok('accepted, superseded and expired show as the server says',
+    S('accepted') === 'accepted' && S('superseded') === 'superseded' && S('expired') === 'expired');
+  const R = (status, reason) => m2.m2ResolvedShownStatus({ messageId: 'm', itemIndex: 0, status, reason, replacedBy: null });
+  ok('a reply\'s decline says "Left off" only for their no; a supersede is "Replaced" in every conversation',
+    R('declined', 'no') === 'declined' && R('declined', 'left-off') === 'settled' && R('declined', null) === 'settled'
+      && R('superseded', 'corrected') === 'superseded');
+  ok('Messages shows each item through the same rule',
+    /outcome=\{outcomes\[i\] \?\? \(m2ItemShownStatus\(it\) === 'pending' \? null : \(m2ItemShownStatus\(it\) as Resolved\)\)\}/.test(card));
+  {
+    const carried = { kind: 'part', source: 'chat', confirmedInChat: true, carriedOver: true, carriedOverAt: '2026-11-08T12:00:00Z',
+      payload: { part: 'wound', fields: { belief: 'I am too much' }, field: 'belief', value: 'I am too much' }, status: 'pending' };
+    const viaPending = m2.parseM2Pending({ sessionId: 's1', cards: [{ messageId: 'r1', itemIndex: 0, item: carried }] }, 's1');
+    const viaInbox = m2.chatPendingCards([{ id: 'r1', kind: 'm2_card', payload: { sessionId: 's1', items: [carried] } }], 's1');
+    ok('a carried-over card stays on the chat screen, from either read, so the chat never greys it',
+      viaPending && viaPending.cards.length === 1 && viaInbox.length === 1);
+  }
   ok('only a pending card moves on: nothing un-resolves',
     /prev\[key\] && prev\[key\]\.status === 'pending'/.test(chat));
   ok('a server read keeps resolved cards resolved, and greys a card the whole pending list no longer has',

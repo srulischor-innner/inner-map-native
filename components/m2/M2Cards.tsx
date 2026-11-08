@@ -34,7 +34,7 @@ import { colors, fonts, spacing } from '../../constants/theme';
 import type { InboxMessage } from '../../services/api';
 import {
   isM2Item, m2BuildEdit, m2CardKey, m2EditDraft, m2FieldWords, m2ItemCategory, m2ItemFieldEntries,
-  m2ItemHasOwnName, m2ItemIsBundled, m2ItemNote, m2ItemSource, m2ItemTitle,
+  m2ItemHasOwnName, m2ItemIsBundled, m2ItemNote, m2ItemShownStatus, m2ItemSource, m2ItemTitle,
   type ChatPendingCard, type M2CardItem, type M2CardStatus, type M2EditDraft,
 } from '../../services/m2';
 import { acceptM2Item, declineM2Item, markM2CardShown } from '../../services/m2Store';
@@ -187,7 +187,7 @@ export function M2InboxCard({ message, onEditFocus }: { message: InboxMessage; o
             messageId={message.id}
             itemIndex={i}
             item={it}
-            outcome={outcomes[i] ?? (it.status === 'accepted' || it.status === 'declined' ? it.status : null)}
+            outcome={outcomes[i] ?? (m2ItemShownStatus(it) === 'pending' ? null : (m2ItemShownStatus(it) as Resolved))}
             onSettled={(o) => setOutcomes((prev) => ({ ...prev, [i]: o }))}
             onEditFocus={onEditFocus}
           />
