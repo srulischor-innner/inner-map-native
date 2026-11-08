@@ -135,21 +135,24 @@ const ORIENTATION_MESSAGE =
   "Would you like to begin?";
 
 // THE M2 WELCOME — the first-conversation fallback for an account on the M2
-// stack. On M2 the SERVER chooses the welcome (founder, 2026-11-08): this text
-// for a first conversation, a "Welcome back" one while the starter map is
+// stack. On M2 the SERVER chooses the welcome (founder, 2026-11-08): the
+// first-conversation text, or a "Welcome back" one while the starter map is
 // unfinished. The app shows whichever the server sends and falls back to this,
 // exactly, when the server sends nothing usable. Verbatim from the founder's
-// Nov 8 fixes, which replaced the Nov 5 welcome (first-session (1).md line 33):
-// "The slides already explain the app, so the welcome no longer does." It
+// replacement of the Nov 8 first-conversation text; the Nov 8 fixes had
+// already replaced the Nov 5 welcome (first-session (1).md line 33), because
+// "the slides already explain the app, so the welcome no longer does." It
 // replaces ORIENTATION_MESSAGE for M2 only. Do not edit it here; a change to
 // this copy is the founder's.
 const M2_WELCOME =
-  "Welcome. I'm glad you're here. Before anything else, we'll build the start " +
-  "of your map together, so the first conversation is a little different: " +
-  "I'll ask a bit more than I usually will, and when something sounds like it " +
-  "belongs on your map, I'll offer it, and you decide. What we build today is " +
-  "a rough sketch; it gets sharper as we go, and if something I say doesn't " +
-  "fit, say so. After that, it's your space. Start wherever you like.";
+  "Welcome. We'll start by building the beginning of your map, so that when " +
+  "you open it there's something real there, in your own words, to come back " +
+  "to. That makes this first conversation a little different from how it will " +
+  "usually be: I'll take more of the lead, ask more than I normally would, and " +
+  "when something sounds like it belongs on your map, I'll offer it and you " +
+  "decide. What we build today is a rough sketch; it gets sharper as we go, " +
+  "and if something I say doesn't fit, say so. After that, it's your space: " +
+  "you lead, we go at your pace, and I follow what you bring.";
 
 // ===== THE OPENING BUBBLE IS A CONSTANT =====
 // Founder decision, August 2026: the dynamic session-opening greeting is

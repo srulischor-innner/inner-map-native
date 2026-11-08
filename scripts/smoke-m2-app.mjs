@@ -426,10 +426,10 @@ ok('Messages leaves out items it cannot read, has nothing to show for, or that e
 // ===========================================================================
 console.log('\n6. the welcome');
 {
-  // The fallback is the founder's first-conversation text, exactly. It came in
-  // the founder's Nov 8 fixes, not in a file, so its record is here: change it
-  // only with the founder's words.
-  const FOUNDER_FIRST_CONVERSATION = "Welcome. I'm glad you're here. Before anything else, we'll build the start of your map together, so the first conversation is a little different: I'll ask a bit more than I usually will, and when something sounds like it belongs on your map, I'll offer it, and you decide. What we build today is a rough sketch; it gets sharper as we go, and if something I say doesn't fit, say so. After that, it's your space. Start wherever you like.";
+  // The fallback is the founder's first-conversation text, exactly. It came as
+  // the founder's replacement of the Nov 8 text, relayed in words, not in a
+  // file, so its record is here: change it only with the founder's words.
+  const FOUNDER_FIRST_CONVERSATION = "Welcome. We'll start by building the beginning of your map, so that when you open it there's something real there, in your own words, to come back to. That makes this first conversation a little different from how it will usually be: I'll take more of the lead, ask more than I normally would, and when something sounds like it belongs on your map, I'll offer it and you decide. What we build today is a rough sketch; it gets sharper as we go, and if something I say doesn't fit, say so. After that, it's your space: you lead, we go at your pace, and I follow what you bring.";
   const m = chatSrc.match(/const M2_WELCOME =([\s\S]*?);\r?\n/);
   const val = m ? new Function(`return (${m[1]});`)() : null;
   ok('M2_WELCOME is the founder\'s first-conversation text, byte for byte',
