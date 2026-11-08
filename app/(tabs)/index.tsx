@@ -2245,7 +2245,7 @@ export default function ChatScreen() {
   // Never while a crisis owns the screen. A card that is pending but belongs
   // to no bubble — a read that came without its reply's done frame — still
   // shows, at the end of the thread, as before.
-  const settleTappedCard = useCallback((key: string, o: 'accepted' | 'declined') => settleCard(key, o), [settleCard]);
+  const settleTappedCard = useCallback((key: string, o: Exclude<M2CardStatus, 'pending'>) => settleCard(key, o), [settleCard]);
   const attachedCardKeys = useMemo(() => new Set(messages.flatMap((m) => m.m2CardKeys || [])), [messages]);
   const unattachedCards = useMemo(
     () => Object.entries(cardRegistry)

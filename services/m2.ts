@@ -476,7 +476,11 @@ export type M2CardResolved = {
   messageId: string;
   itemIndex: number;
   status: 'declined' | 'superseded';
-  /** The card that replaces a superseded one, when the server says. */
+  /** Why: "no" (their answer was a no), "left-off" (the reply said it won't
+   *  add it), "corrected" (superseded). null for anything else. */
+  reason: 'no' | 'left-off' | 'corrected' | null;
+  /** The card that replaces a superseded one; it is in the same reply's
+   *  cardsAdded. */
   replacedBy: { messageId: string; itemIndex: number } | null;
 };
 
@@ -501,9 +505,9 @@ const cardRef = (o: unknown): { messageId: string; itemIndex: number } | null =>
 };
 
 /** CARD TIMING (founder): the card comes with the offer, the tap is the yes,
- *  and a no or a corrected offer resolves it. The resolved list's field name
- *  and shape are the chat stack's to set; this is the one place that reads
- *  them. */
+ *  and a no or a corrected offer resolves it. Field name and shape confirmed
+ *  by the chat stack (2026-11-08): cardsResolved, always present on an M2
+ *  done frame, [] when empty. This is the one place that reads it. */
 const RESOLVED_FIELD = 'cardsResolved';
 
 export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
@@ -521,7 +525,13 @@ export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
     const r = cardRef(c);
     const status = (c as { status?: unknown })?.status;
     if (!r || (status !== 'declined' && status !== 'superseded')) continue;
-    cardsResolved.push({ ...r, status, replacedBy: cardRef((c as { replacedBy?: unknown }).replacedBy) });
+    const reason = (c as { reason?: unknown }).reason;
+    cardsResolved.push({
+      ...r,
+      status,
+      reason: reason === 'no' || reason === 'left-off' || reason === 'corrected' ? reason : null,
+      replacedBy: status === 'superseded' ? cardRef((c as { replacedBy?: unknown }).replacedBy) : null,
+    });
   }
   const starter = parseM2Starter(m2Block);
   return {

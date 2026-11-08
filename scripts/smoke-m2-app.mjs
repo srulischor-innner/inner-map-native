@@ -437,20 +437,25 @@ console.log('\n5a. card timing');
     /declined: 'Left off your map\.',/.test(card) && /superseded: 'Replaced by the newer offer below\.',/.test(card)
       && /settled: null,/.test(card));
 
-  // The done frame's resolutions (field name set by the chat stack; one reader).
+  // The done frame's resolutions, in the shape the chat stack set (2026-11-08):
+  // cardsResolved [{ messageId, itemIndex, status, reason, replacedBy? }].
   const d = m2.parseM2Done({
     stack: 'm2', cardsAdded: [{ messageId: 'msg-1', itemIndex: 2 }],
     cardsResolved: [
-      { messageId: 'msg-1', itemIndex: 0, status: 'declined' },
-      { messageId: 'msg-1', itemIndex: 1, status: 'superseded', replacedBy: { messageId: 'msg-1', itemIndex: 2 } },
+      { messageId: 'msg-1', itemIndex: 0, status: 'declined', reason: 'no' },
+      { messageId: 'msg-1', itemIndex: 1, status: 'superseded', reason: 'corrected', replacedBy: { messageId: 'msg-1', itemIndex: 2 } },
+      { messageId: 'msg-1', itemIndex: 5, status: 'declined', reason: 'left-off', replacedBy: { messageId: 'msg-1', itemIndex: 9 } },
+      { messageId: 'msg-1', itemIndex: 6, status: 'declined', reason: 'something new' },
       { messageId: 'msg-1', itemIndex: 3, status: 'accepted' },
       { messageId: 7, itemIndex: 4, status: 'declined' },
     ],
   });
-  ok('a reply\'s declined and superseded cards are read, with what replaces them; anything else is dropped',
+  ok('a reply\'s declined and superseded cards are read, with reason and replacement; anything else is dropped',
     JSON.stringify(d.cardsResolved) === JSON.stringify([
-      { messageId: 'msg-1', itemIndex: 0, status: 'declined', replacedBy: null },
-      { messageId: 'msg-1', itemIndex: 1, status: 'superseded', replacedBy: { messageId: 'msg-1', itemIndex: 2 } },
+      { messageId: 'msg-1', itemIndex: 0, status: 'declined', reason: 'no', replacedBy: null },
+      { messageId: 'msg-1', itemIndex: 1, status: 'superseded', reason: 'corrected', replacedBy: { messageId: 'msg-1', itemIndex: 2 } },
+      { messageId: 'msg-1', itemIndex: 5, status: 'declined', reason: 'left-off', replacedBy: null },
+      { messageId: 'msg-1', itemIndex: 6, status: 'declined', reason: null, replacedBy: null },
     ]), JSON.stringify(d.cardsResolved));
   ok('a done frame with no resolutions has an empty list', JSON.stringify(m2.parseM2Done({ stack: 'm2' }).cardsResolved) === '[]');
 
@@ -470,7 +475,13 @@ console.log('\n5a. card timing');
       && /acceptM2Item\(messageId, itemIndex, m2BuildEdit\(item, draft\)\)/.test(card));
 }
 ok('a failed write is said back, not shown as added',
-  /if \(res\.ok\) \{[\s\S]*?onSettled\('accepted'\)[\s\S]*?\} else \{[\s\S]*?setFailed\(true\)/.test(card));
+  /if \(res\.ok && res\.written > 0\) \{[\s\S]*?onSettled\('accepted'\)[\s\S]*?\} else \{[\s\S]*?setFailed\(true\)/.test(card));
+// m2-api.md: act on a card that isn't pending answers ok with written: 0.
+ok('an accept that wrote nothing greys the card and claims nothing — never "added"',
+  /\} else if \(res\.ok\) \{[\s\S]{0,400}onSettled\('settled'\);/.test(card)
+    && /return \{ ok: res\.ok, written: res\.written \};/.test(codeOnly(read('services/m2Store.ts'))));
+ok('Messages leaves out a superseded item: its replacement is the one to decide on',
+  /it\.status !== 'expired' && it\.status !== 'superseded'/.test(card));
 ok('Messages leaves out items it cannot read, has nothing to show for, or that expired',
   /isM2Item\(it\) && !!m2ItemTitle\(it\) && it\.status !== 'expired'/.test(card));
 

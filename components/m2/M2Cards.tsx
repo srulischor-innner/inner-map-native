@@ -75,7 +75,7 @@ export function PendingMapCards({ cards }: { cards: ChatPendingCard[] }) {
   // they are HIDDEN, not forgotten: if the refresh failed and the inbox cache
   // still lists the card as pending, it must not come back with live buttons
   // over an item that is already on the map.
-  const [settled, setSettled] = useState<Record<string, { card: ChatPendingCard; outcome: Outcome; hidden: boolean }>>({});
+  const [settled, setSettled] = useState<Record<string, { card: ChatPendingCard; outcome: Resolved; hidden: boolean }>>({});
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => () => { for (const t of timers.current) clearTimeout(t); }, []);
 
@@ -84,7 +84,7 @@ export function PendingMapCards({ cards }: { cards: ChatPendingCard[] }) {
     for (const c of cards) markM2CardShown(c.messageId, c.itemIndex);
   }, [cards]);
 
-  function settle(card: ChatPendingCard, outcome: Outcome) {
+  function settle(card: ChatPendingCard, outcome: Resolved) {
     const k = keyOf(card);
     setSettled((prev) => ({ ...prev, [k]: { card, outcome, hidden: false } }));
     timers.current.push(setTimeout(() => {
@@ -93,7 +93,7 @@ export function PendingMapCards({ cards }: { cards: ChatPendingCard[] }) {
   }
 
   const pendingKeys = new Set(cards.map(keyOf));
-  const shown: { card: ChatPendingCard; outcome: Outcome | null }[] = [
+  const shown: { card: ChatPendingCard; outcome: Resolved | null }[] = [
     ...cards
       .filter((card) => !settled[keyOf(card)]?.hidden)
       .map((card) => ({ card, outcome: settled[keyOf(card)]?.outcome ?? null })),
@@ -132,7 +132,7 @@ export function M2InlineCards({
   entries, onSettled,
 }: {
   entries: { card: ChatPendingCard; status: M2CardStatus }[];
-  onSettled: (key: string, o: Outcome) => void;
+  onSettled: (key: string, o: Resolved) => void;
 }) {
   // The card's 14-day clock starts the first time it is shown here.
   useEffect(() => {
@@ -162,13 +162,14 @@ export function M2InlineCards({
 
 export function M2InboxCard({ message, onEditFocus }: { message: InboxMessage; onEditFocus?: EditFocusHandler }) {
   const items = Array.isArray(message.payload.items) ? message.payload.items : [];
-  const [outcomes, setOutcomes] = useState<Record<number, Outcome>>({});
+  const [outcomes, setOutcomes] = useState<Record<number, Resolved>>({});
   // Items the app cannot read, or that have nothing to show, are left out
   // rather than drawn as an empty row with live buttons. An expired item is
-  // left out too: it can no longer be added.
+  // left out too: it can no longer be added. So is a superseded one: a
+  // corrected offer replaced it, and the replacement is the item to decide on.
   const rows = items
     .map((it, i) => ({ it, i }))
-    .filter(({ it }) => isM2Item(it) && !!m2ItemTitle(it) && it.status !== 'expired') as { it: M2CardItem; i: number }[];
+    .filter(({ it }) => isM2Item(it) && !!m2ItemTitle(it) && it.status !== 'expired' && it.status !== 'superseded') as { it: M2CardItem; i: number }[];
   if (rows.length === 0) return null;
 
   return (
@@ -208,7 +209,7 @@ function M2ItemCard({
   itemIndex: number;
   item: M2CardItem;
   outcome: Resolved | null;
-  onSettled: (o: Outcome) => void;
+  onSettled: (o: Resolved) => void;
   onEditFocus?: EditFocusHandler;
 }) {
   const bundled = m2ItemIsBundled(item);
@@ -234,10 +235,17 @@ function M2ItemCard({
     Haptics.selectionAsync().catch(() => {});
     const res = await acceptM2Item(messageId, itemIndex, m2BuildEdit(item, draft));
     setBusy(false);
-    if (res.ok) {
+    if (res.ok && res.written > 0) {
       setEditing(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       onSettled('accepted');
+    } else if (res.ok) {
+      // The server took the tap but wrote nothing: this card was no longer
+      // open (declined, replaced or expired since it was drawn). Grey it out
+      // and claim nothing — never "Added to your map" for a write that did
+      // not happen.
+      setEditing(false);
+      onSettled('settled');
     } else {
       // Say no back. The card stays where it is, wording intact, so they can
       // try again or leave it.

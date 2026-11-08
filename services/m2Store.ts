@@ -81,7 +81,7 @@ export async function acceptM2Item(
   messageId: string,
   itemIndex: number,
   edit?: string | M2BundledEdit,
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; written: number }> {
   const res = await api.actOnMessage(
     messageId,
     [itemIndex],
@@ -94,10 +94,13 @@ export async function acceptM2Item(
     }
   }
   refreshInboxStatus(true).catch(() => {});
-  return { ok: res.ok };
+  // ok with nothing written means the card was no longer open — declined,
+  // replaced or expired on the server since it was drawn (m2-api.md: act on a
+  // card that isn't pending writes nothing). The caller must not say "added".
+  return { ok: res.ok, written: res.written };
 }
 
-/** "Doesn't fit", from either surface. Final. */
+/** "Not now", from either surface. Final. */
 export async function declineM2Item(messageId: string, itemIndex: number): Promise<{ ok: boolean }> {
   const res = await api.declineMessageItems(messageId, [itemIndex]);
   if (res.ok) refreshInboxStatus(true).catch(() => {});

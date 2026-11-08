@@ -60,6 +60,19 @@ The founder's sources match the server's copies byte for byte, checked on 2026-1
 
 Off M2 none of these is read or shown. The opener selector ignores a server text, the banner is `firstSessionPending` alone, and the map keeps its old button.
 
+## Card timing: the card comes with the offer (founder, 2026-11-08)
+
+The card now appears in the same reply as the chat's offer. The tap is the yes and the only write. A no, no tap, or a corrected offer means it isn't added. The shape below is the chat-stack session's, sent on 2026-11-08; staging doesn't have it yet.
+
+| Server | The app |
+|---|---|
+| The done frame's `m2.cardsAdded: [{ messageId, itemIndex }]`: the cards this reply made. | Each card is drawn under that reply (`ChatMsg.m2CardKeys`) and stays there for the rest of the conversation. It reads as a choice: "FOR YOUR MAP", with "ADD TO YOUR MAP", "EDIT" and "Not now". |
+| `m2.cardsResolved: [{ messageId, itemIndex, status, reason, replacedBy? }]`, always present. `status` is `declined` (reason `no` or `left-off`) or `superseded` (reason `corrected`, `replacedBy` naming the new card in this reply's `cardsAdded`). | The card greys out where it is, with no buttons: "Left off your map." or "Replaced by the newer offer below." The new card shows under the reply that made it. Only a pending card ever moves on. |
+| Item status `pending`, `accepted`, `declined`, `superseded` or `expired`. An idle decline (`declinedReason: "untapped"`) comes with no reply. | Anything but `pending` is finished. A card that `/api/m2/pending` stops listing greys out without claiming why, which covers an idle decline. In Messages, superseded items are hidden like expired ones, since the replacement is the one to decide on. |
+| `act` on a card that isn't pending writes nothing: `ok` with `written: 0`. | The card greys out and claims nothing. It never says "Added to your map." for a write that didn't happen. |
+
+A typed yes writes nothing, so a pending card stays tappable until the conversation ends.
+
 ## The fields a card can carry (mapping-m2 (3).md, line 16)
 
 The editor shows every bundled field with its own input, labelled in plain words. Every field line 16 names has its own label, and no two fields on one card share a label. The smoke checks both, and when the founder's file is on disk it also checks its list still matches line 16.
