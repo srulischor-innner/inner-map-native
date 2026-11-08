@@ -422,7 +422,7 @@ ok('Messages leaves out items it cannot read, has nothing to show for, or that e
   /isM2Item\(it\) && !!m2ItemTitle\(it\) && it\.status !== 'expired'/.test(card));
 
 // ===========================================================================
-// 6. THE WELCOME (founder, 2026-11-08)
+// 6. THE WELCOME (founder, 2026-11-08; server API agreed with the chat stack)
 // ===========================================================================
 console.log('\n6. the welcome');
 {
@@ -454,23 +454,38 @@ console.log('\n6. the welcome');
   ok('anything that is not plain words is refused, and the fallback shows instead',
     leaked.length === 0, leaked.join(', '));
 
+  // The server's fields, as m2-api.md (Nov 8) names them.
+  const st = m2.parseM2Starter({ m2Welcome: 'Welcome back. We can pick that up.', m2WelcomeKind: 'returning', starterOverlay: true, starterMapFinished: false });
+  ok('the status / build answer reads as welcome, overlay and finished',
+    st.welcome === 'Welcome back. We can pick that up.' && st.overlay === true && st.finished === false);
+  const none = m2.parseM2Starter({ m2Welcome: null, starterOverlay: 'yes' });
+  ok('...and anything missing or mistyped is "the server did not say", never a guess',
+    none.welcome === null && none.overlay === null && none.finished === null
+      && JSON.stringify(m2.parseM2Starter(undefined)) === JSON.stringify({ welcome: null, overlay: null, finished: null }));
+  const d = m2.parseM2Done({ stack: 'm2', cardsAdded: [], starterOverlay: false, starterMapFinished: true });
+  ok('each reply\'s done block carries the turn\'s overlay and whether the starter map is finished',
+    d.starterOverlay === false && d.starterMapFinished === true);
+
   // Where the server's text comes from, and that it is read only on M2.
   const apiCode = codeOnly(api);
-  ok('the boot welcome is read only for a flagged account, through the guard',
-    /m2Welcome: parseM2Flag\(j\) \? sanitizeM2Welcome\(j\.m2Welcome\) : null,/.test(apiCode));
+  ok('the boot welcome and overlay are read only for a flagged account, through the guard',
+    /m2Welcome: parseM2Flag\(j\) \? parseM2Starter\(j\)\.welcome : null,/.test(apiCode)
+      && /starterOverlay: parseM2Flag\(j\) \? parseM2Starter\(j\)\.overlay : null,/.test(apiCode));
   {
     const a = api.indexOf('async getFirstSessionStatus()');
     const b = a === -1 ? -1 : api.indexOf('\n  },', a);
     const body = a === -1 || b === -1 ? '' : api.slice(a, b);
     const failures = body.match(/return \{[^}]*ok: false[^}]*\}/g) || [];
-    ok('every failure shape of the status call answers m2Welcome: null',
-      failures.length >= 3 && failures.every((r) => /m2Welcome: null/.test(r)));
+    ok('every failure shape of the status call answers m2Welcome: null and starterOverlay: null',
+      failures.length >= 3 && failures.every((r) => /m2Welcome: null/.test(r) && /starterOverlay: null/.test(r)));
   }
+  ok('the next conversation\'s read ignores an answer for an account off M2',
+    /if \(!j \|\| typeof j !== 'object' \|\| !parseM2Flag\(j\)\) return null;\s*return parseM2Starter\(j\);/.test(apiCode));
   ok('boot hands the server\'s text to the selector only on M2',
     /m2WelcomeRef\.current = isM2 \? firstStatus\.m2Welcome : null;/.test(chat)
       && /const finalGreeting = openerFor\(isFirstSession, isM2, m2WelcomeRef\.current\);/.test(chat));
   ok('End Session clears the old welcome and reads the next one only on M2, before Continue',
-    /m2WelcomeRef\.current = null;\s*if \(m2Ref\.current\) \{\s*api\.getM2Welcome\(\)\.then\(\(w\) => \{ m2WelcomeRef\.current = w; \}\)/.test(chat));
+    /m2WelcomeRef\.current = null;\s*nextOverlayRef\.current = null;\s*if \(m2Ref\.current\) \{\s*api\.getM2NextConversation\(\)/.test(chat));
 }
 
 // ===========================================================================
@@ -479,39 +494,44 @@ console.log('\n6. the welcome');
 console.log('\n6a. skip and build');
 {
   ok('the skip chip is the founder\'s words, on M2 only, while the overlay is on, never over a crisis',
-    /\{m2 && starterOverlayOn && !crisisGated \? \(\s*<Pressable\s*onPress=\{handleSkipStarterMap\}/.test(chat)
+    /\{m2 && starterOverlay && !crisisGated \? \(\s*<Pressable\s*onPress=\{handleSkipStarterMap\}/.test(chat)
       && />Skip the starter map for now<\/Text>/.test(chatSrc));
-  ok('the overlay is on for a first session or a started one, and off once skipped',
-    /const starterOverlayOn = \(firstSessionPending === true \|\| starterStarted\) && !starterSkipped;/.test(chat));
   ok('OFF M2 the banner is exactly what it was: firstSessionPending alone',
-    /\{\(m2 \? starterOverlayOn : firstSessionPending === true\) \? \(/.test(chat));
+    /\{\(m2 \? starterOverlay : firstSessionPending === true\) \? \(/.test(chat));
+  ok('the overlay follows the server: the status at the start, each reply after',
+    /setStarterOverlay\(isM2 && \(firstStatus\.starterOverlay \?\? isFirstSession\)\);/.test(chat)
+      && /if \(info\.starterOverlay !== null\) setStarterOverlay\(info\.starterOverlay\);/.test(chat));
+  ok('the next conversation\'s overlay is the server\'s word, read with its welcome',
+    /setStarterOverlay\(m2Ref\.current && \(nextOverlayRef\.current \?\? firstSessionPending === true\)\);/.test(chat));
   {
     const at = chat.indexOf('const handleSkipStarterMap = useCallback(');
     const body = at === -1 ? '' : chat.slice(at, chat.indexOf('}, [starterSkipBusy]);', at));
-    ok('skip tells the server, and the chip goes only on its yes, for the session it was asked about',
-      /api\.m2StarterMap\(sid, 'skip'\)/.test(body)
-        && /if \(!res\.ok \|\| sid !== sessionIdRef\.current\) \{[\s\S]*?return;\s*\}\s*setStarterSkipped\(true\);/.test(body));
+    ok('skip tells the server, and the chip goes only on its yes, for the conversation it was asked about',
+      /api\.m2StarterSkip\(sid\)/.test(body)
+        && /if \(!res\.ok \|\| sid !== sessionIdRef\.current\) \{[\s\S]*?return;\s*\}\s*setStarterOverlay\(false\);/.test(body));
     ok('skip flips nothing else: no first-session flag, no welcome, no count',
       !/setFirstSessionPending|m2WelcomeRef|setStarterCount/.test(body));
   }
-  ok('skip and start reset with the session they belonged to',
-    /setStarterSkipped\(false\);\s*setStarterStarted\(false\);/.test(chat));
   {
     const at = chat.indexOf('const startStarterMapConversation = () => {');
     const body = at === -1 ? '' : chat.slice(at, chat.indexOf('useFocusEffect(', at));
-    const ask = body.indexOf("api.m2StarterMap(sid, 'start')");
+    const ask = body.indexOf('api.m2StarterBuild(sid)');
+    const finished = body.indexOf('if (res.finished) return;');
     const refusal = body.indexOf('if (!res.ok) {');
-    const firstChange = body.search(/setMessages\(|sessionIdRef\.current = sid|setStarterStarted\(true\)/);
-    ok('"Build my starter map" asks the server first, and a refusal changes nothing on screen',
-      ask > -1 && refusal > ask && firstChange > refusal);
-    ok('...opens with the starter-map welcome through the one selector',
-      /const greeting = openerFor\(true, m2Ref\.current, m2WelcomeRef\.current\);/.test(body));
+    const firstChange = body.search(/setMessages\(|sessionIdRef\.current = sid|setStarterOverlay\(true\)/);
+    ok('"Build my starter map" asks the server first, for a NEW conversation id',
+      /const sid = uuidv4\(\);\s*const res = await api\.m2StarterBuild\(sid\);/.test(body));
+    ok('...and a finished starter map (409) or a refusal changes nothing on screen',
+      ask > -1 && finished > ask && refusal > finished && firstChange > refusal);
+    ok('...opens with the starter-map welcome through the one selector, overlay on',
+      /const greeting = openerFor\(true, m2Ref\.current, m2WelcomeRef\.current\);/.test(body)
+        && /setStarterOverlay\(true\);/.test(body));
     ok('...and asks before replacing a conversation that already has their words in it',
       /if \(!hasTurns\) \{ begin\(\); return; \}\s*Alert\.alert\(/.test(body));
   }
   const mapSrc = codeOnly(read('app/(tabs)/map.tsx'));
-  ok('the empty map offers "Build my starter map" on M2, and routes through the one-shot request',
-    /\{m2\s*&& view === 'triangle'\s*&& loadStatus === 'loaded'\s*&& layers\.length === 0 \? \(/.test(mapSrc)
+  ok('the empty map offers "Build my starter map" on M2 while the starter map is unfinished',
+    /\{m2\s*&& view === 'triangle'\s*&& loadStatus === 'loaded'\s*&& layers\.length === 0\s*&& firstSessionDoneAt === null \? \(/.test(mapSrc)
       && /requestStarterMap\(\);\s*router\.push\('\/'\);/.test(mapSrc)
       && />Build my starter map<\/Text>/.test(mapSrc));
   ok('OFF M2 the empty map keeps its old button, exactly as it was',

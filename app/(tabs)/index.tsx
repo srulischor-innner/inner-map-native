@@ -735,7 +735,7 @@ export default function ChatScreen() {
     if (!m2) return;
     return subscribeStarterComplete(() => {
       setFirstSessionPending(false);
-      setStarterStarted(false);
+      setStarterOverlay(false);
       setMessages((prev) => {
         if (prev.some((m) => m.starterMapComplete)) return prev;
         for (let i = prev.length - 1; i >= 0; i--) {
@@ -749,38 +749,39 @@ export default function ChatScreen() {
     });
   }, [m2]);
 
-  // ===== M2: THE STARTER MAP, SKIPPED OR STARTED (founder, 2026-11-08) =====
-  //   m2WelcomeRef   — the welcome the server chose for the conversation that
-  //                    opens next: off the first-session status at boot, off
-  //                    /api/m2/welcome while the End Session summary is up, off
-  //                    the start call for "Build my starter map". Handed to
-  //                    openerFor, which ignores it off M2.
-  //   starterSkipped — "Skip the starter map for now" was tapped and the server
-  //                    took it: the rest of THIS session runs without the
-  //                    starter-map overlay. It flips nothing else — the starter
-  //                    map stays unfinished and the returning welcome still
-  //                    applies next time — so it resets with the session.
-  //   starterStarted — this session was opened by "Build my starter map": the
-  //                    overlay runs even for someone whose first session is
-  //                    done. Also per session.
+  // ===== M2: THE STARTER MAP, SKIPPED OR BUILT (founder, 2026-11-08) =====
+  // The SERVER decides both of these (m2-api.md, Nov 8); the app follows.
+  //   m2WelcomeRef  — the welcome the server chose for the conversation that
+  //                   opens next: off the first-session status at boot and
+  //                   again while the End Session summary is up, off the build
+  //                   response for "Build my starter map". Handed to openerFor,
+  //                   which ignores it off M2.
+  //   nextOverlayRef — the same read's starterOverlay, for the conversation
+  //                   Continue opens.
+  //   starterOverlay — whether THIS conversation runs with the starter-map
+  //                   overlay: the status's starterOverlay at the start, each
+  //                   reply's m2.starterOverlay after, false on a skip, true on
+  //                   a build. It drives the banner and the skip chip. Skipping
+  //                   flips nothing else — the starter map stays unfinished and
+  //                   the next conversation gets the returning welcome and the
+  //                   overlay again, because the server says so then.
   const m2WelcomeRef = useRef<string | null>(null);
-  const [starterSkipped, setStarterSkipped] = useState(false);
+  const nextOverlayRef = useRef<boolean | null>(null);
+  const [starterOverlay, setStarterOverlay] = useState(false);
   const [starterSkipBusy, setStarterSkipBusy] = useState(false);
-  const [starterStarted, setStarterStarted] = useState(false);
   const handleSkipStarterMap = useCallback(async () => {
     if (!m2Ref.current || starterSkipBusy) return;
     setStarterSkipBusy(true);
     Haptics.selectionAsync().catch(() => {});
     const sid = sessionIdRef.current;
-    const res = await api.m2StarterMap(sid, 'skip');
+    const res = await api.m2StarterSkip(sid);
     setStarterSkipBusy(false);
-    // Only on the server's yes, and only for the session it was asked about.
+    // Only on the server's yes, and only for the conversation it was asked about.
     if (!res.ok || sid !== sessionIdRef.current) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       return;
     }
-    setStarterSkipped(true);
-    setStarterStarted(false);
+    setStarterOverlay(false);
   }, [starterSkipBusy]);
   // NOTE: there is no second effect fetching this. /api/first-session-status
   // used to be called TWICE at boot — here, wrapped in a retry that could
@@ -885,8 +886,8 @@ export default function ChatScreen() {
       // First-session status is fetched alongside the map so the opening
       // bubble can be the orientation message without a second round-trip or
       // a flash of the wrong copy.
-      let firstStatus: { completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null; m2Welcome: string | null } =
-        { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null };
+      let firstStatus: { completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null; m2Welcome: string | null; starterOverlay: boolean | null } =
+        { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null, starterOverlay: null };
       try {
         [map, firstStatus] = await Promise.all([
           api.getLatestMap(),
@@ -958,6 +959,9 @@ export default function ChatScreen() {
       // The server's welcome for this conversation, kept for the backstop
       // seed. Off M2 it is never read (openerFor ignores it).
       m2WelcomeRef.current = isM2 ? firstStatus.m2Welcome : null;
+      // Whether this first conversation runs the starter-map overlay: the
+      // server's word, else the first-session flag it has always followed.
+      setStarterOverlay(isM2 && (firstStatus.starterOverlay ?? isFirstSession));
 
       const md = map?.mapData || map || {};
       // Onboarding-vs-ongoing decision: "any core node filled" means
@@ -1060,8 +1064,12 @@ export default function ChatScreen() {
     const begin = async () => {
       // A reply still streaming is kept as far as it got, as Stop does.
       stopTurnRef.current?.();
-      const sid = hasTurns ? uuidv4() : sessionIdRef.current;
-      const res = await api.m2StarterMap(sid, 'start');
+      // Always a NEW conversation id (m2-api.md, build).
+      const sid = uuidv4();
+      const res = await api.m2StarterBuild(sid);
+      // 409 starter-finished: the starter map is already done, so there is
+      // nothing to build; the chat stays as it is.
+      if (res.finished) return;
       if (!res.ok) {
         Alert.alert('Couldn’t start that just now', 'Please try again in a moment.');
         return;
@@ -1078,8 +1086,7 @@ export default function ChatScreen() {
       hasEngagedRef.current = false;
       resumeLockedModeRef.current = null;
       sessionIdRef.current = sid;
-      setStarterSkipped(false);
-      setStarterStarted(true);
+      setStarterOverlay(true);
       m2WelcomeRef.current = res.welcome;
       // A starter-map conversation opens with the starter-map welcome whatever
       // the first-session flag says: the person asked for one.
@@ -1603,7 +1610,7 @@ export default function ChatScreen() {
           // plus the banner and the CTA. Nothing to sequence, nothing to
           // refresh, no echo of the marker that can fabricate a boundary.
           setFirstSessionPending(false);
-          setStarterStarted(false); // M2: a started starter-map session is done too
+          setStarterOverlay(false); // M2: the starter map is done, so is its overlay
           console.log('[first-session] STARTER_MAP_COMPLETE — banner cleared, CTA on');
         }
 
@@ -1789,6 +1796,13 @@ export default function ChatScreen() {
               cardLookTokenRef.current++;
               if (info.starterCount !== null) setStarterCount(info.starterCount);
               if (info.cardsAdded.length > 0) readChatCards().catch(() => {});
+              // Whether this turn ran with the starter-map overlay, and whether
+              // the starter map is now finished (m2-api.md, Nov 8).
+              if (info.starterOverlay !== null) setStarterOverlay(info.starterOverlay);
+              if (info.starterMapFinished === true) {
+                setFirstSessionPending(false);
+                setStarterOverlay(false);
+              }
             },
             onMessageIds: (ids) => {
               // Round 9 RAG — stamp serverMessageId onto the most
@@ -2178,9 +2192,7 @@ export default function ChatScreen() {
   // a tap brings the count to two. Off M2 this is always the handler, exactly
   // as before.
   const starterMapHandler = starterMapButtonAllowed(m2, starterCount) ? handleViewStarterMap : undefined;
-  // M2: whether this session runs the starter-map overlay — a first session,
-  // or one opened by "Build my starter map" — and the person has not skipped it.
-  const starterOverlayOn = (firstSessionPending === true || starterStarted) && !starterSkipped;
+
   const bubbleList = useMemo( // eslint-disable-next-line react-hooks/exhaustive-deps
     () => messages.map((m) => (
       <MessageBubble
@@ -2254,7 +2266,7 @@ export default function ChatScreen() {
       {/* On M2 the banner follows the starter-map overlay, which the person
           can switch off for this session (skip) or on for one (Build my starter
           map). Off M2 it is exactly what it was: firstSessionPending alone. */}
-      {(m2 ? starterOverlayOn : firstSessionPending === true) ? (
+      {(m2 ? starterOverlay : firstSessionPending === true) ? (
         <View style={styles.firstSessionBanner} pointerEvents="none">
           <Text style={styles.firstSessionBannerText}>
             Building your starter map
@@ -2265,7 +2277,7 @@ export default function ChatScreen() {
           the rest of this session runs without the starter-map overlay. It
           flips nothing — the map stays unfinished, and the returning welcome
           still applies next time. Never over a crisis referral. */}
-      {m2 && starterOverlayOn && !crisisGated ? (
+      {m2 && starterOverlay && !crisisGated ? (
         <Pressable
           onPress={handleSkipStarterMap}
           disabled={starterSkipBusy}
@@ -2551,8 +2563,12 @@ export default function ChatScreen() {
             // next one's. A read that has not landed by Continue leaves the
             // fallback text.
             m2WelcomeRef.current = null;
+            nextOverlayRef.current = null;
             if (m2Ref.current) {
-              api.getM2Welcome().then((w) => { m2WelcomeRef.current = w; }).catch(() => {});
+              api.getM2NextConversation().then((n) => {
+                m2WelcomeRef.current = n ? n.welcome : null;
+                nextOverlayRef.current = n ? n.overlay : null;
+              }).catch(() => {});
             }
             const turnMode = wireModeFor(workingModeRef.current);
             const turnThread = threadFor();
@@ -2614,9 +2630,9 @@ export default function ChatScreen() {
               cardLookTimerRef.current = null;
               cardLookTokenRef.current++;
               setChatCards([]);
-              // Skip and start were for the session that just ended.
-              setStarterSkipped(false);
-              setStarterStarted(false);
+              // The next conversation's overlay is the server's word, read
+              // with its welcome; a skip was for the conversation that ended.
+              setStarterOverlay(m2Ref.current && (nextOverlayRef.current ?? firstSessionPending === true));
               // Inbox badge refresh — a just-ended session may have left
               // parked NOTICED items that the next sweep will bundle.
               refreshInboxStatus(true).catch(() => {});

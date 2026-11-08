@@ -865,14 +865,18 @@ export default function MapScreen() {
             but map somehow empty) was unreachable in practice and
             rendered an un-actionable text-only overlay; dropped. */}
         {/* M2: BUILD MY STARTER MAP (founder, 2026-11-08) — so they can come
-            back to it, whether the first session was skipped, ran out, or is
-            still to come. It opens a starter-map conversation in the chat
-            (services/m2Store's one-shot request). Same place and style as the
-            button below, which it replaces on M2. */}
+            back to it after skipping it, or before they ever start. It opens a
+            starter-map conversation in the chat (services/m2Store's one-shot
+            request). Shown while the starter map is unfinished: for an M2
+            account completedAt now mirrors the server's starterMapFinished
+            (m2-api.md, Nov 8), so a finished one gets no button and the
+            server's 409 for it stays rare. Same place and style as the button
+            below, which it replaces on M2. */}
         {m2
           && view === 'triangle'
           && loadStatus === 'loaded'
-          && layers.length === 0 ? (
+          && layers.length === 0
+          && firstSessionDoneAt === null ? (
           <View style={styles.mapEmptyOverlay} pointerEvents="box-none">
             <Pressable
               onPress={() => {

@@ -25,8 +25,8 @@ import { isMembershipRefusal } from './membershipDecision';
 // Type-only in the other direction (m2.ts imports InboxMessage as a type), so
 // this is not a runtime cycle.
 import {
-  parseM2Flag, readStarterCount, parseM2Pending, parseM2Done, sanitizeM2Welcome,
-  type M2CardItem, type M2BundledEdit, type M2PendingAnswer, type M2DoneInfo,
+  parseM2Flag, readStarterCount, parseM2Pending, parseM2Done, parseM2Starter,
+  type M2CardItem, type M2BundledEdit, type M2PendingAnswer, type M2DoneInfo, type M2Starter,
 } from './m2';
 
 const BASE_URL: string =
@@ -1923,43 +1923,66 @@ export const api = {
     } catch { return false; }
   },
 
-  /** M2 only. GET /api/m2/welcome — the welcome for the NEXT conversation,
-   *  chosen by the server (founder, 2026-11-08): read while the End Session
-   *  summary is up, placed when they tap Continue. Sanitized; null on any
-   *  failure, which the caller turns into the first-conversation fallback. */
-  async getM2Welcome(): Promise<string | null> {
+  /** M2 only. What the NEXT conversation opens with (m2-api.md, Nov 8): the
+   *  first-session status read again, for its m2Welcome and starterOverlay.
+   *  Called while the End Session summary is up, so Continue can place the
+   *  welcome with nothing awaited. A separate method, not a second
+   *  getFirstSessionStatus call site: that one is the boot critical path's
+   *  single read, and this is not on it. null on any failure, which the
+   *  caller turns into the first-conversation fallback. */
+  async getM2NextConversation(): Promise<M2Starter | null> {
     try {
       const headers = await authHeaders();
-      const res = await apiFetch('/api/m2/welcome', {
-        label: 'm2-welcome', method: 'GET', headers, timeoutMs: 10000,
+      const res = await apiFetch('/api/first-session-status', {
+        label: 'm2-next-conversation', method: 'GET', headers, timeoutMs: 10000,
       });
       if (!res.ok) return null;
       const j: any = await res.json().catch(() => null);
-      return sanitizeM2Welcome(j?.welcome);
+      if (!j || typeof j !== 'object' || !parseM2Flag(j)) return null;
+      return parseM2Starter(j);
     } catch (e) {
-      console.warn('[m2] welcome failed:', (e as Error)?.message);
+      console.warn('[m2] next-conversation read failed:', (e as Error)?.message);
       return null;
     }
   },
 
-  /** M2 only. POST /api/m2/starter-map { sessionId, action } (founder,
-   *  2026-11-08). "skip": the rest of this session runs without the
-   *  starter-map overlay, and nothing else changes. "start": this session
-   *  runs WITH it, and the answer may carry the welcome to open it with.
-   *  ok is true only when the server said so. */
-  async m2StarterMap(sessionId: string, action: 'skip' | 'start'): Promise<{ ok: boolean; welcome: string | null }> {
+  /** M2 only. POST /api/m2/starter/skip { sessionId } — "Skip the starter map
+   *  for now". The rest of this conversation runs without the starter-map
+   *  overlay; nothing else changes. ok only on the server's 200 + ok:true. */
+  async m2StarterSkip(sessionId: string): Promise<{ ok: boolean }> {
     try {
       const headers = await authHeaders();
-      const res = await apiFetch('/api/m2/starter-map', {
-        label: `m2-starter-${action}`, method: 'POST', headers,
-        body: JSON.stringify({ sessionId, action }), timeoutMs: 15000,
+      const res = await apiFetch('/api/m2/starter/skip', {
+        label: 'm2-starter-skip', method: 'POST', headers,
+        body: JSON.stringify({ sessionId }), timeoutMs: 15000,
       });
-      if (!res.ok) return { ok: false, welcome: null };
+      if (!res.ok) return { ok: false };
       const j: any = await res.json().catch(() => null);
-      return { ok: j?.ok === true, welcome: sanitizeM2Welcome(j?.welcome) };
+      return { ok: j?.ok === true };
     } catch (e) {
-      console.warn(`[m2] starter-map ${action} failed:`, (e as Error)?.message);
-      return { ok: false, welcome: null };
+      console.warn('[m2] starter skip failed:', (e as Error)?.message);
+      return { ok: false };
+    }
+  },
+
+  /** M2 only. POST /api/m2/starter/build { sessionId } — "Build my starter
+   *  map". sessionId is a NEW conversation's; that conversation runs with the
+   *  overlay and opens with the returned welcome. `finished` is the server's
+   *  409 starter-finished: the starter map is already done, so nothing opens. */
+  async m2StarterBuild(sessionId: string): Promise<{ ok: boolean; finished: boolean; welcome: string | null }> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/m2/starter/build', {
+        label: 'm2-starter-build', method: 'POST', headers,
+        body: JSON.stringify({ sessionId }), timeoutMs: 15000,
+      });
+      if (res.status === 409) return { ok: false, finished: true, welcome: null };
+      if (!res.ok) return { ok: false, finished: false, welcome: null };
+      const j: any = await res.json().catch(() => null);
+      return { ok: j?.ok === true, finished: false, welcome: parseM2Starter(j).welcome };
+    } catch (e) {
+      console.warn('[m2] starter build failed:', (e as Error)?.message);
+      return { ok: false, finished: false, welcome: null };
     }
   },
 
@@ -3329,24 +3352,26 @@ export const api = {
    *  answers m2: false — the app as it is today. `starterCount` is the server's
    *  count of tapped cards when it sends one, else null. `m2Welcome` is the
    *  server's welcome for this conversation (founder, 2026-11-08), already
-   *  through sanitizeM2Welcome — null when absent or unusable. */
-  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null; m2Welcome: string | null }> {
+   *  through sanitizeM2Welcome — null when absent or unusable — and
+   *  `starterOverlay` says whether it runs with the starter-map overlay. */
+  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null; m2Welcome: string | null; starterOverlay: boolean | null }> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/first-session-status', {
         label: 'first-session-status', method: 'GET', headers,
       });
-      if (!res.ok) return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null };
+      if (!res.ok) return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null, starterOverlay: null };
       const j: any = await res.json().catch(() => null);
-      if (!j || typeof j !== 'object') return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null };
+      if (!j || typeof j !== 'object') return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null, starterOverlay: null };
       return {
         completedAt: typeof j.completedAt === 'string' ? j.completedAt : null, ok: true,
         m2: parseM2Flag(j), starterCount: readStarterCount(j),
-        m2Welcome: parseM2Flag(j) ? sanitizeM2Welcome(j.m2Welcome) : null,
+        m2Welcome: parseM2Flag(j) ? parseM2Starter(j).welcome : null,
+        starterOverlay: parseM2Flag(j) ? parseM2Starter(j).overlay : null,
       };
     } catch (e) {
       console.warn('[first-session-status] threw:', (e as Error)?.message);
-      return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null };
+      return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null, starterOverlay: null };
     }
   },
 

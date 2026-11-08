@@ -73,6 +73,22 @@ export function sanitizeM2Welcome(raw: unknown): string | null {
   return t;
 }
 
+/** What the server says about the starter map for a conversation (m2-api.md,
+ *  Nov 8): the welcome to open it with, whether it runs with the starter-map
+ *  overlay, and whether the starter map is finished. Read the same way off the
+ *  first-session status, the build response and (overlay, finished) the done
+ *  frame. null means the server did not say. */
+export type M2Starter = { welcome: string | null; overlay: boolean | null; finished: boolean | null };
+
+export function parseM2Starter(body: unknown): M2Starter {
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  return {
+    welcome: sanitizeM2Welcome(b.m2Welcome),
+    overlay: typeof b.starterOverlay === 'boolean' ? b.starterOverlay : null,
+    finished: typeof b.starterMapFinished === 'boolean' ? b.starterMapFinished : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Cards
 // ---------------------------------------------------------------------------
@@ -451,6 +467,9 @@ export type M2DoneInfo = {
   cardsAdded: { messageId: string; itemIndex: number }[];
   starterCount: number | null;
   starterPending: boolean;
+  /** Whether this turn ran with the starter-map overlay (Nov 8). */
+  starterOverlay: boolean | null;
+  starterMapFinished: boolean | null;
 };
 
 export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
@@ -464,9 +483,12 @@ export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
       cardsAdded.push({ messageId: o.messageId, itemIndex: o.itemIndex as number });
     }
   }
+  const starter = parseM2Starter(m2Block);
   return {
     cardsAdded,
     starterCount: readStarterCount(m2Block),
     starterPending: b.starterPending === true,
+    starterOverlay: starter.overlay,
+    starterMapFinished: starter.finished,
   };
 }
