@@ -479,8 +479,15 @@ console.log('\n6. the welcome');
     ok('every failure shape of the status call answers m2Welcome: null and starterOverlay: null',
       failures.length >= 3 && failures.every((r) => /m2Welcome: null/.test(r) && /starterOverlay: null/.test(r)));
   }
-  ok('the next conversation\'s read ignores an answer for an account off M2',
-    /if \(!j \|\| typeof j !== 'object' \|\| !parseM2Flag\(j\)\) return null;\s*return parseM2Starter\(j\);/.test(apiCode));
+  // The routes as finally agreed with the chat stack (2026-11-08).
+  ok('the next conversation\'s welcome comes from GET /api/m2/welcome, through the guard',
+    /apiFetch\('\/api\/m2\/welcome'/.test(apiCode)
+      && /return parseM2Starter\(\{ \.\.\.j, m2Welcome: j\.welcome \}\);/.test(apiCode));
+  ok('skip and build are POST /api/m2/starter-map with action "skip" / "start"',
+    /JSON\.stringify\(\{ sessionId, action: 'skip' \}\)/.test(apiCode)
+      && /JSON\.stringify\(\{ sessionId, action: 'start' \}\)/.test(apiCode)
+      && (apiCode.match(/apiFetch\('\/api\/m2\/starter-map'/g) || []).length === 2
+      && !/\/api\/m2\/starter\/(skip|build)/.test(apiCode));
   ok('boot hands the server\'s text to the selector only on M2',
     /m2WelcomeRef\.current = isM2 \? firstStatus\.m2Welcome : null;/.test(chat)
       && /const finalGreeting = openerFor\(isFirstSession, isM2, m2WelcomeRef\.current\);/.test(chat));
