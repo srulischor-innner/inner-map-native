@@ -1,11 +1,13 @@
 # M2: the app's side of the server contract
 
+> **1.4.0 (founder, 2026-11-09): M2 is the app.** There is no flag, no staging and no old stack in the app any more. `parseM2Flag`, the store's `useM2Flag`/`setM2Flag` and every screen's read of them are deleted, along with what the flag chose between: the mode control, the opening mode boxes, the server mode switch, `ORIENTATION_MESSAGE`, the empty map's START BUILDING button, the "learns who you are" Guide paragraph, the old YOU biography, the "Your map has been updated" fallback and the "Self-Led" label. Every turn and saved session sends `chatMode: 'explore'` (what M2 always sent). Wherever this doc says "on M2", "off M2" or "behind the flag", read it as history: the M2 behaviour is simply the behaviour.
+
 Updated 2026-11-05 on branch `claude/app-next-m2-0823af`. The server contract is `docs/m2-api.md` on branch `claude/m2-chat-stack-b14563` of the server repo, at commit `5a2657e` (its rewrite for the founder's Nov 5 rulings). The app follows it. Where code relies on something that doc doesn't say, the gap is listed at the end.
 
 The app's M2 code is in three places:
 
 - `services/m2.ts` holds the pure shapes, parsers and rules.
-- `services/m2Store.ts` holds the live flag, the starter count, and accept and decline.
+- `services/m2Store.ts` holds the starter count, and accept and decline.
 - `components/m2/M2Cards.tsx` is the one card both surfaces render.
 
 The founder's sources match the server's copies byte for byte, checked on 2026-11-05:

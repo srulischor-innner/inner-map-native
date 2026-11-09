@@ -21,9 +21,7 @@
 //   ?case=wound-card     a wound card carrying `underneath` (home-layer s.3)
 //   ?case=wound          the Wound folder on M2 with `underneath` filled
 //   ?case=wound-empty    the same folder on M2 with `underneath` empty
-//   ?case=wound-off      the filled folder with the flag off: no row
-//   ?case=axis           the map's YOUR PROGRESS strip on M2 (Blended → You Leading)
-//   ?case=axis-off       the same strip with the flag off (Blended → Self-Led)
+//   ?case=axis           the map's YOUR PROGRESS strip (Blended → You Leading)
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
@@ -32,7 +30,6 @@ import { chatPendingCards } from '../services/m2';
 import { PendingMapCards, M2InlineCards } from '../components/m2/M2Cards';
 import MessagesScreen from '../app/messages';
 import { PartFolderModal } from '../components/map/PartFolderModal';
-import { setM2Flag } from '../services/m2Store';
 import { ProgressStrip } from '../components/map/ProgressStrip';
 
 // A wound row as /api/parts returns it, with markerFields as the tap writes
@@ -206,8 +203,7 @@ export default function M2Preview() {
 
   if (which === 'messages') return <MessagesScreen />;
 
-  if (which === 'axis' || which === 'axis-off') {
-    setM2Flag(which === 'axis');
+  if (which === 'axis') {
     return (
       <View style={[styles.root, { justifyContent: 'flex-end' }]}>
         <ProgressStrip
@@ -222,7 +218,6 @@ export default function M2Preview() {
   }
 
   if (which === 'wound-card') {
-    setM2Flag(true);
     const entry = {
       card: {
         messageId: 'm2-row-wound', itemIndex: 0,
@@ -248,8 +243,7 @@ export default function M2Preview() {
     );
   }
 
-  if (which === 'wound' || which === 'wound-empty' || which === 'wound-off') {
-    setM2Flag(which !== 'wound-off');
+  if (which === 'wound' || which === 'wound-empty') {
     return (
       <View style={styles.root}>
         <PartFolderModal

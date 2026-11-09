@@ -27,7 +27,7 @@ import { IntegrationPanel } from '../../components/map/IntegrationPanel';
 import { subscribeMapActivation } from '../../utils/mapActivation';
 import { subscribeBeliefChanged } from '../../utils/beliefEvents';
 import { markMapSeen, refreshMapSeenStatus } from '../../services/mapSeen';
-import { useM2Flag, requestStarterMap } from '../../services/m2Store';
+import { requestStarterMap } from '../../services/m2Store';
 
 const INTEGRATION_VIEW_SEEN_KEY = 'integration_view_seen';
 const SECOND_LAYER_INTRODUCED_KEY = 'second_layer_introduced';
@@ -203,8 +203,6 @@ export default function MapScreen() {
   // or null); 'error' = network/transport failure (catch block hit).
   const [loadStatus, setLoadStatus] = useState<'idle' | 'loaded' | 'error'>('idle');
   const router = useRouter();
-  // M2: the empty map offers "Build my starter map" (founder, 2026-11-08).
-  const m2 = useM2Flag();
   const loadMap = useCallback(async () => {
     try {
       const [res, ps, journey] = await Promise.all([
@@ -871,9 +869,8 @@ export default function MapScreen() {
             account completedAt now mirrors the server's starterMapFinished
             (m2-api.md, Nov 8), so a finished one gets no button and the
             server's 409 for it stays rare. Same place and style as the button
-            below, which it replaces on M2. */}
-        {m2
-          && view === 'triangle'
+            the old stack's START BUILDING had. */}
+        {view === 'triangle'
           && loadStatus === 'loaded'
           && layers.length === 0
           && firstSessionDoneAt === null ? (
@@ -889,25 +886,6 @@ export default function MapScreen() {
               accessibilityRole="button"
             >
               <Text style={styles.mapEmptyCtaText}>Build my starter map</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {!m2
-          && view === 'triangle'
-          && loadStatus === 'loaded'
-          && layers.length === 0
-          && firstSessionDoneAt === null ? (
-          <View style={styles.mapEmptyOverlay} pointerEvents="box-none">
-            <Pressable
-              onPress={() => {
-                Haptics.selectionAsync().catch(() => {});
-                router.push('/');
-              }}
-              style={styles.mapEmptyCta}
-              accessibilityLabel="Start building your map"
-              accessibilityRole="button"
-            >
-              <Text style={styles.mapEmptyCtaText}>START BUILDING</Text>
             </Pressable>
           </View>
         ) : null}

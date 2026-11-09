@@ -2,7 +2,7 @@
 //
 //   1. the age-gate bypass — a slow storage read waived the terms screen
 //   2. the frozen paywall — nothing parsed the trial 402
-//   3. the opening mode boxes
+//   3. the opening mode boxes (retired 2026-11-09: M2 is the app, one prompt)
 //   4. the in-app privacy summary cited a policy version that never existed
 //   5. the journal is the only ENCRYPTED store on the device — the code-side
 //      guard behind a Privacy Policy correction
@@ -50,8 +50,6 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const LAYOUT = read('app/_layout.tsx');
 const API = read('services/api.ts');
 const CHAT = read('app/(tabs)/index.tsx');
-const BOXES = read('components/ModeBoxes.tsx');
-const CONTROL = read('components/WorkingModeControl.tsx');
 
 // ===========================================================================
 console.log('\n=== 1. a slow storage read cannot waive the terms screen ===');
@@ -173,86 +171,15 @@ ok('...and it is suppressed while a crisis owns the screen',
   && /trial refusal suppressed — crisis owns this turn/.test(CHAT));
 
 // ===========================================================================
-console.log('\n=== 3. the opening mode boxes ===');
+console.log('\n=== 3. the opening mode boxes (retired in 1.4.0) ===');
 // ===========================================================================
-ok('the boxes render the sheet\'s own copy, not a second version of it',
-  /import \{ MODE_LABEL, MODE_BLURB, type WorkingMode \} from '\.\/WorkingModeControl'/.test(BOXES));
-ok('MODE_BLURB is exported so there is one copy of those four sentences',
-  /export const MODE_BLURB: Record<WorkingMode, string>/.test(CONTROL));
-
-// THE ANTI-DRIFT CHECK, and the reason this file exists at all: the labels have
-// drifted twice. Assert the boxes contain NO literal mode wording of their own.
-{
-  // READ THE LIVE COPY, DO NOT RESTATE IT. The first version of this check
-  // listed the four labels and the four blurbs as literals HERE -- which made
-  // it a check against one particular wording rather than against drift.
-  // Reword MODE_BLURB in WorkingModeControl.tsx and the literals below go
-  // stale silently: the check keeps passing, now proving only that the boxes
-  // have not copied the OLD text. That is the same shape as the bug it exists
-  // to catch. So both lists are lifted out of the constants themselves.
-  const lift = (name) => {
-    const head = `export const ${name}: Record<WorkingMode, string> = {`;
-    const i = CONTROL.indexOf(head);
-    if (i < 0) return [];
-    const body = CONTROL.slice(i + head.length, CONTROL.indexOf(`${'\n'}};`, i));
-    // One entry per line, `key: 'value',`. Comment lines carry no colon-quote
-    // pair and drop out on their own.
-    return body.split(/\r?\n/)
-      .map((l) => { const a = l.indexOf(": '"); return a < 0 ? null : l.slice(a + 3, l.lastIndexOf("'")); })
-      .filter((v) => v && v.length);
-  };
-  const labels = lift('MODE_LABEL');
-  const blurbs = lift('MODE_BLURB');
-
-  // A parse that finds nothing would make both assertions below vacuous -- the
-  // filter of an empty list is always empty, so 'nothing was copied' would pass
-  // loudest exactly when this check stopped reading anything.
-  ok('the four labels and four blurbs were read out of WorkingModeControl.tsx',
-    labels.length === 4 && blurbs.length === 4,
-    `parsed ${labels.length} labels, ${blurbs.length} blurbs -- the anti-drift `
-    + 'check below cannot run without them');
-
-  const copiedL = labels.filter((l) => BOXES.includes(l));
-  ok('the boxes hardcode none of the four labels', copiedL.length === 0,
-    copiedL.length ? 'copied verbatim: ' + copiedL.join(' | ') : '');
-  // Blurbs are long enough that a partial copy is the realistic drift, so match
-  // on the opening clause as well as the whole sentence.
-  const copiedB = blurbs.filter((b) => BOXES.includes(b) || BOXES.includes(b.split(/[,.:—]/)[0].trim()));
-  ok('...and none of the four blurbs, whole or in part', copiedB.length === 0,
-    copiedB.length ? 'copied verbatim: ' + copiedB.join(' | ') : '');
-}
-
-ok('there are four boxes, in the sheet\'s order',
-  /const ORDER: WorkingMode\[\] = \['light', 'process', 'explore', 'differentiation'\]/.test(BOXES));
-ok('each box has its own info control', /accessibilityLabel=\{`What \$\{MODE_LABEL\[m\]\} means`\}/.test(BOXES));
-ok('the info tap cannot fall through and change the mode',
-  /e\.stopPropagation\(\);/.test(BOXES),
-  'a mis-tap on a 16pt glyph would otherwise silently switch how the conversation works');
-ok('the info control has a hitSlop (the glyph is under 44pt on its own)',
-  /hitSlop=\{\{ top: 12, bottom: 12, left: 12, right: 12 \}\}/.test(BOXES));
-
-// SKIPPABLE, BY RULING. Two halves: it says so, and nothing blocks.
-ok('the boxes say out loud that they can be ignored',
-  /Or just keep talking/.test(BOXES));
-{
-  // Strip comments first: this file's own header explains why a REQUIRED tap
-  // was rejected, and a naive /required/i over the whole source matched that
-  // sentence -- a check failing on its own rationale.
-  const code = BOXES.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  ok('...and picking is the ONLY thing that dismisses them (no required gate)',
-    !/disabled=\{/.test(code) && !/\brequired\b/i.test(code),
-    'any disabled/required branch here would make the opening question a form');
-}
-
-// PLACEMENT. Second assistant message, and never over a crisis.
-ok('shown only after the greeting AND one reply',
-  /return users >= 1 && assistants === 2;/.test(CHAT),
-  'assistants===2 is greeting + the reply to what they actually said');
-ok('...and never while a crisis owns the screen',
-  /if \(modeBoxesDismissed \|\| crisisGated \|\| typing \|\| sending\) return false;/.test(CHAT));
-ok('picking writes the ref synchronously, like the control does',
-  /workingModeRef\.current = next;\s*\r?\n\s*setWorkingMode\(next\);\s*\r?\n\s*handleModeChange\(wireModeFor\(next\)\);/.test(CHAT),
-  'a turn started in the same tick must read the new mode, not the stale one');
+// The boxes and the mode control were deleted when M2 became the app (founder,
+// 2026-11-09): one prompt, no way of working to pick. Their absence is owned
+// by check-opening-question-withdrawn.js and check-working-mode-control.js;
+// this section only records that the fix it guarded has nothing left to guard.
+ok('the boxes and the control are gone, so there is no second copy of the mode wording to drift',
+  !fs.existsSync(path.join(__dirname, '..', 'components', 'ModeBoxes.tsx'))
+    && !fs.existsSync(path.join(__dirname, '..', 'components', 'WorkingModeControl.tsx')));
 
 // ===========================================================================
 console.log('\n=== 4. the in-app summary cites a policy version that exists ===');

@@ -24,7 +24,7 @@ import { MessageBubble, ChatMsg } from '../MessageBubble';
 import { buildSessionExport, shareSessionText, confirmSessionShare } from '../../utils/sessionExport';
 import { useRouter } from 'expo-router';
 import { armPendingSessionResume } from '../../utils/pendingSessionResume';
-import type { ChatMode } from '../../utils/pendingChatMessage';
+import type { ChatMode } from '../ChatModeToggle';
 import { SESSION_RESUME_ENABLED } from '../../constants/features';
 import { continuedLabel } from '../../utils/sessionDisplay';
 

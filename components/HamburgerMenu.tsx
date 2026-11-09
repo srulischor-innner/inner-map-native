@@ -33,7 +33,6 @@ import { PART_COLOR } from '../utils/markers';
 import { continuedLabel } from '../utils/sessionDisplay';
 import { SessionDetailModal } from './session/SessionDetailModal';
 import { RelationshipSessionSummaryModal } from './relationships/RelationshipSessionSummaryModal';
-import { MODE_LABEL, type WorkingMode } from './WorkingModeControl';
 
 const FEEDBACK_TO  = 'support@my-inner-map.com';
 
@@ -299,14 +298,13 @@ function SessionRow({
   const dotColor = isPartner
     ? '#E0879A'
     : (mostActivePart ? (PART_COLOR[mostActivePart] || colors.amber) : 'rgba(255,255,255,0.2)');
-  // Printed 'Explore' / 'Process' until 2026-09-02 — our names for our prompts,
-  // shown to the person, and blind to two of the four ways of working, which
-  // therefore got no label at all. One canonical list now, the same one the mode
-  // sheet reads, so a person cannot meet two different names for one thing.
+  // ONLY PARTNER IS LABELLED (1.4.0). The four ways of working are gone with
+  // the mode control, and every session the app saves now says 'explore', so a
+  // way-of-working label would name the same mode on every row — a mode the
+  // person can no longer see or pick. Partner is a different place, not a mode.
   const partnerMode = chatMode === 'partner_private';
-  const workLabel = MODE_LABEL[chatMode as WorkingMode] || null;
-  const showMode = partnerMode || !!workLabel;
-  const modeLabel = partnerMode ? '💗 Partner' : (workLabel || '');
+  const showMode = partnerMode;
+  const modeLabel = partnerMode ? '💗 Partner' : '';
   const cont = continuedLabel(date, updatedAt);
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.sessionRow, pressed && { opacity: 0.65 }]}>
@@ -316,14 +314,7 @@ function SessionRow({
           <Text style={styles.sessionDate}>{formatShortDate(date)}</Text>
           {showMode ? (
             <Text
-              style={[
-                styles.sessionMode,
-                chatMode === 'explore'
-                  ? styles.sessionModeExplore
-                  : chatMode === 'partner_private'
-                    ? styles.sessionModePartner
-                    : styles.sessionModeProcess,
-              ]}
+              style={[styles.sessionMode, styles.sessionModePartner]}
             >
               {modeLabel}
             </Text>

@@ -58,8 +58,8 @@ export type GuideSlide = {
 
 // ===== SECTION 0: WELCOME =====
 // Same slides shown during onboarding AND in the Guide tab's WELCOME pill.
-// Both read them through welcomeSlidesFor(m2), below the array: an M2 account
-// gets one paragraph changed, everyone else gets exactly these.
+// (1.4.0: there is one deck. The "learns who you are" paragraph that the old
+// stack showed is gone; KEEPS_WHAT_IT_KEEPS below is the only version.)
 // Single source of truth so concepts can be revisited later without
 // drifting out of sync with the first-time experience.
 //
@@ -78,11 +78,6 @@ export type GuideSlide = {
 // the chatBubble visual, whose renderer had outlived its original
 // slide), so the patterns slide reads as a payoff, not a cold open.
 // Result: 7 slides total.
-
-// The companion slide's second paragraph, split out so M2 can replace it
-// alone. Runtime-identical to the literal it was.
-const LEARNS_WHO_YOU_ARE =
-  "Over time, Inner Map learns who you are and what you're moving through. The more it knows you, the more its responses can meet you where you actually are.";
 
 // M2 (ruling 2026-11-05, "invented memory"): "learns who you are … the more it
 // knows you" claims more than the app keeps. What it keeps across
@@ -147,7 +142,7 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     title: 'A companion for the long journey',
     body: [
       "Open the app when something is activated and you can't quite name the feeling. Return when a pattern keeps repeating and you want to understand why. Use it when you need to be heard without advice or fixing. Mark the moments when something shifts. Sit with it between therapy sessions, when you need somewhere to land.",
-      LEARNS_WHO_YOU_ARE,
+      KEEPS_WHAT_IT_KEEPS,
     ],
   },
   {
@@ -166,18 +161,6 @@ export const WELCOME_SLIDES: GuideSlide[] = [
   },
 ];
 
-// The same slides with the one M2 change. Every other slide and paragraph is
-// the same object, so the two decks cannot drift apart anywhere else.
-export const M2_WELCOME_SLIDES: GuideSlide[] = WELCOME_SLIDES.map((s) =>
-  s.body.includes(LEARNS_WHO_YOU_ARE)
-    ? { ...s, body: s.body.map((p) => (p === LEARNS_WHO_YOU_ARE ? KEEPS_WHAT_IT_KEEPS : p)) }
-    : s,
-);
-
-/** The welcome deck for this account. Off M2 it is WELCOME_SLIDES itself. */
-export function welcomeSlidesFor(m2: boolean): GuideSlide[] {
-  return m2 ? M2_WELCOME_SLIDES : WELCOME_SLIDES;
-}
 
 // ===== SECTION 1: THE MAP =====
 export const MAP_SLIDES: GuideSlide[] = [

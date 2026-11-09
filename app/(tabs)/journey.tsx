@@ -22,8 +22,7 @@ import { StatCards } from '../../components/journey/StatCards';
 import { UsageStrip } from '../../components/journey/UsageStrip';
 import { MapDepth } from '../../components/journey/MapDepth';
 import { PartPhrases, LanguagePatterns } from '../../components/journey/PartPhrases';
-import { useM2Flag } from '../../services/m2Store';
-import { blendedAxisRight } from '../../services/m2';
+import { AXIS_RIGHT_M2 } from '../../services/m2';
 
 type JourneyData = {
   totalSessions: number;
@@ -47,7 +46,6 @@ type JourneyData = {
 
 export default function JourneyScreen() {
   const insets = useSafeAreaInsets();
-  const m2 = useM2Flag();
   const [data, setData] = useState<JourneyData | null>(null);
   // "Your map" reads the parts table (same source as the Map tab + /api/parts),
   // NOT the legacy session mapData blob — that blob is now {partFindings:[...]}
@@ -216,7 +214,7 @@ export default function JourneyScreen() {
           <View style={{ height: spacing.md }} />
           <SpectrumBar
             leftLabel="Blended"
-            rightLabel={blendedAxisRight(m2)}
+            rightLabel={AXIS_RIGHT_M2}
             leftColor={colors.firefighters}
             rightColor={colors.self}
             value={data?.spectrumEarned?.blendedSelfLed ? (data?.blendedSelfLedScore ?? null) : null}

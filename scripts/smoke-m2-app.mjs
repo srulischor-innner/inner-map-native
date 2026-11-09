@@ -1,15 +1,16 @@
-// Smoke for the APP SIDE OF M2 — and above all for "off is today".
+// Smoke for the APP SIDE OF M2 — which, since 1.4.0, is the app.
 //
 // M2 is the founder's locked chat design (mapping-m2 (2).md, first-session
 // (1).md, rulings of 2026-11-05): one prompt, no mode boxes, the chat never
 // writes the map — a yes in chat becomes a card the person taps — an idle pass
 // proposes cards to Messages, a new first-session welcome, and two lines of
-// app copy that claimed memory the app does not have are replaced. It ships
-// behind an account-level flag the server reports. This file holds two claims:
+// app copy that claimed memory the app does not have are replaced. It shipped
+// first behind an account-level flag; on 2026-11-09 the founder made it the
+// only path (no staging, no flag). This file holds two claims:
 //
-//   1. OFF IS TODAY. Every M2 path checks the flag before it does anything,
-//      the flag fails closed, and the legacy copy is the same string it was.
-//   2. ON DOES WHAT THE FOUNDER'S FILES SAY. The pure rules in services/m2.ts
+//   1. THERE IS NO OFF. The flag, its parser, its store and every screen's
+//      read of it are gone, and so is the old stack's copy they chose between.
+//   2. M2 DOES WHAT THE FOUNDER'S FILES SAY. The pure rules in services/m2.ts
 //      are imported and RUN, not read: which cards reach the chat screen, what
 //      an edit sends, when the starter-map button may show.
 //
@@ -46,17 +47,24 @@ const m2 = await import(pathToFileURL(path.join(ROOT, 'services', 'm2.ts')).href
 const guide = await import(pathToFileURL(path.join(ROOT, 'utils', 'guideContent.ts')).href);
 
 // ===========================================================================
-// 1. THE FLAG FAILS CLOSED
+// 1. THERE IS NO FLAG (1.4.0, founder 2026-11-09)
 // ===========================================================================
-console.log('\n1. the flag');
-ok('"m2" under promptStack turns it on', m2.parseM2Flag({ promptStack: 'm2' }) === true);
-ok('"m2" under chatStack turns it on', m2.parseM2Flag({ chatStack: 'm2' }) === true);
+console.log('\n1. no flag: M2 is the app');
+function appSources(dir, out = []) {
+  for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    const rel = path.join(dir, e.name);
+    if (e.isDirectory()) appSources(rel, out);
+    else if (/\.(ts|tsx)$/.test(e.name)) out.push(rel);
+  }
+  return out;
+}
+const FLAG_READ = /\b(?:useM2Flag|setM2Flag|getM2Flag|parseM2Flag|isM2|m2Ref|m2On)\b/;
 {
-  const offs = [null, undefined, 0, '', 'm2', [], {}, { promptStack: 'M2' }, { promptStack: true },
-    { promptStack: 'legacy' }, { chatStack: 'm1' }, { m2: true }, { completedAt: null }];
-  const leaked = offs.filter((b) => m2.parseM2Flag(b) !== false);
-  ok('everything else is OFF — case, booleans, other stacks, a bare m2:true',
-    leaked.length === 0, `turned on by ${JSON.stringify(leaked)}`);
+  const readers = ['app', 'components', 'services', 'utils'].flatMap((d) => appSources(d))
+    .filter((p) => FLAG_READ.test(codeOnly(read(p))));
+  ok('no app source reads, sets or parses an M2 flag', readers.length === 0, readers.join(', '));
+  ok('...and the scan can see one (negative control)', FLAG_READ.test('const m2 = useM2Flag();'));
+  ok('the pure module no longer exports a flag parser', typeof m2.parseM2Flag === 'undefined');
 }
 
 const api = read('services/api.ts');
@@ -64,52 +72,33 @@ const api = read('services/api.ts');
   const a = api.indexOf('async getFirstSessionStatus()');
   const b = a === -1 ? -1 : api.indexOf('\n  },', a);
   const body = a === -1 || b === -1 ? '' : api.slice(a, b);
-  const failures = body.match(/return \{[^}]*ok: false[^}]*\}/g) || [];
-  ok('every failure shape of the status call answers m2: false and no count',
-    failures.length >= 3 && failures.every((r) => /m2: false/.test(r) && /starterCount: null/.test(r)),
-    failures.join(' | ') || 'getFirstSessionStatus not found');
-  ok('the success shape reads the flag and the count through the pure parsers',
-    /m2: parseM2Flag\(j\), starterCount: readStarterCount\(j\)/.test(body));
+  const failed = (body.match(/const failed = \{[^}]*\};/) || [''])[0];
+  ok('every failure shape of the status call answers no count, no welcome, no overlay — and no m2 field',
+    /starterCount: null/.test(failed) && /m2Welcome: null/.test(failed) && /starterOverlay: null/.test(failed)
+      && !/\bm2:/.test(failed) && (body.match(/return failed;/g) || []).length >= 3, failed || 'getFirstSessionStatus not found');
+  ok('the success shape reads the count and the starter map through the pure parsers',
+    /starterCount: readStarterCount\(j\),/.test(body) && /const starter = parseM2Starter\(j\);/.test(body)
+      && /m2Welcome: starter\.welcome,/.test(body) && /starterOverlay: starter\.overlay,/.test(body));
 }
 
 const chatSrc = read('app/(tabs)/index.tsx');
 const chat = codeOnly(chatSrc);
-ok('boot believes the flag only when the status ANSWERED',
-  /const isM2 = firstStatus\?\.ok === true && firstStatus\.m2 === true;/.test(chat));
-ok('...and publishes it for the screens outside the chat',
-  /setM2\(isM2\);\s*setM2Flag\(isM2\);/.test(chat));
-ok('m2 state starts FALSE, so nothing M2 renders before boot answers',
-  /const \[m2, setM2\] = useState\(false\);/.test(chat) && /const m2Ref = useRef\(false\);/.test(chat));
-{
-  const store = codeOnly(read('services/m2Store.ts'));
-  ok('the shared flag starts FALSE and only a strict true turns it on',
-    /let m2On = false;/.test(store) && /const next = on === true;/.test(store));
-}
 
 // ===========================================================================
-// 2. OFF IS TODAY — every M2 path is behind the flag
+// 2. THE CARD PATHS RUN UNCONDITIONALLY, AND STILL NEVER POLL
 // ===========================================================================
-console.log('\n2. off is today');
-{
-  const sub = chat.indexOf('subscribeInbox((s) =>');
-  const head = chat.lastIndexOf('useEffect(() => {', sub);
-  ok('the card subscription returns before subscribing when M2 is off',
-    sub > -1 && head > -1 && /if \(!m2\) return;/.test(chat.slice(head, sub)));
-  const st = chat.indexOf('subscribeStarterComplete(');
-  const stHead = chat.lastIndexOf('useEffect(() => {', st);
-  ok('the starter-complete subscription returns before subscribing when M2 is off',
-    st > -1 && stHead > -1 && /if \(!m2\) return;/.test(chat.slice(stHead, st)));
-}
+console.log('\n2. the card paths');
+ok('the inbox subscription runs from mount, with no guard',
+  /useEffect\(\(\) => subscribeInbox\(\(s\) => mergePendingCards\(chatPendingCards\(s\.messages, sessionIdRef\.current\), false\)\), \[mergePendingCards\]\);/.test(chat));
+ok('the starter-complete subscription runs from mount, with no guard',
+  /useEffect\(\(\) => \{\s*return subscribeStarterComplete\(/.test(chat));
 {
   const fn = (name) => { const at = chat.indexOf(`const ${name} = useCallback(`); return at === -1 ? '' : chat.slice(at, at + 300); };
-  ok('reading the chat cards is a no-op when M2 is off',
-    /^const readChatCards = useCallback\(async \(\): Promise<void> => \{\s*if \(!m2Ref\.current\) return;/.test(fn('readChatCards')));
-  ok('the fallback look after a reply is a no-op when M2 is off',
-    /^const lookForChatCards = useCallback\(\(\) => \{\s*if \(!m2Ref\.current\) return;/.test(fn('lookForChatCards')));
-  ok('the first read on M2 waits for the flag',
-    /useEffect\(\(\) => \{\s*if \(!m2\) return;\s*readChatCards\(\)/.test(chat));
-  ok('the focus refresh is a no-op when M2 is off',
-    /useFocusEffect\(\s*React\.useCallback\(\(\) => \{\s*if \(!m2Ref\.current\) return;\s*readChatCards\(\)/.test(chat));
+  ok('reading the chat cards starts straight away, for the current session',
+    /^const readChatCards = useCallback\(async \(\): Promise<void> => \{\s*const sid = sessionIdRef\.current;/.test(fn('readChatCards')));
+  ok('the cards are read at mount and on every return to the chat',
+    /useEffect\(\(\) => \{\s*readChatCards\(\)\.catch\(\(\) => \{\}\);\s*\}, \[readChatCards\]\);/.test(chat)
+      && /useFocusEffect\(\s*React\.useCallback\(\(\) => \{\s*readChatCards\(\)/.test(chat));
   // m2-api.md: "Chat cards no longer wait on a pass: the done frame's
   // cardsAdded names them." No loop, no interval, no re-arming timer.
   ok('no polling: nothing re-arms a look, and nothing runs on an interval',
@@ -120,38 +109,25 @@ console.log('\n2. off is today');
   ok('...and the done block cancels the fallback look queued in the same tick',
     /onM2Done: \(info\) => \{\s*if \(cardLookTimerRef\.current\) clearTimeout\(cardLookTimerRef\.current\);/.test(chat));
 }
-{
-  // The done frame's m2 block reaches the chat only when the server sent one,
-  // which it never does for an account off M2 (m2-api.md).
-  ok('the stream hands on an m2 block only when the frame carries one',
-    /if \(evt\.m2\) \{\s*const m2Info = parseM2Done\(evt\.m2\);\s*if \(m2Info\) cb\.onM2Done\?\.\(m2Info\);/.test(codeOnly(api)));
-}
+ok('the stream hands on an m2 block only when the frame carries one',
+  /if \(evt\.m2\) \{\s*const m2Info = parseM2Done\(evt\.m2\);\s*if \(m2Info\) cb\.onM2Done\?\.\(m2Info\);/.test(codeOnly(api)));
 ok('the app no longer counts map entries itself — the server counts tapped cards',
   !/countMapEntries|getLatestMap\(\)\s*\.then/.test(chat) && !/countMapEntries/.test(read('services/m2.ts')));
-ok('boot takes the server\'s count only on M2',
-  /if \(isM2\) setStarterCount\(firstStatus\.starterCount\);/.test(chat));
-ok('cards render only on M2 and never over a crisis — under their reply, and the unclaimed fallback',
-  /\{m2 && !crisisGated && m\.m2CardKeys && m\.m2CardKeys\.length > 0 \? \(\s*<M2InlineCards/.test(chat)
-    && /\{m2 && !crisisGated \? \(\s*<PendingMapCards cards=\{unattachedCards\} \/>/.test(chat));
-ok('the mode control is hidden on M2 and ONLY on M2',
-  /\{m2 \? null : \(\s*<WorkingModeControl/.test(chat));
-ok('the mode boxes are suppressed on M2, first line of the rule',
-  /const showModeBoxes = useMemo\(\(\) => \{\s*if \(m2\) return false;/.test(chat));
+ok('boot takes the server\'s count',
+  /setStarterCount\(firstStatus\.starterCount\);/.test(chat));
+ok('cards never render over a crisis — under their reply, and the unclaimed fallback',
+  /\{!crisisGated && m\.m2CardKeys && m\.m2CardKeys\.length > 0 \? \(\s*<M2InlineCards/.test(chat)
+    && /\{!crisisGated \? \(\s*<PendingMapCards cards=\{unattachedCards\} \/>/.test(chat));
 ok('the starter-map button is gated through starterMapButtonAllowed on the server count',
-  /const starterMapHandler = starterMapButtonAllowed\(m2, starterCount\) \? handleViewStarterMap : undefined;/.test(chat)
+  /const starterMapHandler = starterMapButtonAllowed\(starterCount\) \? handleViewStarterMap : undefined;/.test(chat)
     && /onViewStarterMap=\{starterMapHandler\}/.test(chat));
 ok('...and the bubble list re-renders when that gate opens, or a card under a reply moves on',
-  /\[messages, starterMapHandler, m2, crisisGated, cardRegistry, settleTappedCard\]/.test(chat));
-{
-  const offRows = [null, 0, 1, 2, 5].filter((n) => m2.starterMapButtonAllowed(false, n) !== true);
-  ok('OFF: the starter-map button is allowed at every count, as today',
-    offRows.length === 0, `blocked at ${JSON.stringify(offRows)}`);
-  ok('ON: it waits for the server\'s count to reach two',
-    m2.starterMapButtonAllowed(true, 0) === false && m2.starterMapButtonAllowed(true, 1) === false
-      && m2.starterMapButtonAllowed(true, 2) === true && m2.starterMapButtonAllowed(true, 3) === true);
-  ok('ON with no count from the server: the marker decides, as off M2 (the server gates the marker)',
-    m2.starterMapButtonAllowed(true, null) === true);
-}
+  /\[messages, starterMapHandler, crisisGated, cardRegistry, settleTappedCard\]/.test(chat));
+ok('it waits for the server\'s count to reach two',
+  m2.starterMapButtonAllowed(0) === false && m2.starterMapButtonAllowed(1) === false
+    && m2.starterMapButtonAllowed(2) === true && m2.starterMapButtonAllowed(3) === true);
+ok('with no count from the server the marker decides (the server gates the marker)',
+  m2.starterMapButtonAllowed(null) === true);
 
 // ===========================================================================
 // 3. WHICH CARDS REACH THE CHAT SCREEN
@@ -586,24 +562,16 @@ console.log('\n6. the welcome');
   ok('skip and build are the deployed routes, /api/m2/starter/skip and /build',
     /apiFetch\('\/api\/m2\/starter\/skip'/.test(apiCode) && /apiFetch\('\/api\/m2\/starter\/build'/.test(apiCode)
       && !/\/api\/m2\/starter-map|\/api\/m2\/welcome/.test(apiCode));
-  ok('the boot welcome and overlay are read only for a flagged account, through the guard',
-    /m2Welcome: parseM2Flag\(j\) \? parseM2Starter\(j\)\.welcome : null,/.test(apiCode)
-      && /starterOverlay: parseM2Flag\(j\) \? parseM2Starter\(j\)\.overlay : null,/.test(apiCode));
-  {
-    const a = api.indexOf('async getFirstSessionStatus()');
-    const b = a === -1 ? -1 : api.indexOf('\n  },', a);
-    const body = a === -1 || b === -1 ? '' : api.slice(a, b);
-    const failures = body.match(/return \{[^}]*ok: false[^}]*\}/g) || [];
-    ok('every failure shape of the status call answers m2Welcome: null and starterOverlay: null',
-      failures.length >= 3 && failures.every((r) => /m2Welcome: null/.test(r) && /starterOverlay: null/.test(r)));
-  }
-  ok('the next conversation\'s read ignores an answer for an account off M2',
-    /if \(!j \|\| typeof j !== 'object' \|\| !parseM2Flag\(j\)\) return null;\s*return parseM2Starter\(j\);/.test(apiCode));
-  ok('boot hands the server\'s text to the selector only on M2',
-    /m2WelcomeRef\.current = isM2 \? firstStatus\.m2Welcome : null;/.test(chat)
-      && /const finalGreeting = openerFor\(isFirstSession, isM2, m2WelcomeRef\.current\);/.test(chat));
-  ok('End Session clears the old welcome and reads the next one only on M2, before Continue',
-    /m2WelcomeRef\.current = null;\s*nextOverlayRef\.current = null;\s*if \(m2Ref\.current\) \{\s*api\.getM2NextConversation\(\)/.test(chat));
+  ok('the boot welcome and overlay come off the status through the pure parser',
+    /const starter = parseM2Starter\(j\);/.test(apiCode) && /m2Welcome: starter\.welcome,/.test(apiCode)
+      && /starterOverlay: starter\.overlay,/.test(apiCode));
+  ok('the next conversation\'s read takes any answer with a body, through the same parser',
+    /if \(!j \|\| typeof j !== 'object'\) return null;\s*return parseM2Starter\(j\);/.test(apiCode));
+  ok('boot hands the server\'s text to the selector',
+    /m2WelcomeRef\.current = firstStatus\.m2Welcome;/.test(chat)
+      && /const finalGreeting = openerFor\(isFirstSession, m2WelcomeRef\.current\);/.test(chat));
+  ok('End Session clears the old welcome and reads the next one before Continue',
+    /m2WelcomeRef\.current = null;\s*nextOverlayRef\.current = null;\s*api\.getM2NextConversation\(\)/.test(chat));
 }
 
 // ===========================================================================
@@ -611,16 +579,16 @@ console.log('\n6. the welcome');
 // ===========================================================================
 console.log('\n6a. skip and build');
 {
-  ok('the skip chip is the founder\'s words, on M2 only, while the overlay is on, never over a crisis',
-    /\{m2 && starterOverlay && !crisisGated \? \(\s*<Pressable\s*onPress=\{handleSkipStarterMap\}/.test(chat)
+  ok('the skip chip is the founder\'s words, while the overlay is on, never over a crisis',
+    /\{starterOverlay && !crisisGated \? \(\s*<Pressable\s*onPress=\{handleSkipStarterMap\}/.test(chat)
       && />Skip the starter map for now<\/Text>/.test(chatSrc));
-  ok('OFF M2 the banner is exactly what it was: firstSessionPending alone',
-    /\{\(m2 \? starterOverlay : firstSessionPending === true\) \? \(/.test(chat));
+  ok('the banner follows the starter-map overlay, and only that',
+    /\{starterOverlay \? \(\s*<View style=\{styles\.firstSessionBanner\}/.test(chat));
   ok('the overlay follows the server: the status at the start, each reply after',
-    /setStarterOverlay\(isM2 && \(firstStatus\.starterOverlay \?\? isFirstSession\)\);/.test(chat)
+    /setStarterOverlay\(firstStatus\.starterOverlay \?\? isFirstSession\);/.test(chat)
       && /if \(info\.starterOverlay !== null\) setStarterOverlay\(info\.starterOverlay\);/.test(chat));
   ok('the next conversation\'s overlay is the server\'s word, read with its welcome',
-    /setStarterOverlay\(m2Ref\.current && \(nextOverlayRef\.current \?\? firstSessionPending === true\)\);/.test(chat));
+    /setStarterOverlay\(nextOverlayRef\.current \?\? firstSessionPending === true\);/.test(chat));
   {
     const at = chat.indexOf('const handleSkipStarterMap = useCallback(');
     const body = at === -1 ? '' : chat.slice(at, chat.indexOf('}, [starterSkipBusy]);', at));
@@ -642,42 +610,36 @@ console.log('\n6a. skip and build');
     ok('...and a finished starter map (409) or a refusal changes nothing on screen',
       ask > -1 && finished > ask && refusal > finished && firstChange > refusal);
     ok('...opens with the starter-map welcome through the one selector, overlay on',
-      /const greeting = openerFor\(true, m2Ref\.current, m2WelcomeRef\.current\);/.test(body)
+      /const greeting = openerFor\(true, m2WelcomeRef\.current\);/.test(body)
         && /setStarterOverlay\(true\);/.test(body));
     ok('...and asks before replacing a conversation that already has their words in it',
       /if \(!hasTurns\) \{ begin\(\); return; \}\s*Alert\.alert\(/.test(body));
   }
   const mapSrc = codeOnly(read('app/(tabs)/map.tsx'));
-  ok('the empty map offers "Build my starter map" on M2 while the starter map is unfinished',
-    /\{m2\s*&& view === 'triangle'\s*&& loadStatus === 'loaded'\s*&& layers\.length === 0\s*&& firstSessionDoneAt === null \? \(/.test(mapSrc)
+  ok('the empty map offers "Build my starter map" while the starter map is unfinished',
+    /\{view === 'triangle'\s*&& loadStatus === 'loaded'\s*&& layers\.length === 0\s*&& firstSessionDoneAt === null \? \(/.test(mapSrc)
       && /requestStarterMap\(\);\s*router\.push\('\/'\);/.test(mapSrc)
       && />Build my starter map<\/Text>/.test(mapSrc));
-  ok('OFF M2 the empty map keeps its old button, exactly as it was',
-    /\{!m2\s*&& view === 'triangle'\s*&& loadStatus === 'loaded'\s*&& layers\.length === 0\s*&& firstSessionDoneAt === null \? \(/.test(mapSrc));
+  ok('...and it is the empty map\'s only button: the old stack\'s START BUILDING is gone',
+    !/>START BUILDING</.test(mapSrc) && (mapSrc.match(/style=\{styles\.mapEmptyCta\}/g) || []).length === 1);
 }
 
 // ===========================================================================
-// 7. INVENTED MEMORY, REPLACED BEHIND THE FLAG (ruling 2026-11-05)
+// 7. INVENTED MEMORY, REPLACED (ruling 2026-11-05; the only copy since 1.4.0)
 // ===========================================================================
 console.log('\n7. invented memory');
 {
-  ok('OFF: the Guide and onboarding get WELCOME_SLIDES itself',
-    guide.welcomeSlidesFor(false) === guide.WELCOME_SLIDES);
-  const off = guide.WELCOME_SLIDES.flatMap((s) => s.body);
-  const on = guide.welcomeSlidesFor(true).flatMap((s) => s.body);
-  const changed = off.map((p, i) => [p, on[i]]).filter(([a, b]) => a !== b);
-  ok('ON: exactly one paragraph differs, and the decks are otherwise the same',
-    on.length === off.length && changed.length === 1
-      && guide.welcomeSlidesFor(true).every((s, i) => s.title === guide.WELCOME_SLIDES[i].title),
-    `${changed.length} paragraphs differ`);
-  const [was, now] = changed[0] || ['', ''];
-  ok('the paragraph that goes is the "learns who you are" one', /learns who you are/.test(was) && /knows you/.test(was));
-  ok('its replacement claims only what the app keeps',
-    !/learns|knows you|who you are|remember|transcript/i.test(now) && /map/.test(now) && /key moments/.test(now), now);
+  const paras = guide.WELCOME_SLIDES.flatMap((s) => s.body);
+  ok('there is one welcome deck: the selector between two is gone',
+    typeof guide.welcomeSlidesFor === 'undefined' && typeof guide.M2_WELCOME_SLIDES === 'undefined');
+  ok('no paragraph says it learns who you are or knows you',
+    !paras.some((p) => /learns who you are|knows you/i.test(p)));
+  const keeps = paras.filter((p) => /keeps your map/.test(p));
+  ok('the paragraph in its place claims only what the app keeps',
+    keeps.length === 1 && !/learns|knows you|who you are|remember|transcript/i.test(keeps[0]) && /key moments/.test(keeps[0]), keeps[0]);
   for (const f of ['app/(tabs)/guide.tsx', 'app/onboarding.tsx']) {
     const src = codeOnly(read(f));
-    ok(`${f} reads the deck through the flag`,
-      /welcomeSlidesFor\(useM2Flag\(\)\)/.test(src) && !/\bWELCOME_SLIDES\b/.test(src));
+    ok(`${f} reads WELCOME_SLIDES directly`, /\bWELCOME_SLIDES\b/.test(src) && !/welcomeSlidesFor/.test(src));
   }
 }
 {
@@ -687,20 +649,15 @@ console.log('\n7. invented memory');
     const m = src.match(new RegExp(`const ${name} =\\s*([\\s\\S]*?);\\r?\\n`));
     return m ? new Function(`return (${m[1]});`)() : null;
   };
-  const was = grab('YOU_BIOGRAPHY');
-  const now = grab('YOU_BIOGRAPHY_M2');
-  ok('the YOU folder\'s legacy text is still built from the old biography', /description: YOU_BIOGRAPHY \+ '\\n\\n' \+ YOU_REST,/.test(code));
-  ok('the old biography is the one the audit names', typeof was === 'string' && /career/.test(was) && /brilliantly/.test(was));
-  ok('the M2 biography assumes no career, no relationships, and praises nothing',
-    typeof now === 'string' && !/career|relationship|brilliant|whole life/i.test(now), now || 'not found');
-  ok('only the biography changes on M2 — the rest of the folder is the same text',
-    /return m2 && partKey === 'self-like' \? YOU_BIOGRAPHY_M2 \+ '\\n\\n' \+ YOU_REST : meta\.description;/.test(code));
-  ok('the folder reads the flag before its early return, so the hook runs every render',
-    /const m2 = useM2Flag\(\);\s*if \(!partKey\) return null;/.test(code)
-      && /\{descriptionFor\(partKey, meta, m2\)\}/.test(code));
+  const bio = grab('YOU_BIOGRAPHY');
+  ok('the YOU folder\'s biography assumes no career, no relationships, and praises nothing',
+    typeof bio === 'string' && /arrives at/.test(bio) && !/career|relationship|brilliant|whole life/i.test(bio), bio || 'not found');
+  ok('the folder text is built from it, the same way as before',
+    /description: YOU_BIOGRAPHY \+ '\\n\\n' \+ YOU_REST,/.test(code) && /\{meta\.description\}/.test(code)
+      && !/YOU_BIOGRAPHY_M2|descriptionFor/.test(code));
 
   // The Wound folder's `underneath` row (home-layer-for-code.md section 3):
-  // the person's words, on M2 only, and no row at all while it's empty.
+  // the person's words, and no row at all while it's empty.
   const bodySrc = (code.match(/const WOUND_BODY = (\{[\s\S]*?\}) as const;/) || [])[1];
   const body = bodySrc ? new Function(`return (${bodySrc});`)() : null;
   ok('the Wound folder declares the underneath row with the card\'s own words',
@@ -708,9 +665,9 @@ console.log('\n7. invented memory');
       && body.underneath.label.toLowerCase() === m2.m2FieldWords('underneath'),
     body && body.underneath ? body.underneath.label : 'not declared');
   const wound = code.slice(code.indexOf('function WoundSections'), code.indexOf('<GoDeeperSection', code.indexOf('function WoundSections')));
-  ok('it reads the field only on M2',
-    /const underneath = m2 \? readField\(part, WOUND_BODY\.underneath\.key\) : '';/.test(wound)
-      && /<WoundSections\s+mapData=\{mapData\} part=\{part\} m2=\{m2\} \/>/.test(code));
+  ok('it reads the field for everyone',
+    /const underneath = readField\(part, WOUND_BODY\.underneath\.key\);/.test(wound)
+      && /<WoundSections\s+mapData=\{mapData\} part=\{part\} \/>/.test(code));
   ok('the row renders only when the field has their words, with no placeholder of its own',
     /\{underneath \? \(\s*<Section label=\{WOUND_BODY\.underneath\.label\} value=\{underneath\} placeholder="" \/>\s*\) : null\}/.test(wound));
   ok('the four rows that were there keep their placeholders, unchanged',
@@ -722,28 +679,21 @@ console.log('\n7. invented memory');
   // :203-204): "Your map has been updated" on every fallback, written or not.
   const src = read('components/session/SessionSummaryModal.tsx');
   const code = codeOnly(src);
-  const grab = (name) => {
-    const m = src.match(new RegExp(`const ${name} = ('[^']*');`));
-    return m ? new Function(`return (${m[1]});`)() : null;
-  };
-  const was = grab('FALLBACK');
-  const now = grab('FALLBACK_M2');
-  ok('OFF: the summary fallback is the same sentence pair as before',
-    was === 'This session has been saved to your journal. Your map has been updated.', String(was));
-  ok('ON: it keeps the journal sentence and drops the map claim',
+  const m = src.match(/const FALLBACK = ('[^']*');/);
+  const now = m ? new Function(`return (${m[1]});`)() : null;
+  ok('the summary fallback keeps the journal sentence and claims no map write',
     now === 'This session has been saved to your journal.' && !/map/i.test(now), String(now));
-  ok('the modal picks between them on the flag, read on every render',
-    /const m2 = useM2Flag\(\);/.test(code) && /\{m2 \? FALLBACK_M2 : FALLBACK\}/.test(code));
+  ok('...and it is the only fallback the modal shows', /\{FALLBACK\}/.test(code) && !/FALLBACK_M2/.test(code));
 }
 
 // ===========================================================================
 // THE AXIS RENAME — CHANGE-LIST-2026-11-08.md ruling 5: "blended → you
-// leading", not "self-led". On M2 only, and only the label words.
+// leading", not "self-led". Only the label words.
 // ===========================================================================
 console.log('\n8. the axis rename');
 {
-  ok('OFF the bars keep "Self-Led"; ON they read "You Leading"',
-    m2.blendedAxisRight(false) === 'Self-Led' && m2.blendedAxisRight(true) === 'You Leading');
+  ok('the bars\' right pole is "You Leading", and the two-way chooser is gone',
+    m2.AXIS_RIGHT_M2 === 'You Leading' && typeof m2.blendedAxisRight === 'undefined');
 
   const src = read('components/map/SpectrumDetailModal.tsx');
   const code = codeOnly(src);
@@ -753,13 +703,13 @@ console.log('\n8. the axis rename');
   };
   const legacy = lift('BLENDED_SELF_LED');
   const now = legacy ? m2.youLeadingAxisCopy(legacy) : null;
-  ok('the legacy panel is still "Blended → Self-Led"',
+  ok('the source copy the rename reads from is the old "Blended → Self-Led" panel',
     legacy && legacy.title === 'Blended → Self-Led' && legacy.rightLabel === 'Self-Led');
-  ok('on M2 the panel\'s title, pole and indicator heading say "You Leading"',
+  ok('the panel\'s title, pole and indicator heading say "You Leading"',
     now && now.title === 'Blended → You Leading' && now.rightLabel === 'You Leading'
       && now.rightIndicatorsHeading === 'You Leading indicators' && now.leftLabel === 'Blended',
     now ? `${now.title} | ${now.rightLabel} | ${now.rightIndicatorsHeading}` : 'not lifted');
-  ok('no heading on the M2 panel still says "Self-Led"',
+  ok('no heading on the panel still says "Self-Led"',
     now && ![now.title, now.rightLabel, now.rightIndicatorsHeading, ...now.sections.map((s) => s.label)]
       .some((l) => /self-led/i.test(l)),
     now ? now.sections.map((s) => s.label).join(' | ') : '');
@@ -770,10 +720,9 @@ console.log('\n8. the axis rename');
       && JSON.stringify(now.rightPlaceholders) === JSON.stringify(legacy.rightPlaceholders)
       && now.leftIndicatorsHeading === legacy.leftIndicatorsHeading
       && now.leftKeysField === legacy.leftKeysField && now.rightKeysField === legacy.rightKeysField);
-  ok('the panel takes the renamed copy only on M2, and the other two axes not at all',
-    /spectrum === 'blendedSelfLed' \? \(m2 \? BLENDED_YOU_LEADING : BLENDED_SELF_LED\) :/.test(code)
-      && /const BLENDED_YOU_LEADING: SpectrumCopy = youLeadingAxisCopy\(BLENDED_SELF_LED\);/.test(code)
-      && /const m2 = useM2Flag\(\);\s*if \(!spectrum\) return null;/.test(code));
+  ok('the panel always takes the renamed copy, and the other two axes not at all',
+    /spectrum === 'blendedSelfLed' \? BLENDED_YOU_LEADING :/.test(code)
+      && /const BLENDED_YOU_LEADING: SpectrumCopy = youLeadingAxisCopy\(BLENDED_SELF_LED\);/.test(code));
   const others = lift('OUTSIDE_IN');
   const frag = lift('FRAGMENTED');
   ok('Outside-In → Inside-Out and Fragmented → Flowing keep their names',
@@ -784,13 +733,12 @@ console.log('\n8. the axis rename');
     ['app/(tabs)/journey.tsx', 'When parts activate, are you it — or with it? A relational shift.'],
   ]) {
     const c = codeOnly(read(f));
-    ok(`${f}: the blended bar's right pole comes from the flag, its caption is the same sentence`,
-      /leftLabel="Blended"\s*rightLabel=\{blendedAxisRight\(m2\)\}/.test(c)
+    ok(`${f}: the blended bar's right pole is AXIS_RIGHT_M2, its caption is the same sentence`,
+      /leftLabel="Blended"\s*rightLabel=\{AXIS_RIGHT_M2\}/.test(c)
         && !/"Self-Led"/.test(c)
         && c.includes(`caption="${caption}"`)
         && /leftLabel="Outside-In"\s*rightLabel="Inside-Out"/.test(c)
-        && /leftLabel="Fragmented"\s*rightLabel="Flowing"/.test(c)
-        && /const m2 = useM2Flag\(\);/.test(c));
+        && /leftLabel="Fragmented"\s*rightLabel="Flowing"/.test(c));
   }
 }
 

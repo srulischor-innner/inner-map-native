@@ -1,15 +1,6 @@
-// M2 — the LIVE half: the account's flag as every screen sees it, the
-// starter-map count, and the two card actions. The pure rules are in
-// services/m2.ts.
-//
-// WHY A STORE. The flag is read once, at chat boot, off the first-session
-// status. The chat tab is the first tab and mounts at launch,
-// so it has answered before anyone reaches the Guide or a map folder. Those
-// screens read it here. Until the chat publishes it, it is FALSE everywhere,
-// so a screen that renders before boot answers shows today's copy — the same
-// direction every other M2 failure takes. Nothing is persisted: a launch that
-// never boots the chat (opened straight into Messages from a push) shows
-// today's copy on those two screens, and the next launch corrects it.
+// M2 — the LIVE half: the starter-map count and the two card actions. The
+// pure rules are in services/m2.ts. (The account flag that used to live here
+// is gone: M2 is the app as of 1.4.0, founder 2026-11-09.)
 //
 // WHY THE ACTIONS LIVE HERE. A tap in either place — the chat screen or
 // Messages — is the same write, and its answer carries the server's count of
@@ -21,34 +12,9 @@ import { api } from './api';
 import { refreshInboxStatus } from './messagesInbox';
 import type { M2BundledEdit } from './m2';
 
-let m2On = false;
 let starterCount: number | null = null;
-const flagListeners = new Set<(v: boolean) => void>();
 const countListeners = new Set<(v: number | null) => void>();
 const starterCompleteListeners = new Set<() => void>();
-
-/** Called by the chat screen's boot, once it knows. */
-export function setM2Flag(on: boolean): void {
-  const next = on === true;
-  if (next === m2On) return;
-  m2On = next;
-  for (const l of flagListeners) l(m2On);
-}
-
-export function getM2Flag(): boolean {
-  return m2On;
-}
-
-/** The flag for a screen outside the chat. FALSE until the chat publishes it. */
-export function useM2Flag(): boolean {
-  const [v, setV] = useState<boolean>(m2On);
-  useEffect(() => {
-    flagListeners.add(setV);
-    setV(m2On);
-    return () => { flagListeners.delete(setV); };
-  }, []);
-  return v;
-}
 
 /** The server's count of tapped cards; null until the server says one. */
 export function setStarterCount(n: number | null): void {

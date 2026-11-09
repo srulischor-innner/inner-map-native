@@ -25,7 +25,7 @@ import { isMembershipRefusal } from './membershipDecision';
 // Type-only in the other direction (m2.ts imports InboxMessage as a type), so
 // this is not a runtime cycle.
 import {
-  parseM2Flag, readStarterCount, parseM2Pending, parseM2Done, parseM2Starter,
+  readStarterCount, parseM2Pending, parseM2Done, parseM2Starter,
   type M2CardItem, type M2BundledEdit, type M2PendingAnswer, type M2DoneInfo, type M2Starter,
 } from './m2';
 
@@ -1940,7 +1940,7 @@ export const api = {
       });
       if (!res.ok) return null;
       const j: any = await res.json().catch(() => null);
-      if (!j || typeof j !== 'object' || !parseM2Flag(j)) return null;
+      if (!j || typeof j !== 'object') return null;
       return parseM2Starter(j);
     } catch (e) {
       console.warn('[m2] next-conversation read failed:', (e as Error)?.message);
@@ -3348,32 +3348,35 @@ export const api = {
    *  request — discarding their real server callback and greeting them as if
    *  they had never been here. Check `ok` before believing `completedAt`.
    *
-   *  `m2` rides on the same answer (services/m2.ts, assumption A1): this is the
-   *  one boot call that says who this person is, and a second call on the boot
-   *  critical path would add its latency to a blank screen. Every failure shape
-   *  answers m2: false — the app as it is today. `starterCount` is the server's
+   *  The starter map rides on the same answer: this is the one boot call that
+   *  says who this person is, and a second call on the boot critical path
+   *  would add its latency to a blank screen. `starterCount` is the server's
    *  count of tapped cards when it sends one, else null. `m2Welcome` is the
    *  server's welcome for this conversation (founder, 2026-11-08), already
    *  through sanitizeM2Welcome — null when absent or unusable — and
-   *  `starterOverlay` says whether it runs with the starter-map overlay. */
-  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; m2: boolean; starterCount: number | null; m2Welcome: string | null; starterOverlay: boolean | null }> {
+   *  `starterOverlay` says whether it runs with the starter-map overlay. (The
+   *  `m2` field that used to ride here is gone with the flag: M2 is the app as
+   *  of 1.4.0.) */
+  async getFirstSessionStatus(): Promise<{ completedAt: string | null; ok: boolean; starterCount: number | null; m2Welcome: string | null; starterOverlay: boolean | null }> {
+    const failed = { completedAt: null, ok: false, starterCount: null, m2Welcome: null, starterOverlay: null };
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/first-session-status', {
         label: 'first-session-status', method: 'GET', headers,
       });
-      if (!res.ok) return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null, starterOverlay: null };
+      if (!res.ok) return failed;
       const j: any = await res.json().catch(() => null);
-      if (!j || typeof j !== 'object') return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null, starterOverlay: null };
+      if (!j || typeof j !== 'object') return failed;
+      const starter = parseM2Starter(j);
       return {
         completedAt: typeof j.completedAt === 'string' ? j.completedAt : null, ok: true,
-        m2: parseM2Flag(j), starterCount: readStarterCount(j),
-        m2Welcome: parseM2Flag(j) ? parseM2Starter(j).welcome : null,
-        starterOverlay: parseM2Flag(j) ? parseM2Starter(j).overlay : null,
+        starterCount: readStarterCount(j),
+        m2Welcome: starter.welcome,
+        starterOverlay: starter.overlay,
       };
     } catch (e) {
       console.warn('[first-session-status] threw:', (e as Error)?.message);
-      return { completedAt: null, ok: false, m2: false, starterCount: null, m2Welcome: null, starterOverlay: null };
+      return failed;
     }
   },
 

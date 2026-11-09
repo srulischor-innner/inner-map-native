@@ -44,8 +44,7 @@ import {
 } from '../utils/ageGate';
 import { GuideSlide } from '../components/guide/GuideSlide';
 import { GuideDots } from '../components/guide/GuideDots';
-import { welcomeSlidesFor } from '../utils/guideContent';
-import { useM2Flag } from '../services/m2Store';
+import { WELCOME_SLIDES } from '../utils/guideContent';
 
 // Same key used to gate the Guide tab's Welcome section so it never
 // re-runs the cinematic experience as static reference. Set the moment
@@ -560,10 +559,7 @@ function WelcomeSlides({ onDone }: { onDone: () => void }) {
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const listRef = useRef<FlatList>(null);
-  // M2 changes one paragraph (utils/guideContent.ts). The flag is published by
-  // the chat's boot, which a first run has not reached yet, so a new install
-  // sees WELCOME_SLIDES here; an M2 account that re-runs onboarding sees M2's.
-  const slides = welcomeSlidesFor(useM2Flag());
+  const slides = WELCOME_SLIDES;
   const atLast = index === slides.length - 1;
 
   return (

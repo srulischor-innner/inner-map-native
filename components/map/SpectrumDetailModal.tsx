@@ -14,7 +14,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
-import { useM2Flag } from '../../services/m2Store';
 import { youLeadingAxisCopy } from '../../services/m2';
 
 export type SpectrumKey = 'outsideIn' | 'blendedSelfLed' | 'fragmented';
@@ -38,12 +37,10 @@ export function SpectrumDetailModal({
   visible, spectrum, value, clinicalPatterns, onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
-  // Before the early return, so the hook runs on every render.
-  const m2 = useM2Flag();
   if (!spectrum) return null;
   const copy =
     spectrum === 'outsideIn'      ? OUTSIDE_IN :
-    spectrum === 'blendedSelfLed' ? (m2 ? BLENDED_YOU_LEADING : BLENDED_SELF_LED) :
+    spectrum === 'blendedSelfLed' ? BLENDED_YOU_LEADING :
     FRAGMENTED;
 
   // Indicator keyword arrays — left is the side the reading moves AWAY from,

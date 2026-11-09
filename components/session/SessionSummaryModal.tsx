@@ -25,17 +25,15 @@ import * as Haptics from 'expo-haptics';
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { buildSessionExport, shareSessionText, confirmSessionShare, ExportMessage } from '../../utils/sessionExport';
-import { useM2Flag } from '../../services/m2Store';
 
 // The line shown when the summary could not be made: the fetch failed, or it
 // came back empty — which includes a session that ended in a crisis hold.
-const FALLBACK = 'This session has been saved to your journal. Your map has been updated.';
 // M2 (ruling 2026-11-05, "invented memory"): the second sentence claims a map
 // write on every fallback, whether or not anything was written — and under M2
 // nothing is written unless the person tapped a card. The audit's fix
 // (other-surfaces-audit.md, SessionSummaryModal.tsx:203-204): keep the first
 // sentence, drop the map claim.
-const FALLBACK_M2 = 'This session has been saved to your journal.';
+const FALLBACK = 'This session has been saved to your journal.';
 
 export type SessionSummary = {
   exploredText: string;
@@ -71,7 +69,6 @@ type Props = {
 
 export function SessionSummaryModal({ visible, summary, failed, messages, deepened, onContinue }: Props) {
   const insets = useSafeAreaInsets();
-  const m2 = useM2Flag();
   // Soft success haptic the moment the modal becomes visible — this is
   // the "the session landed" felt-sense the spec calls for. Fires once
   // per visible→true transition.
@@ -212,7 +209,7 @@ export function SessionSummaryModal({ visible, summary, failed, messages, deepen
           {(failed || (summary && !hasContent)) ? (
             <View style={{ marginTop: spacing.xl, paddingHorizontal: spacing.md }}>
               <Text style={styles.fallbackText}>
-                {m2 ? FALLBACK_M2 : FALLBACK}
+                {FALLBACK}
               </Text>
             </View>
           ) : null}

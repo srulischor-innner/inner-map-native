@@ -1,118 +1,89 @@
-// THE CONTROL MUST STAY LABELLED, AND MUST STAY AT THE TOP.
+// THE MODE CONTROL IS GONE, AND STAYS GONE (1.4.0, founder 2026-11-09).
 //
-// Both properties are the mechanism, not styling, so they get a check rather
-// than a comment. Measured: requests to work differently ran at 0.04% of 5,489
-// real turns before anything told people they could ask. The control is the
-// main correction to that, and it only corrects it while it is READABLE — the
-// moment someone "tidies" it into an icon it stops teaching and becomes another
-// thing nobody knows about.
+// History, kept because it is why this file exists under this name. This used
+// to guard the four-mode control ("Mode: Sitting with it ▾") at the top of the
+// chat: labelled, at the top, live in the first session. Then M2 became the
+// app. M2 is one prompt; the M2 server reads the chat's chatMode only to tell
+// Partner and the map voices apart from the chat (lib/m2/index.js
+// shouldServeChat). A control that names a state nothing implements is a false
+// statement on screen, and its label used to flash at launch before the
+// account's stack was known.
 //
-// Guarded here:
-//   1. the row prints the lead text AND the current mode's label
-//   2. all four modes have a user-facing label, and none leaks our word for the
-//      prompt ("Light", "Process", "Explore", "Differentiation")
-//   3. it is rendered above the transcript, not down in the input dock
-//   4. it is rendered during the first session TOO (reversed 2026-09-10)
-//
-// Carries a negative control, per the house rule that a checker which cannot
-// fail is not a checker.
+// So the file now guards the other direction:
+//   1. the control and the opening boxes are deleted, and nothing imports them
+//   2. the chat screen renders no mode row and no "Mode:" label (the flash)
+//   3. every turn and every saved session sends the one wire mode, 'explore',
+//      which is what M2 sent underneath the hidden control all along
+//   4. the map-folder handoff no longer carries a mode
+// with a negative control for each scan.
 //
 //   node scripts/check-working-mode-control.js
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const CTRL = fs.readFileSync(path.join(ROOT, 'components', 'WorkingModeControl.tsx'), 'utf8');
-const SCREEN = fs.readFileSync(path.join(ROOT, 'app', '(tabs)', 'index.tsx'), 'utf8');
-
+const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const fails = [];
 const check = (ok, msg) => { if (!ok) fails.push(msg); };
 
-// 1. labelled with the current state — SCOPED TO THE RENDERED ROW.
-// A whole-file test here was satisfied by the ASCII sketch in the header
-// comment and by the accessibilityLabel template (whose `${MODE_LABEL[mode]}`
-// contains the substring `{MODE_LABEL[mode]}`), so emptying BOTH <Text>
-// children left this green. The negative control below missed it too, because
-// a global replace takes the comment and the a11y label out along with the row.
-const ROW = (CTRL.match(/<Text style=\{styles\.rowLead\}>[\s\S]*?<Text style=\{styles\.caret\}>/) || [''])[0];
-check(ROW.length > 0,
-  'the mode row could not be located — the lead/value/caret Texts have been restructured, and every assertion about the row is now looking at nothing');
-check(/>Mode: </.test(ROW),
-  'the row no longer prints its "Mode: " lead text — it has become an unlabelled control');
-check(/>\{MODE_LABEL\[mode\]\}</.test(ROW),
-  'the row no longer renders MODE_LABEL[mode] — the current state is not shown');
-// RECOMMENDED COMPANION EDIT so the negative control guards the new form too:
-// replace `const BROKEN = CTRL.replace(/Mode: /g, 'x').replace(/\{MODE_LABEL\[mode\]\}/g, '{null}');`
-// with    `const BROKEN = ROW.replace(/>Mode: </g, '><').replace(/>\{MODE_LABEL\[mode\]\}</g, '><');`
-// and the two `if (/.../.test(BROKEN))` tests with `/>Mode: </` and `/>\{MODE_LABEL\[mode\]\}</`.
-
-// 2. four labels, none of them our internal prompt names
-const labelBlock = (CTRL.match(/MODE_LABEL[\s\S]*?\};/) || [''])[0];
-for (const m of ['light', 'process', 'explore', 'differentiation']) {
-  check(new RegExp(`\\b${m}:`).test(labelBlock), `MODE_LABEL is missing "${m}"`);
+// Every app source file, for the import scan.
+function sources(dir, out = []) {
+  for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    const rel = path.join(dir, e.name);
+    if (e.isDirectory()) sources(rel, out);
+    else if (/\.(ts|tsx)$/.test(e.name)) out.push(rel);
+  }
+  return out;
 }
-for (const leak of ['Light', 'Process', 'Explore', 'Differentiation']) {
-  check(!new RegExp(`['"\`][^'"\`]*\\b${leak}\\b`).test(labelBlock),
-    `MODE_LABEL leaks our internal prompt name "${leak}" to the user`);
+const FILES = ['app', 'components', 'services', 'utils', 'constants'].flatMap((d) => sources(d));
+const codeOnly = (s) => s
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split(/\r?\n/).map((l) => l.replace(/^\s*\/\/.*$/, '')).join('\n');
+
+// 1. deleted, and nothing reaches for them
+check(!fs.existsSync(path.join(ROOT, 'components', 'WorkingModeControl.tsx')),
+  'components/WorkingModeControl.tsx is back');
+check(!fs.existsSync(path.join(ROOT, 'components', 'ModeBoxes.tsx')),
+  'components/ModeBoxes.tsx is back');
+const IMPORT = /from ['"][./]*(?:components\/)?(?:WorkingModeControl|ModeBoxes)['"]/;
+const importers = FILES.filter((f) => IMPORT.test(read(f)));
+check(importers.length === 0, 'still imported by: ' + importers.join(', '));
+
+// 2. no mode row on the chat screen
+const chat = codeOnly(read('app/(tabs)/index.tsx'));
+for (const [needle, why] of [
+  ['<WorkingModeControl', 'the mode control is rendered again'],
+  ['<ModeBoxes', 'the opening mode boxes are rendered again'],
+  ['>Mode: <', 'a "Mode:" label is back on the chat screen (the launch flash)'],
+  ['showModeBoxes', 'the boxes\' visibility rule is back'],
+]) check(!chat.includes(needle), why);
+
+// 3. one wire mode
+check(/const WIRE_MODE: ChatMode = 'explore';/.test(chat), 'WIRE_MODE is not the constant \'explore\'');
+const turnModes = [...chat.matchAll(/const turnMode = ([^;]+);/g)].map((m) => m[1].trim());
+check(turnModes.length >= 3 && turnModes.every((v) => v === 'WIRE_MODE'),
+  'a turn or a save sends something other than WIRE_MODE: ' + JSON.stringify(turnModes));
+
+// 4. the handoff carries text only
+const pending = codeOnly(read('utils/pendingChatMessage.ts'));
+check(/export function armPendingChatMessage\(text: string\): void/.test(pending),
+  'armPendingChatMessage takes a mode again');
+
+// negative controls — each scan must be able to fail
+{
+  const back = "import { WorkingModeControl } from '../../components/WorkingModeControl';";
+  if (!IMPORT.test(back)) fails.push('NEGATIVE CONTROL: the import scan cannot see the control coming back');
+  const flashed = chat + '\n<Text style={styles.rowLead}>Mode: </Text>';
+  if (!flashed.includes('>Mode: <')) fails.push('NEGATIVE CONTROL: the launch-flash scan cannot fail');
+  const drift = chat.replace("const turnMode = WIRE_MODE;", "const turnMode = workingModeRef.current;");
+  const dm = [...drift.matchAll(/const turnMode = ([^;]+);/g)].map((m) => m[1].trim());
+  if (dm.every((v) => v === 'WIRE_MODE')) fails.push('NEGATIVE CONTROL: a turn sending another mode cannot be detected');
 }
-
-// 3. AT THE TOP of the screen, above the transcript.
-// It moved there after the first phone round. Mode is a STATE, not an action,
-// and a state belongs where you look to find out what is happening — not where
-// your thumb rests to act. It spent exactly one build above the input.
-const ctrlAt = SCREEN.indexOf('<WorkingModeControl');
-// The JSX element, at the start of a line — NOT the type parameter in
-// `useRef<ScrollView | null>` near the top of the file, which a plain indexOf
-// finds first and which made this assertion fail against correct code.
-const scrollAt = SCREEN.search(/^\s*<ScrollView\b/m);
-check(ctrlAt > -1, 'WorkingModeControl is not rendered in the chat screen at all');
-check(scrollAt > -1 && ctrlAt > -1 && ctrlAt < scrollAt,
-  'WorkingModeControl must render ABOVE the transcript — it is a state, not an action');
-
-// 4. RENDERED IN THE FIRST SESSION TOO — the guard reversed on 2026-09-10.
-//
-// This assertion used to be its exact inverse: the row had to be wrapped in
-// `firstSessionPending === true ? null : (...)`, and the reason given was "the
-// first session is server-routed, so a choice there does nothing". That was
-// true, and it was the bug. /api/chat replaced whatever mode the person picked
-// with the starter-map arc, so the one screen that teaches modes exist was
-// hidden from the one person who has never seen them — one turn after the
-// orientation promised "you can change it whenever ... I'll follow", and one
-// turn after four boxes asked them which way they wanted to work.
-//
-// The server now honours the pick in the first session (server.js
-// firstSessionBodyFor + the first-session route; scripts/smoke-first-session.js
-// steps 14–14.15 in the server repo). So the state has to be visible, and it has
-// to be reachable a second time: the four boxes are shown once and never again,
-// which left a first-session person who picked wrong with no way back.
-//
-// A window, not a whole-file search, because `firstSessionPending` appears all
-// over this screen legitimately — the banner directly above this row is one.
-const window = ctrlAt > -1 ? SCREEN.slice(Math.max(0, ctrlAt - 600), ctrlAt) : '';
-check(!/firstSessionPending === true \? null :/.test(window),
-  'WorkingModeControl has been hidden during the first session again — the server now honours the mode chosen there, so hiding the control hides live state and removes the only second chance to change it');
-// Negative control for the assertion above: prove the window is actually
-// looking at the ternary's old position, not at empty space somewhere else.
-const RESTORED = SCREEN.slice(0, ctrlAt) + '{firstSessionPending === true ? null : (' + SCREEN.slice(ctrlAt);
-const restoredWindow = RESTORED.slice(Math.max(0, ctrlAt - 600 + 39), ctrlAt + 39);
-if (!/firstSessionPending === true \? null :/.test(restoredWindow)) {
-  fails.push('NEGATIVE CONTROL: the first-session assertion cannot fail — restoring the ternary does not land inside the window it searches');
-}
-
-// negative control: the assertions must actually be capable of failing
-// Global, both times. Each string appears twice — once in the visible row and
-// once in the accessibility label — and a non-global replace left the second
-// occurrence standing, so the "broken" copy was not broken and this control
-// reported that honestly on its first run.
-const BROKEN = CTRL.replace(/Mode: /g, 'x').replace(/\{MODE_LABEL\[mode\]\}/g, '{null}');
-const negFails = [];
-if (/Mode: /.test(BROKEN)) negFails.push('lead-text assertion cannot fail');
-if (/\{MODE_LABEL\[mode\]\}/.test(BROKEN)) negFails.push('current-state assertion cannot fail');
-if (negFails.length) fails.push('NEGATIVE CONTROL: ' + negFails.join('; '));
 
 if (fails.length) {
   console.error('check-working-mode-control: FAIL');
   for (const f of fails) console.error('  - ' + f);
   process.exit(1);
 }
-console.log('check-working-mode-control: OK — labelled, at the top, four modes, shown in the first session too');
+console.log(`check-working-mode-control: OK — no mode control, no boxes, no "Mode:" label; ${turnModes.length} sends all say WIRE_MODE ('explore')`);

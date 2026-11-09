@@ -7,7 +7,6 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, radii, spacing } from '../../constants/theme';
 import { continuedLabel } from '../../utils/sessionDisplay';
-import { MODE_LABEL, type WorkingMode } from '../WorkingModeControl';
 
 export type PathItem = {
   id: string;
@@ -66,29 +65,9 @@ export function PathTimeline({
                   {formatDate(it.date)}
                   {it.time ? <Text style={styles.time}>{' · ' + it.time}</Text> : null}
                 </Text>
-{/* How the session was worked. Printed EXPLORE / PROCESS until
-                    2026-09-02 — our internal names for our prompts, shown
-                    uppercase to the person, and blind to two of the four ways
-                    of working so those sessions carried no chip at all. Now the
-                    person's own labels, from the one canonical list the mode
-                    sheet reads. Legacy rows with a NULL chatMode stay bare. */}
-                {MODE_LABEL[it.chatMode as WorkingMode] ? (
-                  <View
-                    style={[
-                      styles.modeChip,
-                      it.chatMode === 'explore' ? styles.modeChipExplore : styles.modeChipProcess,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.modeChipText,
-                        it.chatMode === 'explore' ? styles.modeChipTextExplore : styles.modeChipTextProcess,
-                      ]}
-                    >
-                      {MODE_LABEL[it.chatMode as WorkingMode]}
-                    </Text>
-                  </View>
-                ) : null}
+{/* No way-of-working chip (1.4.0): the four modes are gone with the
+                    mode control, and every session the app saves now says
+                    explore, so the chip would name the same mode on every row. */}
               </View>
               {cont ? <Text style={styles.continued}>{cont}</Text> : null}
               {it.title ? <Text style={styles.title}>{it.title}</Text> : null}

@@ -21,28 +21,23 @@
 // THE INVARIANT THIS FILE EXISTS TO HOLD:
 //
 //   The opening bubble has exactly TWO possible values, both compile-time
-//   constants in index.tsx, on BOTH threads, for EVERY cohort:
-//     ORIENTATION_MESSAGE — first-ever session
-//     STANDARD_OPENER     — everyone else
-//   Nothing off the wire, no template interpolation, no clock, no counter.
-//   No cohort is told about a prior session, a session count, or a date.
+//   constants in index.tsx, for EVERY cohort:
+//     M2_WELCOME      — the first conversation (starter map unfinished)
+//     STANDARD_OPENER — everyone else
+//   plus ONE server text: while the starter map is unfinished the server may
+//   choose the welcome (founder, 2026-11-08), through services/m2.ts
+//   sanitizeM2Welcome, falling back to M2_WELCOME. No template interpolation,
+//   no clock, no counter. No constant tells anyone about a prior session.
 //
-// M2 (2026-11-04) ADDS ONE CONSTANT AND NO LADDER. An account the server has
-// put on the M2 stack gets M2_WELCOME in place of ORIENTATION_MESSAGE in its
-// first session. The selector's second input is that flag and nothing else.
-//
-// M2, 2026-11-08 (founder): ONE SERVER TEXT, ON M2 ONLY. While the starter
-// map is unfinished the M2 server chooses the welcome (a first-conversation
-// one, or a "Welcome back" one it fills from their map), and the app shows it
-// — through services/m2.ts sanitizeM2Welcome, falling back to M2_WELCOME. That
-// is the selector's third input. What this file still proves:
-//   - M2 off: the third input is IGNORED; the app can open with exactly the
-//     two strings above, as before, for every input;
-//   - M2 on: a first/unfinished session gets the server's text or M2_WELCOME,
-//     and everyone else gets STANDARD_OPENER — never ORIENTATION_MESSAGE;
+// 1.4.0 (founder, 2026-11-09): M2 IS THE APP. The old stack's
+// ORIENTATION_MESSAGE is gone and so is the flag input; the selector is
+// openerFor(firstSessionPending, m2Welcome). In this file the name
+// ORIENTATION now means "the first-conversation opener", which is M2_WELCOME,
+// so the cohort proofs below read unchanged. What it proves:
+//   - for every input the selector answers one of the two constants, or the
+//     server text for a first/unfinished conversation;
+//   - ORIENTATION_MESSAGE does not come back (an absence check);
 //   - the selector stays pure: the text is handed in, never fetched.
-// Every assertion that predates M2 runs with the flag absent, which is every
-// account the server has not moved.
 //
 // The bulk of what follows is therefore ABSENCE checks. That is deliberate:
 // the greeting grew back four times because each round left a hook in place
@@ -149,12 +144,14 @@ const norm = (s) => (s == null ? s : String(s).replace(/\s+/g, ' ').trim());
 // PART 1 — THE TWO CONSTANTS, AND THE SELECTOR
 // ===========================================================================
 
-const orientationExpr = extractAssignment(idxSrc, 'ORIENTATION_MESSAGE');
+const legacyOrientationExpr = extractAssignment(idxSrc, 'ORIENTATION_MESSAGE');
 const standardExpr = extractAssignment(idxSrc, 'STANDARD_OPENER');
 const m2WelcomeExpr = extractAssignment(idxSrc, 'M2_WELCOME');
-step(1, 'all three opener constants exist at module scope',
-  !!orientationExpr && !!standardExpr && !!m2WelcomeExpr,
-  `orientation=${orientationExpr ? 'yes' : 'NO'} standard=${standardExpr ? 'yes' : 'NO'} m2Welcome=${m2WelcomeExpr ? 'yes' : 'NO'}`);
+step(1, 'both opener constants exist at module scope, and the old stack\'s orientation does not',
+  !!standardExpr && !!m2WelcomeExpr && !legacyOrientationExpr,
+  `standard=${standardExpr ? 'yes' : 'NO'} m2Welcome=${m2WelcomeExpr ? 'yes' : 'NO'} ORIENTATION_MESSAGE=${legacyOrientationExpr ? 'BACK' : 'gone'}`);
+// The first-conversation opener, under the name the proofs below use.
+const orientationExpr = m2WelcomeExpr;
 
 const isPlainLiteral = (expr) => !/\$\{/.test(expr)
   && !/[A-Za-z_$][\w$]*\s*\+/.test(expr.replace(/"(?:[^"\\]|\\.)*"/g, '""'));
@@ -164,12 +161,12 @@ if (orientationExpr && standardExpr && m2WelcomeExpr) {
   ORIENTATION = compile(orientationExpr, [])();
   STANDARD = compile(standardExpr, [])();
   M2W = compile(m2WelcomeExpr, [])();
-  step(1.1, 'all are plain string literals — no concatenated variable, no template hole',
-    typeof ORIENTATION === 'string' && typeof STANDARD === 'string' && typeof M2W === 'string'
-      && isPlainLiteral(orientationExpr) && isPlainLiteral(standardExpr) && isPlainLiteral(m2WelcomeExpr),
-    `orientation=${ORIENTATION.length}ch standard=${STANDARD.length}ch m2Welcome=${M2W.length}ch`);
-  step(1.15, 'the three are three different strings',
-    new Set([ORIENTATION, STANDARD, M2W]).size === 3);
+  step(1.1, 'both are plain string literals — no concatenated variable, no template hole',
+    typeof STANDARD === 'string' && typeof M2W === 'string'
+      && isPlainLiteral(standardExpr) && isPlainLiteral(m2WelcomeExpr),
+    `standard=${STANDARD.length}ch m2Welcome=${M2W.length}ch`);
+  step(1.15, 'the two are two different strings',
+    new Set([STANDARD, M2W]).size === 2);
 
   // The bar the founder set: no cohort gets anything asserting a prior
   // session, a session count, or a date. Checked on the STRINGS, not on the
@@ -182,7 +179,7 @@ if (orientationExpr && standardExpr && m2WelcomeExpr) {
     /picking up (?:where|with)/i, /\bagain\b/i,
   ];
   const offenders = [];
-  for (const s of [['ORIENTATION_MESSAGE', ORIENTATION], ['STANDARD_OPENER', STANDARD], ['M2_WELCOME', M2W]]) {
+  for (const s of [['STANDARD_OPENER', STANDARD], ['M2_WELCOME', M2W]]) {
     for (const re of BOUNDARY_CLAIMS) if (re.test(s[1])) offenders.push(`${s[0]} ~ ${re}`);
   }
   step(1.2, 'NO constant asserts a prior session, a count or a date',
@@ -197,8 +194,8 @@ const selectorSrc = sliceBlock(idxSrc, 'function openerFor(');
 step(2, 'the opener selector exists and lifts', !!selectorSrc,
   selectorSrc ? `len=${selectorSrc.length}` : 'not found');
 
-const liftSelector = () => new Function('ORIENTATION_MESSAGE', 'STANDARD_OPENER', 'M2_WELCOME',
-  `${stripTypes(selectorSrc)}; return openerFor;`)(ORIENTATION, STANDARD, M2W);
+const liftSelector = () => new Function('STANDARD_OPENER', 'M2_WELCOME',
+  `${stripTypes(selectorSrc)}; return openerFor;`)(STANDARD, M2W);
 
 if (selectorSrc && ORIENTATION && STANDARD && M2W) {
   const openerFor = liftSelector();
@@ -213,7 +210,7 @@ if (selectorSrc && ORIENTATION && STANDARD && M2W) {
     outsideTheSet.length === 0,
     outsideTheSet.length ? `escaped: ${JSON.stringify(outsideTheSet)}` : `${inputs.length} inputs`);
 
-  step(2.3, 'only firstSessionPending===true gets the orientation; everything else is standard',
+  step(2.3, 'only firstSessionPending===true gets the first-conversation welcome; everything else is standard',
     openerFor(true) === ORIENTATION
       && openerFor(false) === STANDARD
       && openerFor(undefined) === STANDARD,
@@ -225,45 +222,30 @@ if (selectorSrc && ORIENTATION && STANDARD && M2W) {
       && !/\bawait\b/.test(selectorSrc)
       && !/\bDate\b/.test(selectorSrc)
       && !/use[A-Z]/.test(selectorSrc),
-    'body is one ternary over one boolean');
+    'body reads one boolean and one handed-in string');
 
   // A first-ever user must NEVER get a blank bubble or a callback. Both halves
   // of the founder's floor, asserted on the real function.
-  step(2.5, 'a first-ever user gets ORIENTATION_MESSAGE, never blank',
+  step(2.5, 'a first-ever user gets M2_WELCOME, never blank',
     openerFor(true) === ORIENTATION && ORIENTATION.trim().length > 100,
     `${ORIENTATION.length}ch`);
 
-  // M2. The flag passed explicitly as false must answer exactly what the
-  // one-argument call answers — that is "M2 off is today" on the real function.
-  const offDiffers = inputs.filter((v) => openerFor(v, false) !== openerFor(v));
-  step(2.6, 'M2 OFF answers exactly as before M2, for every input',
-    offDiffers.length === 0,
-    offDiffers.length ? `differs for ${JSON.stringify(offDiffers)}` : `${inputs.length} inputs, m2=false === no m2`);
-
-  const m2Results = inputs.map((v) => openerFor(v, true));
-  const m2Outside = m2Results.filter((r) => r !== M2W && r !== STANDARD);
-  step(2.7, 'M2 ON: every input maps to M2_WELCOME or STANDARD_OPENER — never the old orientation',
-    m2Outside.length === 0 && !m2Results.includes(ORIENTATION),
-    m2Outside.length ? `escaped: ${JSON.stringify(m2Outside)}` : `${inputs.length} inputs`);
-  step(2.8, 'M2 ON: only a first session gets the M2 welcome; everyone else is standard',
-    openerFor(true, true) === M2W && openerFor(false, true) === STANDARD && openerFor(undefined, true) === STANDARD,
-    'true→M2_WELCOME, false/undefined→standard');
-  // The flag is tested with === true, so a truthy non-boolean off the wire
-  // cannot switch the copy.
-  const looseM2 = [1, 'true', 'm2', {}, []].filter((f) => openerFor(true, f, 'SERVER TEXT') !== ORIENTATION);
-  step(2.9, 'only m2 === true switches the copy — truthy non-booleans do not, server text or not',
-    looseM2.length === 0, looseM2.length ? `switched on ${JSON.stringify(looseM2)}` : '5 truthy shapes checked');
-
-  // THE SERVER'S WELCOME (founder, 2026-11-08).
-  const offWithText = inputs.filter((v) => openerFor(v, false, 'SERVER TEXT') !== openerFor(v));
-  step(2.10, 'M2 OFF: a server text handed in is IGNORED, for every input',
-    offWithText.length === 0, offWithText.length ? `differs for ${JSON.stringify(offWithText)}` : `${inputs.length} inputs`);
-  step(2.11, 'M2 ON: a first/unfinished session shows the server\'s welcome when there is one',
-    openerFor(true, true, 'Welcome back. SERVER TEXT') === 'Welcome back. SERVER TEXT');
-  step(2.12, 'M2 ON: no usable server text falls back to M2_WELCOME, exactly',
-    [undefined, null, ''].every((t) => openerFor(true, true, t) === M2W));
-  step(2.13, 'M2 ON: a finished first session gets STANDARD_OPENER whatever the server text',
-    [false, undefined].every((v) => openerFor(v, true, 'SERVER TEXT') === STANDARD));
+  // THE TWO INPUTS (1.4.0). No flag: the second input is the server's text.
+  step(2.6, 'the selector takes exactly two inputs — the first-session answer and the server text, no flag',
+    /^function openerFor\(firstSessionPending: boolean \| undefined, m2Welcome\?: string \| null\): string \{/.test(selectorSrc.trim()),
+    selectorSrc.trim().split('\n')[0]);
+  const noText = inputs.filter((v) => openerFor(v, null) !== openerFor(v) || openerFor(v, '') !== openerFor(v));
+  step(2.7, 'no usable server text answers exactly what no text does, for every input',
+    noText.length === 0, noText.length ? `differs for ${JSON.stringify(noText)}` : `${inputs.length} inputs`);
+  step(2.11, 'a first/unfinished conversation shows the server\'s welcome when there is one',
+    openerFor(true, 'Welcome back. SERVER TEXT') === 'Welcome back. SERVER TEXT');
+  step(2.12, 'no usable server text falls back to M2_WELCOME, exactly',
+    [undefined, null, ''].every((t) => openerFor(true, t) === M2W));
+  step(2.13, 'a finished first conversation gets STANDARD_OPENER whatever the server text',
+    [false, undefined, null, 0, 'true'].every((v) => openerFor(v, 'SERVER TEXT') === STANDARD));
+  const loose = [1, 'yes', {}, []].filter((v) => openerFor(v, 'SERVER TEXT') !== STANDARD);
+  step(2.14, 'only firstSessionPending === true lets the server text through — truthy shapes do not',
+    loose.length === 0, loose.length ? `let through on ${JSON.stringify(loose)}` : '4 truthy shapes checked');
 }
 
 // ===========================================================================
@@ -280,7 +262,7 @@ if (selectorSrc && ORIENTATION && STANDARD && M2W) {
 
 const openerForCalls = (idxCode.replace(/function openerFor\(/, '').match(/openerFor\(/g) || []).length;
 step(3, 'the selector is called at all four placement sites', openerForCalls === 4,
-  `openerFor( × ${openerForCalls} calls (expected 4: boot, backstop, end session, M2 build-my-starter-map)`);
+  `openerFor( × ${openerForCalls} calls (expected 4: boot, backstop, end session, build-my-starter-map)`);
 
 // Every assignment feeding an opening bubble must be `= openerFor(...)`. If a
 // call site ever reintroduces a ladder — a ternary, a `||` fallback, a ref —
@@ -439,8 +421,8 @@ function assertBoundaryReset(n, label, block) {
     between !== null && !/\bawait\b/.test(between),
     between === null ? 'ordering not found' : `${between.length}ch between, no await`);
   step(`${n}a`, `${label}: the opener comes from the selector, never from a payload`,
-    /const greeting = openerFor\(firstSessionPending, m2, m2WelcomeRef\.current\);/.test(block) && !/\bapi\./.test(block),
-    'greeting = openerFor(firstSessionPending, m2, m2WelcomeRef.current), no api call in the block');
+    /const greeting = openerFor\(firstSessionPending, m2WelcomeRef\.current\);/.test(block) && !/\bapi\./.test(block),
+    'greeting = openerFor(firstSessionPending, m2WelcomeRef.current), no api call in the block');
   // THE REGRESSION THIS CATCHES: leaving the Explore thread empty and relying
   // on the seed effect to refill it. The effect's deps cannot be trusted to
   // change at a boundary (End Session re-sets chatMode to 'explore' when the
@@ -455,13 +437,9 @@ function assertBoundaryReset(n, label, block) {
 
 if (continuation) assertBoundaryReset(6.1, 'End Session', continuation);
 
-const modeChange = codeOnly(sliceBlock(idxSrc, 'function handleModeChange(') || '');
-step(7, 'the resume-lock break is located', !!modeChange);
-// 7.1 REMOVED (2026-09-01). The resume-lock break used to reseed both threads
-// when someone changed mode inside a resumed session. That path is deliberately
-// gone -- changing how we work must never wipe what was said -- so asserting it
-// would assert a bug. scripts/check-single-thread.js guards the replacement
-// property: handleModeChange must not write to the transcript at all.
+// STEP 7, 1.4.0: the resume-lock break is gone with the mode control. There is
+// no mode change left that could reseed or wipe the thread.
+step(7, 'there is no mode change left to reseed the thread', !/function handleModeChange\(/.test(idxCode));
 
 // ===========================================================================
 // PART 6 — BOOT (carried over from the old PARTS 7 + 10)
@@ -512,7 +490,7 @@ if (bootEffect) {
     'completedAt drives it when the endpoint answered');
   step(8.5, 'an UNRESOLVED status FAILS TOWARD FIRST-EVER (orientation, not a cold open)',
     deriv({ completedAt: null, ok: false }) === true,
-    'placeholder → isFirstSession true → ORIENTATION_MESSAGE');
+    'placeholder → isFirstSession true → M2_WELCOME (or the server\'s)');
 
   // 8.5 replays a HAND-TYPED copy of the derivation, so it stays green no
   // matter what api.ts actually returns. The placeholder is the other half of
@@ -525,10 +503,15 @@ if (bootEffect) {
     const b = a === -1 ? -1 : apiSrc.indexOf('\n  },', a);
     return a === -1 || b === -1 ? null : apiSrc.slice(a, b);
   })();
-  const failureReturns = statusMethodSrc ? (statusMethodSrc.match(/return \{[^}]*ok: false[^}]*\}/g) || []) : [];
+  // 1.4.0: the three failure returns share one `failed` shape. Assert the
+  // shape, that all three return it, and that no other ok:false literal exists.
+  const failedShape = statusMethodSrc ? (statusMethodSrc.match(/const failed = \{[^}]*\};/) || [''])[0] : '';
+  const returnsFailed = statusMethodSrc ? (statusMethodSrc.match(/return failed;/g) || []).length : 0;
+  const inlineFailures = statusMethodSrc ? (statusMethodSrc.match(/return \{[^}]*ok: false[^}]*\}/g) || []) : [];
   step('8.5a', 'every FAILURE shape of getFirstSessionStatus answers completedAt: null',
-    failureReturns.length >= 3 && failureReturns.every((r) => /completedAt: null/.test(r)),
-    failureReturns.length ? failureReturns.join(' | ') : 'getFirstSessionStatus not located in api.ts');
+    /completedAt: null/.test(failedShape) && /ok: false/.test(failedShape) && returnsFailed >= 3
+      && inlineFailures.every((r) => /completedAt: null/.test(r)),
+    statusMethodSrc ? `${failedShape} × ${returnsFailed} returns` : 'getFirstSessionStatus not located in api.ts');
 
   // The publish must sit immediately after the try/catch with nothing that can
   // throw in between: it is the only thing standing between a mode toggle and
@@ -652,22 +635,10 @@ if (ORIENTATION && STANDARD && M2W && selectorSrc) {
     [...seen].every((s) => typeof s === 'string' && s.trim().length > 40),
     'every reachable opener is a real, non-empty sentence');
 
-  // The same sweep on the M2 stack. The cohorts are the same people; only the
-  // first-session constant differs.
-  const seenM2 = new Set();
-  const wrongM2 = [];
-  for (const [label, flag, expected] of cohorts) {
-    const a = openerFor(flag, true);
-    const b = openerFor(flag, true);
-    seenM2.add(a); seenM2.add(b);
-    const want = expected === 'orientation' ? M2W : STANDARD;
-    if (a !== want || b !== want) wrongM2.push(label);
-  }
-  step(10.3, 'on M2 the whole app can open with exactly TWO strings — M2_WELCOME and STANDARD_OPENER',
-    seenM2.size === 2 && seenM2.has(M2W) && seenM2.has(STANDARD),
-    `${seenM2.size} distinct openers on M2`);
-  step(10.35, 'and each M2 cohort gets the right one',
-    wrongM2.length === 0, wrongM2.join('; ') || `${cohorts.length} cohorts matched`);
+  // (The separate M2 sweep is gone: M2 is the app, and the sweep above already
+  // runs on its selector and its first-conversation constant.)
+  step(10.3, 'the two strings are exactly M2_WELCOME and STANDARD_OPENER',
+    seen.has(M2W) && seen.has(STANDARD), `${seen.size} distinct openers`);
 }
 
 // ===========================================================================

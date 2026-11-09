@@ -15,8 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing } from '../../constants/theme';
 import { SpectrumBar } from '../journey/SpectrumBar';
 import { SpectrumDetailModal, SpectrumKey } from './SpectrumDetailModal';
-import { useM2Flag } from '../../services/m2Store';
-import { blendedAxisRight } from '../../services/m2';
+import { AXIS_RIGHT_M2 } from '../../services/m2';
 
 export function ProgressStrip({
   outsideInScore,
@@ -40,7 +39,6 @@ export function ProgressStrip({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [detailFor, setDetailFor] = useState<SpectrumKey | null>(null);
-  const m2 = useM2Flag();
 
   const openDetail = (k: SpectrumKey) => {
     Haptics.selectionAsync().catch(() => {});
@@ -98,7 +96,7 @@ export function ProgressStrip({
           <SpectrumRow onInfo={() => openDetail('blendedSelfLed')}>
             <SpectrumBar
               leftLabel="Blended"
-              rightLabel={blendedAxisRight(m2)}
+              rightLabel={AXIS_RIGHT_M2}
               leftColor={colors.firefighters}
               rightColor={colors.self}
               value={isEarned('blendedSelfLed') ? (blendedSelfLedScore ?? null) : null}

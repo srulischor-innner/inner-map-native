@@ -22,27 +22,11 @@
 //   - two lines of app copy that claimed memory the app does not have are
 //     replaced (the Guide's "learns who you are", the YOU folder's biography).
 //
-// OFF MEANS TODAY. The flag is read once at boot off the first-session status
-// payload. Every failure shape reads as OFF, so a flaky request can only ever
-// hand someone the app as it is now, never half of M2. The server's own reader
-// (lib/m2Flag.js on its branch) fails the same way.
+// THERE IS NO FLAG ANY MORE. M2 is the app as of 1.4.0 (founder, 2026-11-09):
+// no staging, no account flag, no old stack in the app. parseM2Flag and the
+// store's useM2Flag are gone; everything below is simply on.
 
 import type { InboxMessage } from './api';
-
-// ---------------------------------------------------------------------------
-// The flag
-// ---------------------------------------------------------------------------
-
-/** Confirmed by the server's docs/m2-api.md: GET /api/first-session-status
- *  carries `promptStack: "m2"` and `chatStack: "m2"` for a flagged account and
- *  neither for anyone else. Only the exact string "m2" turns M2 on; anything
- *  else, a missing field, or an unparseable body is OFF. (Its `m2Welcome`
- *  field is ignored: the app keeps the founder's current text as a constant.) */
-export function parseM2Flag(statusBody: unknown): boolean {
-  if (!statusBody || typeof statusBody !== 'object') return false;
-  const b = statusBody as { promptStack?: unknown; chatStack?: unknown };
-  return b.promptStack === 'm2' || b.chatStack === 'm2';
-}
 
 // ---------------------------------------------------------------------------
 // The welcome (founder, 2026-11-08)
@@ -428,13 +412,13 @@ export function readStarterCount(body: unknown): number | null {
 export const STARTER_MAP_MIN_ENTRIES = 2;
 
 /** The first-session button opens the map, and an empty map is the failure
- *  first-session.md names ("the button would open an empty map"). On M2 it
- *  waits for the server's count to reach two. With no count from the server
- *  the marker alone decides, as it does off M2: the server only lets the
- *  marker through once the map has two entries (first-session.md, server
- *  item 1), so a marker that arrived is already the server's yes. */
-export function starterMapButtonAllowed(m2: boolean, count: number | null): boolean {
-  return !m2 || count === null || count >= STARTER_MAP_MIN_ENTRIES;
+ *  first-session.md names ("the button would open an empty map"). It waits
+ *  for the server's count to reach two. With no count from the server the
+ *  marker alone decides: the server only lets the marker through once the map
+ *  has two entries (first-session.md, server item 1), so a marker that arrived
+ *  is already the server's yes. */
+export function starterMapButtonAllowed(count: number | null): boolean {
+  return count === null || count >= STARTER_MAP_MIN_ENTRIES;
 }
 
 // ---------------------------------------------------------------------------
@@ -587,17 +571,14 @@ export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
 
 // ---------------------------------------------------------------------------
 // THE AXIS RENAME (CHANGE-LIST-2026-11-08.md, ruling 5, Nov 8 21:02): the
-// blended axis is "Blended → You Leading" on M2, not "Self-Led": the one who
-// leads is "You", and Self is underneath. Only the label words change. The
-// sentences around them stay as they are until the founder's copy rewrite.
+// blended axis is "Blended → You Leading", not "Self-Led": the one who leads
+// is "You", and Self is underneath. Only the label words change. The sentences
+// around them stay as they are until the founder's copy rewrite.
+// AXIS_RIGHT_LEGACY survives only as what youLeadingAxisCopy renames.
 // ---------------------------------------------------------------------------
 export const AXIS_RIGHT_LEGACY = 'Self-Led';
-export const AXIS_RIGHT_M2 = 'You Leading';
-
 /** The blended axis's right pole, as the bars show it. */
-export function blendedAxisRight(m2: boolean): string {
-  return m2 ? AXIS_RIGHT_M2 : AXIS_RIGHT_LEGACY;
-}
+export const AXIS_RIGHT_M2 = 'You Leading';
 
 type AxisCopy = {
   title: string;

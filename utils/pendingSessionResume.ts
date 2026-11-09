@@ -9,7 +9,7 @@
 // resume is dropped — the safer failure (a stale resume firing on a future
 // launch would silently reopen the wrong conversation).
 
-import type { ChatMode } from './pendingChatMessage';
+import type { ChatMode } from '../components/ChatModeToggle';
 
 export type ResumeMessage = { role: 'user' | 'assistant'; content: string };
 
