@@ -412,7 +412,9 @@ step('REORDER — both api.acceptTerms() call sites are inside a phase === \'ter
     // Strip line comments before matching, preserving offsets so the
     // upstream-of-'age' comparison below still means what it says.
     const codeOnly = onboardingSrc.replace(/^\s*\/\/.*$/gm, (m) => " ".repeat(m.length));
-    const sites = [...codeOnly.matchAll(/api\.acceptTerms\(\)/g)].map((m) => m.index);
+    // Any arguments (2026-11-09: both sites now pass LEGAL_POLICY_VERSION,
+    // policy finding F2). What is counted is the call, not its parentheses.
+    const sites = [...codeOnly.matchAll(/api\.acceptTerms\(/g)].map((m) => m.index);
     if (sites.length !== 2) return false;
     // Each call site must be preceded by a terms-phase branch and, crucially,
     // by the age phase's own render branch — i.e. 'age' is upstream in the file
