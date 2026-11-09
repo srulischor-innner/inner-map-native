@@ -852,14 +852,16 @@ export const api = {
 
   /** DELETE /api/journal/:id — remove an entry's server copy + its RAG
    *  embedding when the user deletes it locally. Fire-and-forget; never
-   *  blocks the local delete. Returns true on success. */
+   *  blocks the local delete. Returns true when the server confirmed: a 2xx,
+   *  or a 404, which means there is nothing there to delete. False sends the
+   *  id back to services/journalDeletes.ts's retry list. */
   async deleteJournalEntry(id: string): Promise<boolean> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch(`/api/journal/${encodeURIComponent(id)}`, {
         label: 'journal-delete', method: 'DELETE', headers,
       });
-      return res.ok;
+      return res.ok || res.status === 404;
     } catch (e) {
       console.warn('[journal-delete] threw:', (e as Error)?.message);
       return false;

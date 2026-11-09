@@ -22,6 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as encryptedStorage from '../utils/encryptedStorage';
 import { runMigrationOnce } from './journalMigration';
 import { api } from './api';
+import { deleteJournalOnServer, retryPendingJournalDeletes } from './journalDeletes';
 
 // Re-export the shared types from the encrypted-storage module so
 // consumers can keep their `from '../services/journal'` imports
@@ -108,6 +109,9 @@ export const journal = {
         prompt: entry.prompt,
         createdAt: entry.createdAt,
       }).then((r) => {
+        // The server is reachable again: retry any delete it hasn't
+        // confirmed (services/journalDeletes.ts).
+        if (r && r.ok) void retryPendingJournalDeletes();
         if (r && r.crisis_detected && r.referral) {
           onCrisis?.({ tier: r.crisis_tier ?? null, referral: r.referral });
         }
@@ -120,8 +124,10 @@ export const journal = {
     await ensureReady();
     await encryptedStorage.deleteEntry(id);
     // Mirror the deletion to the server — removes the synced copy + its RAG
-    // embedding. Fire-and-forget; never blocks the local delete.
-    void api.deleteJournalEntry(id);
+    // embedding. Fire-and-forget; never blocks the local delete. Retried until
+    // the server confirms (services/journalDeletes.ts), so an entry deleted
+    // offline doesn't stay on the server.
+    void deleteJournalOnServer(id);
   },
 
   /** A rotating bank of deepdive prompts — picked at random when the user taps

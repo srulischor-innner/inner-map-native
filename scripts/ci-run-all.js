@@ -31,10 +31,11 @@ const REPO = path.resolve(__dirname, "..");
 // Not checks — a generator and a preview server.
 const NOT_CHECKS = new Set(["generate-icon.js", "preview-reading-web.js"]);
 
-// 16 checks + 10 smokes (smoke-m2-app.mjs added 2026-11-04). Below this, the
-// run fails: see the count-guard note in the server repo's runner. Deleting a
-// check must be a decision, not a diff nobody noticed.
-const EXPECTED_TOTAL = 26;
+// 17 checks + 11 smokes (smoke-m2-app.mjs 2026-11-04; the journal privacy
+// release's check and smoke 2026-11-08). Below this, the run fails: see the
+// count-guard note in the server repo's runner. Deleting a check must be a
+// decision, not a diff nobody noticed.
+const EXPECTED_TOTAL = 28;
 
 const TIMEOUT_MS = 180_000;
 
