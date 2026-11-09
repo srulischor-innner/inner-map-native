@@ -736,5 +736,63 @@ console.log('\n7. invented memory');
     /const m2 = useM2Flag\(\);/.test(code) && /\{m2 \? FALLBACK_M2 : FALLBACK\}/.test(code));
 }
 
+// ===========================================================================
+// THE AXIS RENAME — CHANGE-LIST-2026-11-08.md ruling 5: "blended → you
+// leading", not "self-led". On M2 only, and only the label words.
+// ===========================================================================
+console.log('\n8. the axis rename');
+{
+  ok('OFF the bars keep "Self-Led"; ON they read "You Leading"',
+    m2.blendedAxisRight(false) === 'Self-Led' && m2.blendedAxisRight(true) === 'You Leading');
+
+  const src = read('components/map/SpectrumDetailModal.tsx');
+  const code = codeOnly(src);
+  const lift = (name) => {
+    const m = code.match(new RegExp(`const ${name}: SpectrumCopy = (\\{[\\s\\S]*?\\n\\});`));
+    return m ? new Function(`return (${m[1]});`)() : null;
+  };
+  const legacy = lift('BLENDED_SELF_LED');
+  const now = legacy ? m2.youLeadingAxisCopy(legacy) : null;
+  ok('the legacy panel is still "Blended → Self-Led"',
+    legacy && legacy.title === 'Blended → Self-Led' && legacy.rightLabel === 'Self-Led');
+  ok('on M2 the panel\'s title, pole and indicator heading say "You Leading"',
+    now && now.title === 'Blended → You Leading' && now.rightLabel === 'You Leading'
+      && now.rightIndicatorsHeading === 'You Leading indicators' && now.leftLabel === 'Blended',
+    now ? `${now.title} | ${now.rightLabel} | ${now.rightIndicatorsHeading}` : 'not lifted');
+  ok('no heading on the M2 panel still says "Self-Led"',
+    now && ![now.title, now.rightLabel, now.rightIndicatorsHeading, ...now.sections.map((s) => s.label)]
+      .some((l) => /self-led/i.test(l)),
+    now ? now.sections.map((s) => s.label).join(' | ') : '');
+  ok('every sentence on the panel is unchanged: paragraphs, examples, how it moves',
+    now && JSON.stringify(now.sections.map((s) => s.paragraphs)) === JSON.stringify(legacy.sections.map((s) => s.paragraphs))
+      && now.howItMoves === legacy.howItMoves
+      && JSON.stringify(now.leftPlaceholders) === JSON.stringify(legacy.leftPlaceholders)
+      && JSON.stringify(now.rightPlaceholders) === JSON.stringify(legacy.rightPlaceholders)
+      && now.leftIndicatorsHeading === legacy.leftIndicatorsHeading
+      && now.leftKeysField === legacy.leftKeysField && now.rightKeysField === legacy.rightKeysField);
+  ok('the panel takes the renamed copy only on M2, and the other two axes not at all',
+    /spectrum === 'blendedSelfLed' \? \(m2 \? BLENDED_YOU_LEADING : BLENDED_SELF_LED\) :/.test(code)
+      && /const BLENDED_YOU_LEADING: SpectrumCopy = youLeadingAxisCopy\(BLENDED_SELF_LED\);/.test(code)
+      && /const m2 = useM2Flag\(\);\s*if \(!spectrum\) return null;/.test(code));
+  const others = lift('OUTSIDE_IN');
+  const frag = lift('FRAGMENTED');
+  ok('Outside-In → Inside-Out and Fragmented → Flowing keep their names',
+    others && others.title === 'Outside-In → Inside-Out' && frag && frag.title === 'Fragmented → Flowing');
+
+  for (const [f, caption] of [
+    ['components/map/ProgressStrip.tsx', 'When parts activate, are you it — or with it?'],
+    ['app/(tabs)/journey.tsx', 'When parts activate, are you it — or with it? A relational shift.'],
+  ]) {
+    const c = codeOnly(read(f));
+    ok(`${f}: the blended bar's right pole comes from the flag, its caption is the same sentence`,
+      /leftLabel="Blended"\s*rightLabel=\{blendedAxisRight\(m2\)\}/.test(c)
+        && !/"Self-Led"/.test(c)
+        && c.includes(`caption="${caption}"`)
+        && /leftLabel="Outside-In"\s*rightLabel="Inside-Out"/.test(c)
+        && /leftLabel="Fragmented"\s*rightLabel="Flowing"/.test(c)
+        && /const m2 = useM2Flag\(\);/.test(c));
+  }
+}
+
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURE(S)`} — ${pass + fail} checks`);
 process.exit(fail === 0 ? 0 : 1);

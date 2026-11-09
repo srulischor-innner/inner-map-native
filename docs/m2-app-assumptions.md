@@ -113,3 +113,21 @@ Not changed, per the ruling:
 - the Self voice, the map voices and the Guide's Self description, which are exempt from the "I'm here / with you" rule.
 
 The summary prompt's own fix ("name what came close") is server copy, done on the m2-chat-stack branch (`lib/m2/summary.js`).
+
+## The axis rename (CHANGE-LIST-2026-11-08.md, ruling 5)
+
+On M2 the blended axis is **Blended → You Leading**, not Self-Led: the one who leads is "You", and Self is underneath. Only the label words change, everywhere the app shows them. Off M2 every label is the old one.
+
+- **Journey tab, "The spectrums"** (`app/(tabs)/journey.tsx`): the bar's right pole.
+- **The map's YOUR PROGRESS strip** (`components/map/ProgressStrip.tsx`): the bar's right pole.
+- **The spectrum panel** (`components/map/SpectrumDetailModal.tsx`): the title "Blended → You Leading", the pole label, the heading "You Leading indicators" and the section heading "Toward the You Leading side". The copy is `youLeadingAxisCopy(BLENDED_SELF_LED)`, so every sentence is the legacy one; the smoke checks that.
+
+Unchanged: Outside-In → Inside-Out, Fragmented → Flowing, and the internal names (`blendedSelfLed`, `blendedSelfLedScore`, `selfLedKeywords`), which never reach the screen. The app shows no score column by name; the account deletion screen says only "spectrum scores".
+
+**Sentences left as they were, for the founder's copy rewrite.** These still describe the axis in its old terms:
+
+- both bar captions: "When parts activate, are you it — or with it?" (strip), with "A relational shift." added on the Journey tab;
+- the panel's "What this measures", "Toward the Blended side" and "Toward the You Leading side" paragraphs;
+- the five "Three levels of unblending" paragraphs, including "the genuine arrival";
+- "How it moves", including "Self energy is what allows unblending";
+- the example phrases under each indicator heading.

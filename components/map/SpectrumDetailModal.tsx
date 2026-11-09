@@ -14,6 +14,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
+import { useM2Flag } from '../../services/m2Store';
+import { youLeadingAxisCopy } from '../../services/m2';
 
 export type SpectrumKey = 'outsideIn' | 'blendedSelfLed' | 'fragmented';
 
@@ -36,10 +38,12 @@ export function SpectrumDetailModal({
   visible, spectrum, value, clinicalPatterns, onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
+  // Before the early return, so the hook runs on every render.
+  const m2 = useM2Flag();
   if (!spectrum) return null;
   const copy =
     spectrum === 'outsideIn'      ? OUTSIDE_IN :
-    spectrum === 'blendedSelfLed' ? BLENDED_SELF_LED :
+    spectrum === 'blendedSelfLed' ? (m2 ? BLENDED_YOU_LEADING : BLENDED_SELF_LED) :
     FRAGMENTED;
 
   // Indicator keyword arrays — left is the side the reading moves AWAY from,
@@ -279,6 +283,11 @@ const BLENDED_SELF_LED: SpectrumCopy = {
   howItMoves:
     "This shifts through repeated experience of unblending — usually first with smaller parts before bigger ones. Reading about the difference helps. Actually living it is the real teacher. Self energy is what allows unblending, so this spectrum and Fragmented → Flowing tend to influence each other over time.",
 };
+
+// On M2 the axis is "Blended → You Leading" (CHANGE-LIST-2026-11-08 ruling 5).
+// Only the title, the pole label, the indicator heading and the section
+// headings change; every sentence above is the same until the copy rewrite.
+const BLENDED_YOU_LEADING: SpectrumCopy = youLeadingAxisCopy(BLENDED_SELF_LED);
 
 const FRAGMENTED: SpectrumCopy = {
   title: 'Fragmented → Flowing',

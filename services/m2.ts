@@ -584,3 +584,37 @@ export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
     starterMapFinished: starter.finished,
   };
 }
+
+// ---------------------------------------------------------------------------
+// THE AXIS RENAME (CHANGE-LIST-2026-11-08.md, ruling 5, Nov 8 21:02): the
+// blended axis is "Blended → You Leading" on M2, not "Self-Led": the one who
+// leads is "You", and Self is underneath. Only the label words change. The
+// sentences around them stay as they are until the founder's copy rewrite.
+// ---------------------------------------------------------------------------
+export const AXIS_RIGHT_LEGACY = 'Self-Led';
+export const AXIS_RIGHT_M2 = 'You Leading';
+
+/** The blended axis's right pole, as the bars show it. */
+export function blendedAxisRight(m2: boolean): string {
+  return m2 ? AXIS_RIGHT_M2 : AXIS_RIGHT_LEGACY;
+}
+
+type AxisCopy = {
+  title: string;
+  rightLabel: string;
+  rightIndicatorsHeading: string;
+  sections: { label: string; paragraphs: string[] }[];
+};
+
+/** The detail panel's copy for this axis on M2: its title, pole label,
+ *  indicator heading and section headings renamed, every sentence untouched. */
+export function youLeadingAxisCopy<T extends AxisCopy>(legacy: T): T {
+  const rename = (s: string) => s.split(AXIS_RIGHT_LEGACY).join(AXIS_RIGHT_M2);
+  return {
+    ...legacy,
+    title: rename(legacy.title),
+    rightLabel: rename(legacy.rightLabel),
+    rightIndicatorsHeading: rename(legacy.rightIndicatorsHeading),
+    sections: legacy.sections.map((s) => ({ ...s, label: rename(s.label) })),
+  };
+}

@@ -22,6 +22,8 @@
 //   ?case=wound          the Wound folder on M2 with `underneath` filled
 //   ?case=wound-empty    the same folder on M2 with `underneath` empty
 //   ?case=wound-off      the filled folder with the flag off: no row
+//   ?case=axis           the map's YOUR PROGRESS strip on M2 (Blended → You Leading)
+//   ?case=axis-off       the same strip with the flag off (Blended → Self-Led)
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
@@ -31,6 +33,7 @@ import { PendingMapCards, M2InlineCards } from '../components/m2/M2Cards';
 import MessagesScreen from '../app/messages';
 import { PartFolderModal } from '../components/map/PartFolderModal';
 import { setM2Flag } from '../services/m2Store';
+import { ProgressStrip } from '../components/map/ProgressStrip';
 
 // A wound row as /api/parts returns it, with markerFields as the tap writes
 // them ({ value, confidence, ts }). Invented words.
@@ -202,6 +205,21 @@ export default function M2Preview() {
   useMemo(() => stubTransport(which === 'chat-failing'), [which]);
 
   if (which === 'messages') return <MessagesScreen />;
+
+  if (which === 'axis' || which === 'axis-off') {
+    setM2Flag(which === 'axis');
+    return (
+      <View style={[styles.root, { justifyContent: 'flex-end' }]}>
+        <ProgressStrip
+          outsideInScore={0.3}
+          blendedSelfLedScore={0.45}
+          fragmentedScore={0.6}
+          spectrumEarned={{ outsideIn: true, blendedSelfLed: true, fragmented: true }}
+          clinicalPatterns={null}
+        />
+      </View>
+    );
+  }
 
   if (which === 'wound-card') {
     setM2Flag(true);
