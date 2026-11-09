@@ -22,7 +22,7 @@ import { StatCards } from '../../components/journey/StatCards';
 import { UsageStrip } from '../../components/journey/UsageStrip';
 import { MapDepth } from '../../components/journey/MapDepth';
 import { PartPhrases, LanguagePatterns } from '../../components/journey/PartPhrases';
-import { AXIS_RIGHT_M2 } from '../../services/m2';
+import { AXIS_RIGHT_M2, AXIS_INTEGRATED } from '../../services/m2';
 
 type JourneyData = {
   totalSessions: number;
@@ -223,7 +223,7 @@ export default function JourneyScreen() {
           <View style={{ height: spacing.md }} />
           <SpectrumBar
             leftLabel="Fragmented"
-            rightLabel="Flowing"
+            rightLabel={AXIS_INTEGRATED}
             leftColor={colors.firefighters}
             rightColor={colors.self}
             value={data?.spectrumEarned?.fragmented ? (data?.fragmentedScore ?? null) : null}

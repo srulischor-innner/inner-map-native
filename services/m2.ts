@@ -92,7 +92,11 @@ export const M2_CARD_KIND = 'm2_card' as const;
  *  "middle" and "middle_ground" are the same thing under two spellings — the
  *  marker and the pass spell it differently — and are read alike. */
 export type M2CardKind =
-  | 'part' | 'detail' | 'voice' | 'middle_ground' | 'middle' | 'second_wound' | 'belief';
+  | 'part' | 'detail' | 'voice' | 'middle_ground' | 'middle' | 'second_wound' | 'belief'
+  // A moment Self became visible in, proposed to the Self folder (server
+  // ddb01a3 lib/m2/cards.js writeSelfMoment; ruled Nov 8 21:08). Payload
+  // { label, note }; at most one per conversation.
+  | 'self_moment';
 
 export type M2CardItem = {
   kind: M2CardKind;
@@ -122,7 +126,7 @@ export type M2CardItem = {
   editedValue?: string;
 };
 
-const KINDS: M2CardKind[] = ['part', 'detail', 'voice', 'middle_ground', 'middle', 'second_wound', 'belief'];
+const KINDS: M2CardKind[] = ['part', 'detail', 'voice', 'middle_ground', 'middle', 'second_wound', 'belief', 'self_moment'];
 
 export function isM2Item(it: unknown): it is M2CardItem {
   if (!it || typeof it !== 'object') return false;
@@ -158,7 +162,8 @@ export function m2ItemValue(it: M2CardItem): string {
   const p = it.payload;
   switch (it.kind) {
     case 'middle_ground':
-    case 'middle': return str(p.label);
+    case 'middle':
+    case 'self_moment': return str(p.label);
     case 'second_wound': return str(p.wound);
     case 'belief': return str(p.belief) || str(p.value);
     default: return str(p.value);
@@ -185,9 +190,9 @@ export function m2ItemHasOwnName(it: M2CardItem): boolean {
   return !!name && name !== first;
 }
 
-/** A middle-ground card's "the line it came from", shown under its label. */
+/** A middle-ground or self_moment card's note, shown under its label. */
 export function m2ItemNote(it: M2CardItem): string {
-  return it.kind === 'middle_ground' || it.kind === 'middle' ? str(it.payload.note) : '';
+  return it.kind === 'middle_ground' || it.kind === 'middle' || it.kind === 'self_moment' ? str(it.payload.note) : '';
 }
 
 /** Where the card came from, for the line under it in Messages. */
@@ -284,6 +289,11 @@ function ownerWords(part: string, label: string): string {
   return label || PART_WORDS[part] || 'a part of you';
 }
 
+// A self_moment's category line: the Self folder calls these "Moments of
+// Presence" (components/map/PartFolderModal.tsx SelfSections), so the card
+// says the same. MICROCOPY — the founder's to word.
+const SELF_MOMENT_WORDS = 'a moment of presence';
+
 /** A short line saying what kind of thing this is, or null for none. */
 export function m2ItemCategory(it: M2CardItem): string | null {
   const p = it.payload;
@@ -296,6 +306,7 @@ export function m2ItemCategory(it: M2CardItem): string | null {
       case 'belief': return 'what you stand on';
       case 'middle':
       case 'middle_ground': return 'somewhere you can stand';
+      case 'self_moment': return SELF_MOMENT_WORDS;
       default: return PART_WORDS[part] || null;
     }
   }
@@ -315,11 +326,40 @@ export function m2ItemCategory(it: M2CardItem): string | null {
       return null;
     case 'second_wound':
       return 'something separate underneath';
+    case 'self_moment':
+      return SELF_MOMENT_WORDS;
   }
 }
 
 export function m2ItemFromChat(it: M2CardItem): boolean {
   return it.source === 'chat' || it.confirmedInChat === true || it.confirmed_in_chat === true;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A row's date as the kicker shows it: the server sends YYYY-MM-DD
+ *  (sessionDate, entryDate), shown as "Nov 5". Anything else is shown as
+ *  sent, cut short; nothing at all is no date. */
+export function m2RowDate(raw: unknown): string {
+  const s = str(raw);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) return `${MONTHS[month - 1]} ${day}`;
+  }
+  return s.slice(0, 20);
+}
+
+/** An M2 row's header in Messages (server ddb01a3): a row the idle pass drew
+ *  from a shared journal entry carries source "journal", entryId and
+ *  entryDate; every other row is from a conversation (sessionDate). */
+export function m2RowKicker(payload: Record<string, unknown> | null | undefined): { fromJournal: boolean; kicker: string } {
+  const p = payload || {};
+  const fromJournal = str(p.source) === 'journal';
+  const date = m2RowDate(fromJournal ? (p.entryDate ?? p.sessionDate) : p.sessionDate);
+  const head = fromJournal ? 'FROM A JOURNAL ENTRY' : 'FROM A CONVERSATION';
+  return { fromJournal, kicker: date ? `${head} · ${date}` : head };
 }
 
 /** A pending card the chat screen shows: one item of one inbox row. */
@@ -579,6 +619,12 @@ export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
 export const AXIS_RIGHT_LEGACY = 'Self-Led';
 /** The blended axis's right pole, as the bars show it. */
 export const AXIS_RIGHT_M2 = 'You Leading';
+
+// THE THIRD AXIS IS "Fragmented → Integrated" (2026-11-09), not "Flowing",
+// beside "Blended → You Leading". The server's payload key stays
+// flowingKeywords; only what the person reads changes.
+/** The fragmented axis's right pole, as the bars and its panel show it. */
+export const AXIS_INTEGRATED = 'Integrated';
 
 type AxisCopy = {
   title: string;

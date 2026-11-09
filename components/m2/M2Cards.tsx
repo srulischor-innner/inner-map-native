@@ -34,7 +34,7 @@ import { colors, fonts, spacing } from '../../constants/theme';
 import type { InboxMessage } from '../../services/api';
 import {
   isM2Item, m2BuildEdit, m2CardKey, m2EditDraft, m2FieldWords, m2ItemCategory, m2ItemFieldEntries,
-  m2ItemHasOwnName, m2ItemIsBundled, m2ItemNote, m2ItemShownStatus, m2ItemSource, m2ItemTitle,
+  m2ItemHasOwnName, m2ItemIsBundled, m2ItemNote, m2ItemShownStatus, m2ItemSource, m2ItemTitle, m2RowKicker,
   type ChatPendingCard, type M2CardItem, type M2CardStatus, type M2EditDraft,
 } from '../../services/m2';
 import { acceptM2Item, declineM2Item, markM2CardShown } from '../../services/m2Store';
@@ -171,14 +171,15 @@ export function M2InboxCard({ message, onEditFocus }: { message: InboxMessage; o
     .map((it, i) => ({ it, i }))
     .filter(({ it }) => isM2Item(it) && !!m2ItemTitle(it) && it.status !== 'expired' && it.status !== 'superseded') as { it: M2CardItem; i: number }[];
   if (rows.length === 0) return null;
+  const head = m2RowKicker(message.payload as Record<string, unknown>);
 
   return (
     <View style={styles.inboxCard}>
-      <Text style={styles.kicker}>
-        {`FROM A CONVERSATION${message.payload.sessionDate ? ` · ${message.payload.sessionDate}` : ''}`}
-      </Text>
+      {/* Which conversation, or which shared journal entry, the pass drew
+          these from (services/m2.ts m2RowKicker). */}
+      <Text style={styles.kicker}>{head.kicker}</Text>
       <Text style={styles.inboxLede}>
-        Things from a conversation that might belong on your map. Nothing goes on it unless you add it:
+        {`Things from ${head.fromJournal ? 'a journal entry' : 'a conversation'} that might belong on your map. Nothing goes on it unless you add it:`}
       </Text>
       {rows.map(({ it, i }) => (
         <View key={`${message.id}-${i}`} style={styles.inboxItem}>

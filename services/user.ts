@@ -412,12 +412,23 @@ export type IdentityHeaderOpts = {
   contentType?: string;
 };
 
+// THIS BUILD RENDERS M2 CARDS, AND SAYS SO (1.4.0, server ddb01a3). The server
+// tells app versions apart by this header alone (lib/m2/index.js isM2Client):
+// a request without it is the app before M2 (1.3.0, builds 51 and 47), and its
+// m2_card rows come back as pending_parts. So it goes on EVERY request: here,
+// in the shared builder, and again in services/api.ts's fetch wrapper, token
+// refresh and the boot health ping, which build their own headers.
+// scripts/check-m2-client-header.js holds every request site to it.
+export const M2_CLIENT_HEADER = 'X-Inner-Map-M2';
+export const M2_CLIENT_HEADER_VALUE = '1';
+
 export async function buildIdentityHeaders(
   opts: IdentityHeaderOpts = {},
 ): Promise<Record<string, string>> {
   const mode = opts.mode ?? 'mint';
   const headers: Record<string, string> = {
     'Content-Type': opts.contentType ?? 'application/json',
+    [M2_CLIENT_HEADER]: M2_CLIENT_HEADER_VALUE,
   };
   const userId = mode === 'peek' ? await peekUserId() : await getUserId();
   // X-User-Id stays on EVERY request during the migration window — the

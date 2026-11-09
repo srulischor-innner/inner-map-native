@@ -284,7 +284,7 @@ console.log('\n3b. what a card says, and what an edit sends');
   const JARGON = /\b(wound|fixer|skeptic|firefighter|manager|self-like|unknown-part)\b/i;
   const RAWKEY = /\b[a-z]+-[a-z]+(?:-[a-z]+)*\b/;
   const leaks = [];
-  for (const k of ['part', 'detail', 'voice', 'middle_ground', 'middle', 'second_wound', 'belief']) {
+  for (const k of ['part', 'detail', 'voice', 'middle_ground', 'middle', 'second_wound', 'belief', 'self_moment']) {
     for (const part of PARTS) for (const field of FIELDS) for (const label of ['', 'the planner']) {
       const single = m2.m2ItemCategory({ kind: k, payload: { part, field, label, value: 'x' } }) || '';
       const bundled = m2.m2ItemCategory({ kind: k, payload: { part, label, fields: { [field || 'x']: 'y' } } }) || '';
@@ -725,8 +725,25 @@ console.log('\n8. the axis rename');
       && /const BLENDED_YOU_LEADING: SpectrumCopy = youLeadingAxisCopy\(BLENDED_SELF_LED\);/.test(code));
   const others = lift('OUTSIDE_IN');
   const frag = lift('FRAGMENTED');
-  ok('Outside-In → Inside-Out and Fragmented → Flowing keep their names',
-    others && others.title === 'Outside-In → Inside-Out' && frag && frag.title === 'Fragmented → Flowing');
+  ok('Outside-In → Inside-Out keeps its name; the third axis is Fragmented → Integrated',
+    others && others.title === 'Outside-In → Inside-Out'
+      && frag && frag.title === 'Fragmented → Integrated' && frag.leftLabel === 'Fragmented'
+      && frag.rightLabel === 'Integrated' && frag.rightIndicatorsHeading === 'Integrated indicators'
+      && m2.AXIS_INTEGRATED === 'Integrated',
+    frag ? `${frag.title} | ${frag.rightLabel} | ${frag.rightIndicatorsHeading}` : 'not lifted');
+  ok('where the blended panel names the third axis, it says Integrated',
+    legacy && JSON.stringify(legacy).includes('Fragmented → Integrated') && !JSON.stringify(legacy).includes('Fragmented → Flowing'));
+  {
+    // Nothing a person reads says "Flowing" or "Self-Led" any more. The
+    // server's payload key flowingKeywords, the renamed source object and
+    // comments are not reading.
+    const shown = [];
+    for (const f of ['components/map/SpectrumDetailModal.tsx', 'components/map/ProgressStrip.tsx', 'app/(tabs)/journey.tsx']) {
+      const c = codeOnly(read(f)).replace(/const BLENDED_SELF_LED: SpectrumCopy = \{[\s\S]*?\n\};/, '');
+      for (const m of c.matchAll(/['"`]([^'"`\n]*\b(?:Flowing|Self-Led)\b[^'"`\n]*)['"`]/g)) shown.push(`${f}: ${m[1]}`);
+    }
+    ok('no string a person reads says Flowing or Self-Led', shown.length === 0, shown.slice(0, 4).join(' | '));
+  }
 
   for (const [f, caption] of [
     ['components/map/ProgressStrip.tsx', 'When parts activate, are you it — or with it?'],
@@ -738,7 +755,7 @@ console.log('\n8. the axis rename');
         && !/"Self-Led"/.test(c)
         && c.includes(`caption="${caption}"`)
         && /leftLabel="Outside-In"\s*rightLabel="Inside-Out"/.test(c)
-        && /leftLabel="Fragmented"\s*rightLabel="Flowing"/.test(c));
+        && /leftLabel="Fragmented"\s*rightLabel=\{AXIS_INTEGRATED\}/.test(c));
   }
 }
 
@@ -771,6 +788,40 @@ console.log('\n9. the End Session summary');
     /somethingToTryText: String\(j\.somethingToTryText \|\| ''\),/.test(body) && /fallback: !!j\.fallback,/.test(body));
   ok('the server\'s fallback shows the journal line',
     /if \(sum\.fallback\) setSummaryFailed\(true\);/.test(chat));
+}
+
+// ===========================================================================
+// 10. SELF MOMENTS AND THE JOURNAL KICKER (server ddb01a3, 2026-11-09)
+// ===========================================================================
+console.log('\n10. self moments and the journal kicker');
+{
+  const sm = { kind: 'self_moment', source: 'pass', status: 'pending',
+    payload: { label: 'Laughing with my brother on the porch', note: 'it felt easy' } };
+  ok('a self_moment item is a card', m2.isM2Item(sm));
+  ok('...headed by their words, with its note beneath', m2.m2ItemTitle(sm) === 'Laughing with my brother on the porch' && m2.m2ItemNote(sm) === 'it felt easy');
+  ok('...called what the Self folder calls it', m2.m2ItemCategory(sm) === 'a moment of presence');
+  ok('...and editing it sends the new words as one string, which the tap writes',
+    m2.m2BuildEdit(sm, { title: 'On the porch with my brother', fields: {} }) === 'On the porch with my brother'
+      && m2.m2BuildEdit(sm, m2.m2EditDraft(sm)) === undefined);
+  const row = (it, extra = {}) => ({ id: 'r1', kind: 'm2_card', payload: { sessionId: 'S', sessionDate: '2026-11-05', items: [it], ...extra } });
+  ok('on the chat it shows when the server made it from a yes there; a pass proposal stays in Messages',
+    m2.chatPendingCards([row({ ...sm, source: 'chat' })], 'S').length === 1 && m2.chatPendingCards([row(sm)], 'S').length === 0);
+  const folder = codeOnly(read('components/map/PartFolderModal.tsx'));
+  ok('the Self folder shows the moments\' own words, not only how many',
+    /\{selfMoments\(part\)\.map\(\(m, i\) => \(/.test(folder) && /const label = e && typeof e\.label === 'string' \? e\.label\.trim\(\) : '';/.test(folder));
+
+  ok('a journal row: FROM A JOURNAL ENTRY and its date',
+    m2.m2RowKicker({ source: 'journal', entryId: 'e1', entryDate: '2026-11-03', sessionDate: '2026-11-03' }).kicker === 'FROM A JOURNAL ENTRY · Nov 3'
+      && m2.m2RowKicker({ source: 'journal', entryId: 'e1', entryDate: '2026-11-03' }).fromJournal === true);
+  ok('a conversation row: FROM A CONVERSATION and its date, now as a date, not 2026-11-05',
+    m2.m2RowKicker({ sessionDate: '2026-11-05' }).kicker === 'FROM A CONVERSATION · Nov 5');
+  ok('no date: no dot; an odd date shows as sent, cut short',
+    m2.m2RowKicker({}).kicker === 'FROM A CONVERSATION' && m2.m2RowDate('yesterday') === 'yesterday'
+      && m2.m2RowDate('2026-13-40') === '2026-13-40' && m2.m2RowDate(42) === '');
+  const cards = codeOnly(read('components/m2/M2Cards.tsx'));
+  ok('Messages heads each row with that kicker, and its lede says where it came from',
+    /<Text style=\{styles\.kicker\}>\{head\.kicker\}<\/Text>/.test(cards)
+      && /head\.fromJournal \? 'a journal entry' : 'a conversation'/.test(cards));
 }
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURE(S)`} — ${pass + fail} checks`);

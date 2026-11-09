@@ -15,6 +15,7 @@ import Constants from 'expo-constants';
 import {
   peekUserId, setUserId,
   buildIdentityHeaders, getTokens, getAccessToken, setTokens, clearTokens,
+  M2_CLIENT_HEADER, M2_CLIENT_HEADER_VALUE,
 } from './user';
 import { emitRateLimitNotice } from '../utils/rateLimitNotice';
 // The 402 matcher lives in a module with zero imports so
@@ -160,7 +161,7 @@ async function performRefresh(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', [M2_CLIENT_HEADER]: M2_CLIENT_HEADER_VALUE },
       body: JSON.stringify({ refreshToken }),
     });
     if (!res.ok) {
@@ -211,6 +212,16 @@ function isAuthEndpoint(path: string): boolean {
 // Instrumented fetch wrapper. Everything goes through here so we get a single
 // consistent log line per request — and transparent 401 → refresh → replay.
 // ============================================================================
+/** The caller's headers, with this build's M2 client header added. */
+function withM2Header(h: HeadersInit | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (h instanceof Headers) h.forEach((v, k) => { out[k] = v; });
+  else if (Array.isArray(h)) for (const [k, v] of h) out[k] = v;
+  else if (h) Object.assign(out, h as Record<string, string>);
+  out[M2_CLIENT_HEADER] = M2_CLIENT_HEADER_VALUE;
+  return out;
+}
+
 async function apiFetchOnce(path: string, opts: ApiFetchOpts): Promise<Response> {
   const url = `${BASE_URL}${path}`;
   const t0 = Date.now();
@@ -222,7 +233,9 @@ async function apiFetchOnce(path: string, opts: ApiFetchOpts): Promise<Response>
   }, timeoutMs);
   console.log(`[api] ${opts.label} → ${opts.method || 'GET'} ${url}`);
   try {
-    const res = await fetch(url, { ...opts, signal: opts.signal || ctl.signal });
+    // The M2 client header rides on every request, whatever headers the caller
+    // built (services/user.ts M2_CLIENT_HEADER).
+    const res = await fetch(url, { ...opts, headers: withM2Header(opts.headers), signal: opts.signal || ctl.signal });
     const ms = Date.now() - t0;
     if (!res.ok) {
       // Don't consume the body if the caller wants to stream — just log status.

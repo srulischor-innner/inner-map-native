@@ -1,6 +1,6 @@
 // Bipolar spectrum bar — a gradient track with a marker showing where the user
 // currently sits. `value` is 0..1, where 0 = left pole, 1 = right pole.
-// Used for "Outside-In → Inside-Out" and "Fragmented → Flowing".
+// Used for "Outside-In → Inside-Out", "Blended → You Leading" and "Fragmented → Integrated".
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';

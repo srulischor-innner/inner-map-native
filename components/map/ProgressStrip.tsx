@@ -3,8 +3,8 @@
 // Expanded: three spectrum bars (each with a "?" info button), in this
 // fixed order from top to bottom:
 //   1. Outside-In → Inside-Out  (perspective — conceptual)
-//   2. Blended → Self-Led        (position — relational, real-time)
-//   3. Fragmented → Flowing      (integration — experiential)
+//   2. Blended → You Leading     (position — relational, real-time)
+//   3. Fragmented → Integrated   (integration — experiential)
 // They measure DIFFERENT things and move at different rates. Read each
 // independently. The detail panel (? button) explains each one.
 
@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing } from '../../constants/theme';
 import { SpectrumBar } from '../journey/SpectrumBar';
 import { SpectrumDetailModal, SpectrumKey } from './SpectrumDetailModal';
-import { AXIS_RIGHT_M2 } from '../../services/m2';
+import { AXIS_RIGHT_M2, AXIS_INTEGRATED } from '../../services/m2';
 
 export function ProgressStrip({
   outsideInScore,
@@ -106,7 +106,7 @@ export function ProgressStrip({
           <SpectrumRow onInfo={() => openDetail('fragmented')}>
             <SpectrumBar
               leftLabel="Fragmented"
-              rightLabel="Flowing"
+              rightLabel={AXIS_INTEGRATED}
               leftColor={colors.firefighters}
               rightColor={colors.self}
               value={isEarned('fragmented') ? (fragmentedScore ?? null) : null}

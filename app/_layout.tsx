@@ -42,7 +42,7 @@ import {
 import { PolicyUpdateNotice } from '../components/legal/PolicyUpdateNotice';
 import { registerForPushNotifications } from '../services/push';
 import { configurePurchases, identifyUser } from '../services/purchases';
-import { peekUserId } from '../services/user';
+import { peekUserId, M2_CLIENT_HEADER, M2_CLIENT_HEADER_VALUE } from '../services/user';
 import { retryPendingJournalDeletes } from '../services/journalDeletes';
 import { NOTIFICATIONS_ENABLED } from '../constants/features';
 import {
@@ -163,7 +163,7 @@ console.log(
   'isProd=', !__DEV__,
 );
 try {
-  fetch(`${API_BASE_URL}/api/health`, { method: 'GET' })
+  fetch(`${API_BASE_URL}/api/health`, { method: 'GET', headers: { [M2_CLIENT_HEADER]: M2_CLIENT_HEADER_VALUE } })
     .then((r) => console.log('[boot] health:', r.status))
     .catch((e) => console.log('[boot] health FAILED:', (e as Error)?.message));
 } catch (e) {

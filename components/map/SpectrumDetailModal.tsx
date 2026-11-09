@@ -1,7 +1,9 @@
 // Bottom-sheet explainer panel for one of the THREE spectrum bars:
 //   1. Outside-In  → Inside-Out   (perspective)
-//   2. Blended     → Self-Led      (position when parts activate)
-//   3. Fragmented  → Flowing       (system integration)
+//   2. Blended     → You Leading   (position when parts activate; the copy
+//      below is written as BLENDED_SELF_LED and shown renamed, see
+//      BLENDED_YOU_LEADING)
+//   3. Fragmented  → Integrated    (system integration)
 //
 // All "score" language has been removed app-wide. The bar shows a position
 // only — never a number, never a percentage. Sections speak about "the
@@ -251,7 +253,7 @@ const BLENDED_SELF_LED: SpectrumCopy = {
     {
       label: 'What this measures',
       paragraphs: [
-        "This tracks something different from the other two spectrums. Outside-In measures how your protectors see the world. Fragmented → Flowing measures how integrated your whole system is. This one measures something more specific: when a part activates, are you IT — or are you WITH it?",
+        "This tracks something different from the other two spectrums. Outside-In measures how your protectors see the world. Fragmented → Integrated measures how integrated your whole system is. This one measures something more specific: when a part activates, are you IT — or are you WITH it?",
       ],
     },
     {
@@ -278,7 +280,7 @@ const BLENDED_SELF_LED: SpectrumCopy = {
     },
   ],
   howItMoves:
-    "This shifts through repeated experience of unblending — usually first with smaller parts before bigger ones. Reading about the difference helps. Actually living it is the real teacher. Self energy is what allows unblending, so this spectrum and Fragmented → Flowing tend to influence each other over time.",
+    "This shifts through repeated experience of unblending — usually first with smaller parts before bigger ones. Reading about the difference helps. Actually living it is the real teacher. Self energy is what allows unblending, so this spectrum and Fragmented → Integrated tend to influence each other over time.",
 };
 
 // On M2 the axis is "Blended → You Leading" (CHANGE-LIST-2026-11-08 ruling 5).
@@ -287,13 +289,13 @@ const BLENDED_SELF_LED: SpectrumCopy = {
 const BLENDED_YOU_LEADING: SpectrumCopy = youLeadingAxisCopy(BLENDED_SELF_LED);
 
 const FRAGMENTED: SpectrumCopy = {
-  title: 'Fragmented → Flowing',
+  title: 'Fragmented → Integrated',
   leftLabel: 'Fragmented',
-  rightLabel: 'Flowing',
+  rightLabel: 'Integrated',
   leftKeysField: 'fragmentedKeywords',
   rightKeysField: 'flowingKeywords',
   leftIndicatorsHeading: 'Fragmented indicators',
-  rightIndicatorsHeading: 'Flowing indicators',
+  rightIndicatorsHeading: 'Integrated indicators',
   leftPlaceholders: [
     "intense blending language",
     "parts in conflict",

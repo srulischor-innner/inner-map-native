@@ -981,6 +981,19 @@ function SkepticSections({ part }: { part: any }) {
     </View>
   );
 }
+/** The Self folder's moments with words of their own, newest first, at most
+ *  five. Older rows may hold other shapes; only { label } entries show. */
+function selfMoments(part: any): { label: string; note: string }[] {
+  const list = Array.isArray(part?.historicalEntries) ? part.historicalEntries : [];
+  const out: { label: string; note: string }[] = [];
+  for (const e of list) {
+    const label = e && typeof e.label === 'string' ? e.label.trim() : '';
+    if (!label) continue;
+    out.push({ label, note: typeof e.note === 'string' ? e.note.trim() : '' });
+  }
+  return out.reverse().slice(0, 5);
+}
+
 function SelfSections({
   part, color,
 }: { part: any; color: string }) {
@@ -1001,6 +1014,16 @@ function SelfSections({
         value={part?.historicalEntries?.length ? `${part.historicalEntries.length} noticed so far` : undefined}
         placeholder="Moments of genuine presence will be noted here..."
       />
+      {/* THE MOMENTS THEMSELVES (1.4.0). A tapped self_moment card appends
+          { label, note } here (server lib/m2/cards.js writeSelfMoment); the
+          folder showed only how many there were, so a tap changed a number.
+          Their own words, newest first, entries without a label left out. */}
+      {selfMoments(part).map((m, i) => (
+        <View key={`${m.label}-${i}`} style={styles.selfMoment}>
+          <Text style={styles.sectionValue}>{m.label}</Text>
+          {m.note ? <Text style={styles.selfMomentNote}>{m.note}</Text> : null}
+        </View>
+      ))}
       <Section
         label="Quality"
         value={part?.fullDescription || readField(part, 'feeling') || part?.recurringPhrases?.join?.(', ')}
@@ -1528,6 +1551,9 @@ const styles = StyleSheet.create({
   },
 
   // Self folder framer.
+  // A Self moment in the folder: their words, and its note beneath.
+  selfMoment: { marginTop: 6, marginBottom: 6 },
+  selfMomentNote: { marginTop: 2, color: colors.creamDim, fontFamily: fonts.sans, fontSize: 13, lineHeight: 19 },
   selfFramer: {
     color: colors.creamDim,
     fontFamily: fonts.serifItalic,
