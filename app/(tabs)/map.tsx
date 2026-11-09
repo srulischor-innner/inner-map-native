@@ -218,7 +218,8 @@ export default function MapScreen() {
       if (typeof res?.fragmentedScore === 'number') setFragmentedScore(res.fragmentedScore);
       if (typeof res?.blendedSelfLedScore === 'number') setBlendedSelfLedScore(res.blendedSelfLedScore);
       if (res?.spectrumEarned && typeof res.spectrumEarned === 'object') setSpectrumEarned(res.spectrumEarned);
-      setParts(ps);
+      // A list, always: the counts, the dots and the folder all iterate it.
+      setParts(Array.isArray(ps) ? ps.filter((p: any) => p && typeof p === 'object') : []);
       if (journey?.clinicalPatterns) setClinicalPatterns(journey.clinicalPatterns);
       // TEMP DEBUG — print the raw layers payload so Metro logs make it
       // obvious whether the second wound is reaching the client at all.
@@ -397,7 +398,15 @@ export default function MapScreen() {
     return h;
   }, [size, micTopLocal, readingStripH]);
 
-  const geom: MapGeometry | null = size && effectiveH ? computeMapGeometry(size.w, effectiveH) : null;
+  // MEMOISED (2026-11-09, the empty-map crash): this was recomputed on every
+  // render, so each of the ~10 state changes of a first load handed the Skia
+  // canvas a new geometry object and re-recorded its drawing while its size
+  // was still settling. Now it changes only when the measurement does.
+  const sizeW = size ? size.w : null;
+  const geom: MapGeometry | null = useMemo(
+    () => (sizeW && effectiveH ? computeMapGeometry(sizeW, effectiveH) : null),
+    [sizeW, effectiveH],
+  );
 
   // Counts for the corner badges on the manager / firefighter rings.
   // Reading from the parts table (rich rows with category + name) and
@@ -460,11 +469,28 @@ export default function MapScreen() {
     setFolderPart(k);
     markPartsVisited(k);
   }
+  // Stable handlers for the memoised canvases (a new function each render
+  // would re-render them anyway). They call the latest closures.
+  const handleTapRef = useRef(handleTap);
+  handleTapRef.current = handleTap;
+  const onTriangleTap = useCallback((k: NodeKey) => handleTapRef.current(k), []);
+  const onCircleTap = useCallback((k: IntegrationKey) => {
+    Haptics.selectionAsync().catch(() => {});
+    setIntegrationPartKey(k);
+  }, []);
 
   // ---------- INTEGRATION (TIKUN) VIEW ----------
   // Toggle between the triangle map and a circle layout that shows what
   // the system looks like in integration. Cross-fades over 800ms.
   const [view, setView] = useState<'triangle' | 'circle'>('triangle');
+  // MOUNTED ONLY WHILE SHOWN OR FADING (2026-11-09, the empty-map crash). Both
+  // canvases used to stay mounted, the hidden one at opacity 0 with its Skia
+  // drawing and endless Reanimated loops still running. Now the hidden one
+  // unmounts once a fade finishes (toggleView), and its animations are
+  // cancelled as it goes (CircleMapCanvas / InnerMapCanvas unmount effects).
+  const viewRef = useRef<'triangle' | 'circle'>('triangle');
+  const [triangleMounted, setTriangleMounted] = useState(true);
+  const [circleMounted, setCircleMounted] = useState(false);
   const [integrationPartKey, setIntegrationPartKey] = useState<IntegrationKey | null>(null);
   const triangleOpacity = useRef(new Animated.Value(1)).current;
   const circleOpacity = useRef(new Animated.Value(0)).current;
@@ -660,6 +686,11 @@ export default function MapScreen() {
     Haptics.selectionAsync().catch(() => {});
     const goingToCircle = view === 'triangle';
     setView(goingToCircle ? 'circle' : 'triangle');
+    viewRef.current = goingToCircle ? 'circle' : 'triangle';
+    // The view coming in mounts first; the one going out unmounts once the
+    // fade has finished and it is still the hidden one (a toggle mid-fade
+    // interrupts the fade, and nothing unmounts).
+    if (goingToCircle) setCircleMounted(true); else setTriangleMounted(true);
     Animated.parallel([
       Animated.timing(triangleOpacity, {
         toValue: goingToCircle ? 0 : 1,
@@ -673,7 +704,11 @@ export default function MapScreen() {
         easing: Easing.inOut(Easing.ease),
         useNativeDriver: true,
       }),
-    ]).start();
+    ]).start(({ finished }) => {
+      if (!finished) return;
+      if (viewRef.current === 'circle') setTriangleMounted(false);
+      else setCircleMounted(false);
+    });
     // Trigger the first-time intro panel only when entering circle view.
     if (goingToCircle) {
       (async () => {
@@ -753,7 +788,7 @@ export default function MapScreen() {
         <Animated.View style={[StyleSheet.absoluteFillObject, { transform: [{ translateX: slideX }] }]}
                        pointerEvents="box-none">
           {/* Triangle map — always mounted, opacity cross-fades with circle. */}
-          {geom ? (
+          {geom && triangleMounted ? (
             <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: triangleOpacity }]}
                            pointerEvents={view === 'triangle' ? 'box-none' : 'none'}>
               <InnerMapCanvas
@@ -762,23 +797,20 @@ export default function MapScreen() {
                 activeLabel={activeLabel}
                 managerCount={managerCount}
                 firefighterCount={firefighterCount}
-                onNodeTap={handleTap}
+                onNodeTap={onTriangleTap}
                 changedNodes={changedNodes}
               />
             </Animated.View>
           ) : null}
           {/* Circle (integration) map — also always mounted; the inactive
               view has pointerEvents:'none' so it can't intercept taps. */}
-          {size ? (
+          {size && circleMounted ? (
             <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: circleOpacity }]}
                            pointerEvents={view === 'circle' ? 'box-none' : 'none'}>
               <CircleMapCanvas
                 width={size.w}
                 height={size.h}
-                onNodeTap={(k) => {
-                  Haptics.selectionAsync().catch(() => {});
-                  setIntegrationPartKey(k);
-                }}
+                onNodeTap={onCircleTap}
               />
             </Animated.View>
           ) : null}

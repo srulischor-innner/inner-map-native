@@ -419,7 +419,11 @@ export function PartFolderModal({
 function Section({
   label, value, placeholder,
 }: { label: string; value?: string | null; placeholder: string }) {
-  const has = !!(value && value.trim());
+  // A field off the wire is not always a string (an object or a number in an
+  // odd payload); `.trim()` on one would throw and take the folder with it.
+  const text = typeof value === 'string' ? value : value == null ? '' : String(value);
+  value = text;
+  const has = !!text.trim();
   return (
     <View>
       <Text style={styles.sectionLabel}>{label.toUpperCase()}</Text>

@@ -31,7 +31,7 @@ import {
 } from '@shopify/react-native-skia';
 import {
   useSharedValue, withRepeat, withTiming, withSequence, Easing,
-  useDerivedValue, useAnimatedStyle, type SharedValue,
+  useDerivedValue, useAnimatedStyle, cancelAnimation, type SharedValue,
 } from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 import { colors, fonts } from '../../constants/theme';
@@ -97,7 +97,12 @@ function hourAngle(hour: number): number {
   return (hour / 12) * Math.PI * 2 - Math.PI / 2;
 }
 
-export function CircleMapCanvas({ width, height, onNodeTap }: Props) {
+// NATIVE LIFETIME RULES (2026-11-09, the empty-map crash; see InnerMapCanvas).
+// Six endless loops and a 12-second travel cycle drive Skia and the labels'
+// animated styles. map.tsx used to keep this view mounted, invisible, the
+// whole time the triangle was showing; it now mounts it only while it is
+// shown or fading, and every animation here is cancelled on unmount.
+function CircleMapCanvasImpl({ width, height, onNodeTap }: Props) {
   const cx = width / 2;
   const cy = height / 2;
   // Radius: 38% of the smaller canvas dimension, per spec.
@@ -257,6 +262,16 @@ export function CircleMapCanvas({ width, height, onNodeTap }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Unmount: stop every animation, looping or travelling (the timers are
+  // cleared by the cycle's own cleanup above).
+  useEffect(() => () => {
+    for (const sv of [
+      ambientBreath, arcBreath, selfPulse, orbit, unifiedBreath, selfRingProgress,
+      woundAng, woundOp, fixerAng, fixerOp, skepticAng, skepticOp,
+      woundFlash, fixerFlash, skepticFlash,
+    ]) cancelAnimation(sv);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // -------------------------------------------------------------------
   // DERIVED VALUES (Skia paint inputs — read on UI thread)
@@ -442,6 +457,8 @@ export function CircleMapCanvas({ width, height, onNodeTap }: Props) {
     </View>
   );
 }
+
+export const CircleMapCanvas = React.memo(CircleMapCanvasImpl);
 
 function NameLabel({
   x, y, label, color, onPress, center, breath, flash,

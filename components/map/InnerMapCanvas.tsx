@@ -14,7 +14,7 @@
 // react-native-skia doesn't have first-class touch events. Each node gets its
 // own absolutely-positioned Pressable sized to the node's hit region.
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, Pressable, Text, StyleSheet } from 'react-native';
 import {
   Canvas,
@@ -38,6 +38,7 @@ import {
   withDelay,
   Easing,
   useDerivedValue,
+  cancelAnimation,
 } from 'react-native-reanimated';
 import { colors, fonts } from '../../constants/theme';
 import type { MapGeometry, Node as GeomNode, Diamond as GeomDiamond } from '../../utils/mapLayout';
@@ -93,7 +94,20 @@ type Props = {
   changedNodes?: Set<NodeKey> | null;
 };
 
-export function InnerMapCanvas({
+// NATIVE LIFETIME RULES (2026-11-09, the empty-map crash). Sentry c105e830…
+// (staging 1.3.0+3, iPhone18,3) was EXC_BAD_ACCESS inside Hermes'
+// getNamedWithReceiver: a property read on an object whose native side was
+// gone. This canvas holds the two kinds of native-backed object on the Map
+// tab — Reanimated shared values feeding Skia, and a Skia path — so:
+//   - every looping or timed animation is cancelled on unmount, so nothing
+//     keeps driving a value whose Skia node has been torn down;
+//   - the diamond's Skia path is made once per geometry, not on every
+//     render (each render used to free the last one while a recorded frame
+//     could still hold it);
+//   - the component is memoised, and map.tsx memoises the geometry, so the
+//     ~10 state changes of a first load no longer re-record the drawing.
+// Confidence is moderate: the event had no symbolicated JS frame.
+function InnerMapCanvasImpl({
   geom, activePart, activeLabel, managerCount = 0, firefighterCount = 0, onNodeTap, changedNodes,
 }: Props) {
   // ===== SHARED VALUES (Reanimated) =====
@@ -175,6 +189,15 @@ export function InnerMapCanvas({
   const rippleBaseR = useSharedValue(0);       // starting radius (= node.r)
   const rippleProgress = useSharedValue(0);    // 0→1 over 600ms
   const rippleColor = useSharedValue('rgba(255,255,255,0)');
+
+  // Unmount: stop every animation this canvas started (see the header above).
+  useEffect(() => () => {
+    for (const sv of [
+      breath, atmosphereBreath, subtleScale, selfScale, woundPulse,
+      scaleWound, scaleFixer, scaleSkeptic, scaleSelf, scaleSelfLike, scaleManager, scaleFirefighter,
+      legWoundFixer, legWoundSkeptic, legFixerSkeptic, rippleProgress,
+    ]) cancelAnimation(sv);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // React to activePart — spring the matching node up, snap the others back.
   useEffect(() => {
@@ -449,6 +472,9 @@ export function InnerMapCanvas({
   );
 }
 
+// Memoised: re-renders only when its props change (geom is memoised in map.tsx).
+export const InnerMapCanvas = React.memo(InnerMapCanvasImpl);
+
 // Small "N" pill positioned at the top-right shoulder of a side-ring
 // node. Pure visual indicator — the parent <TapTarget> covers the
 // whole ring including this corner, so tapping the badge opens the
@@ -631,13 +657,18 @@ function DashedRing({ node, r, stroke, rgb }: { node: GeomNode; r: any; stroke: 
 }
 
 function SelfLikeDiamond({ d, stroke, rgb }: { d: GeomDiamond; stroke: string; rgb: string }) {
-  // Diamond built as a Path — easier than chaining four <Line>s.
-  const path = Skia.Path.Make();
-  path.moveTo(d.cx, d.cy - d.size);
-  path.lineTo(d.cx + d.size, d.cy);
-  path.lineTo(d.cx, d.cy + d.size);
-  path.lineTo(d.cx - d.size, d.cy);
-  path.close();
+  // Diamond built as a Path — easier than chaining four <Line>s. Made ONCE per
+  // geometry (useMemo): a new Skia path on every render freed the previous
+  // native object while a recorded frame could still reference it.
+  const path = useMemo(() => {
+    const p = Skia.Path.Make();
+    p.moveTo(d.cx, d.cy - d.size);
+    p.lineTo(d.cx + d.size, d.cy);
+    p.lineTo(d.cx, d.cy + d.size);
+    p.lineTo(d.cx - d.size, d.cy);
+    p.close();
+    return p;
+  }, [d.cx, d.cy, d.size]);
   return (
     <Group>
       {/* Inner glow behind the diamond */}
