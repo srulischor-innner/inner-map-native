@@ -742,5 +742,36 @@ console.log('\n8. the axis rename');
   }
 }
 
+// ===========================================================================
+// 9. END SESSION ON THE M2 IDLE SUMMARY (server, chat stack 8af8385, Nov 9)
+// ===========================================================================
+// The server answers /api/session-summary with the M2 idle summary, keeping the
+// three fields the app reads (exploredText, mapShowingText, somethingToTryText)
+// and `fallback`. The idle summary can leave "something to try" empty, and an
+// empty field must leave nothing behind: no heading, no pause in the reveal, no
+// line in the share export.
+console.log('\n9. the End Session summary');
+{
+  const modal = codeOnly(read('components/session/SessionSummaryModal.tsx'));
+  ok('an empty section renders nothing — not even its heading',
+    /function Section\(\{ label, text \}: \{ label: string; text: string \}\) \{\s*if \(!text \|\| !text\.trim\(\)\) return null;/.test(modal));
+  ok('all three, "something to try" included, go through that section',
+    /<Section label="SOMETHING TO TRY" text=\{revealed\.somethingToTryText\} \/>/.test(modal)
+      && /<Section label="WHAT WE EXPLORED" text=\{revealed\.exploredText\} \/>/.test(modal));
+  ok('the word-by-word reveal skips an empty field instead of waiting on it',
+    /while \(fieldIdx < fields\.length && !\(summary!\[fields\[fieldIdx\]\] \|\| ''\)\.trim\(\)\)/.test(modal));
+  ok('one field with words is enough to show the summary; none shows the journal line',
+    /const hasContent = !!summary && \(\s*summary\.exploredText\.trim\(\) \|\| summary\.mapShowingText\.trim\(\) \|\| summary\.somethingToTryText\.trim\(\)/.test(modal)
+      && /\{\(failed \|\| \(summary && !hasContent\)\) \? \(/.test(modal));
+  const exp = codeOnly(read('utils/sessionExport.ts'));
+  ok('the share export drops an empty section', /function fmtSection\(label: string, text\?: string \| null\): string \{\s*const t = \(text \|\| ''\)\.trim\(\);\s*if \(!t\) return '';/.test(exp));
+  const a = api.indexOf('async getSessionSummary(');
+  const body = a === -1 ? '' : api.slice(a, api.indexOf('\n  },', a));
+  ok('the response is read field by field, a missing one as empty, and fallback kept',
+    /somethingToTryText: String\(j\.somethingToTryText \|\| ''\),/.test(body) && /fallback: !!j\.fallback,/.test(body));
+  ok('the server\'s fallback shows the journal line',
+    /if \(sum\.fallback\) setSummaryFailed\(true\);/.test(chat));
+}
+
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILURE(S)`} — ${pass + fail} checks`);
 process.exit(fail === 0 ? 0 : 1);
