@@ -18,6 +18,7 @@ import {
   M2_CLIENT_HEADER, M2_CLIENT_HEADER_VALUE,
 } from './user';
 import { emitRateLimitNotice } from '../utils/rateLimitNotice';
+import { summaryFromResponse, type SessionSummaryShape } from '../utils/sessionSummary';
 // The 402 matcher lives in a module with zero imports so
 // scripts/smoke-membership-door.mjs can RUN it against a payload assembled from
 // the server's own literals, lifted out of server.js at run time. A regex over
@@ -1761,23 +1762,20 @@ export const api = {
     } catch { return null; }
   },
 
-  /** POST /api/session-summary — returns the structured 3-part summary
-   *  used by the native end-of-session screen. The server also persists
-   *  it onto the session row so the Journal tab can render the preview
-   *  later. `chatMode` selects between PROCESS (vessel-building practice)
-   *  and EXPLORE (things-to-notice awareness) closing prompts on the
-   *  server. Returns null on transport failure; returns the object with
-   *  blank strings (and `fallback: true`) on a soft server fallback. */
+  /** POST /api/session-summary — the summary the End Session screen shows.
+   *  The server also persists it onto the session row so Journey can render
+   *  it later. Since 2026-11-09 it is the idle summary v2: kind "idle-v2"
+   *  with whatWeTalkedAbout, whatLanded, onYourMap and yourWords (read by
+   *  utils/sessionSummary.ts summaryFromResponse, which keeps the old
+   *  exploredText / mapShowingText for a server that sends only those, and
+   *  never keeps forNextTime or "something to try"). Returns null on
+   *  transport failure; returns the object with blank fields (and
+   *  `fallback: true`) on a soft server fallback. */
   async getSessionSummary(
     messages: ChatMessage[],
     sessionId: string,
     chatMode?: 'process' | 'explore',
-  ): Promise<{
-    exploredText: string;
-    mapShowingText: string;
-    somethingToTryText: string;
-    fallback?: boolean;
-  } | null> {
+  ): Promise<(SessionSummaryShape & { fallback?: boolean }) | null> {
     try {
       const headers = await authHeaders();
       const res = await apiFetch('/api/session-summary', {
@@ -1790,12 +1788,7 @@ export const api = {
       if (!res.ok) return null;
       const j: any = await res.json();
       if (!j || typeof j !== 'object') return null;
-      return {
-        exploredText: String(j.exploredText || ''),
-        mapShowingText: String(j.mapShowingText || ''),
-        somethingToTryText: String(j.somethingToTryText || ''),
-        fallback: !!j.fallback,
-      };
+      return { ...summaryFromResponse(j), fallback: !!j.fallback };
     } catch (e) {
       console.warn('[session-summary] fetch failed:', (e as Error)?.message);
       return null;

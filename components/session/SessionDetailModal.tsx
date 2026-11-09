@@ -22,6 +22,7 @@ import { api } from '../../services/api';
 import { parseChatMeta, stripMarkers } from '../../utils/markers';
 import { MessageBubble, ChatMsg } from '../MessageBubble';
 import { buildSessionExport, shareSessionText, confirmSessionShare } from '../../utils/sessionExport';
+import { parseStoredSummary, summarySections, quotePhrase } from '../../utils/sessionSummary';
 import { useRouter } from 'expo-router';
 import { armPendingSessionResume } from '../../utils/pendingSessionResume';
 import type { ChatMode } from '../ChatModeToggle';
@@ -112,21 +113,13 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
           <Pressable
             onPress={async () => {
               Haptics.selectionAsync().catch(() => {});
-              const raw = session?.summary;
-              let structured: any = null;
-              if (typeof raw === 'string' && raw.trim().startsWith('{')) {
-                try { structured = JSON.parse(raw); } catch {}
-              }
+              const structured = parseStoredSummary(session?.summary);
               const sessionDate = session?.date ? new Date(session.date) : new Date();
               const choice = await confirmSessionShare((messages || []).length > 0);
               if (choice === 'cancel') return;
               const text = buildSessionExport({
                 date: sessionDate,
-                summary: structured && structured.kind === 'structured-v1' ? {
-                  exploredText: structured.exploredText,
-                  mapShowingText: structured.mapShowingText,
-                  somethingToTryText: structured.somethingToTryText,
-                } : null,
+                summary: structured,
                 messages: messages.map((m) => ({ role: m.role, text: m.text })),
                 includeTranscript: choice === 'everything',
               });
@@ -163,38 +156,31 @@ export function SessionDetailModal({ visible, sessionId, onClose }: Props) {
         ) : (
           <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
             {(() => {
-              // session.summary is either legacy prose (string) or a JSON
-              // blob persisted by /api/session-summary with shape:
-              //   { exploredText, mapShowingText, somethingToTryText, kind: "structured-v1" }
-              // Render the structured form as three labeled sections; fall
-              // back to the prose form for older sessions.
+              // session.summary is legacy prose (string) or a JSON blob
+              // persisted by /api/session-summary: the idle summary v2 (kind
+              // "idle-v2") or an older one (kind "structured-v1": explored,
+              // map showing, something to try). Both render as the End Session
+              // screen does (utils/sessionSummary.ts summarySections): v2 in
+              // its order, an old one without "something to try"; neither
+              // ever shows forNextTime. Prose falls back to REFLECTION.
               const raw = session.summary;
               if (!raw) return null;
-              let structured: any = null;
-              if (typeof raw === 'string' && raw.trim().startsWith('{')) {
-                try { structured = JSON.parse(raw); } catch {}
-              }
-              if (structured && structured.kind === 'structured-v1') {
+              const structured = parseStoredSummary(raw);
+              if (structured) {
+                const sections = summarySections(structured);
+                if (sections.length === 0) return null;
                 return (
                   <View style={styles.summary}>
-                    {structured.exploredText ? (
-                      <>
-                        <Text style={styles.summaryLabel}>WHAT WE EXPLORED</Text>
-                        <Text style={styles.summaryText}>{structured.exploredText}</Text>
-                      </>
-                    ) : null}
-                    {structured.mapShowingText ? (
-                      <>
-                        <Text style={[styles.summaryLabel, { marginTop: 14 }]}>WHAT THE MAP IS SHOWING</Text>
-                        <Text style={styles.summaryText}>{structured.mapShowingText}</Text>
-                      </>
-                    ) : null}
-                    {structured.somethingToTryText ? (
-                      <>
-                        <Text style={[styles.summaryLabel, { marginTop: 14 }]}>SOMETHING TO TRY</Text>
-                        <Text style={styles.summaryText}>{structured.somethingToTryText}</Text>
-                      </>
-                    ) : null}
+                    {sections.map((s, si) => (
+                      <View key={s.key} style={si > 0 ? { marginTop: 14 } : undefined}>
+                        {s.label ? <Text style={styles.summaryLabel}>{s.label}</Text> : null}
+                        {s.paragraphs.map((p, pi) => (
+                          <Text key={pi} style={[s.quoted ? styles.summaryQuote : styles.summaryText, pi > 0 && { marginTop: 8 }]}>
+                            {s.quoted ? quotePhrase(p) : p}
+                          </Text>
+                        ))}
+                      </View>
+                    ))}
                   </View>
                 );
               }
@@ -289,6 +275,8 @@ const styles = StyleSheet.create({
   },
   summaryLabel: { color: colors.amber, fontSize: 10, letterSpacing: 1.4, marginBottom: 4 },
   summaryText: { color: colors.cream, fontSize: 14, lineHeight: 22 },
+  // Their own words (idle summary v2 yourWords), in quotation marks.
+  summaryQuote: { color: colors.cream, fontSize: 14, lineHeight: 22, fontStyle: 'italic' },
 
   continueBtn: {
     flexDirection: 'row',

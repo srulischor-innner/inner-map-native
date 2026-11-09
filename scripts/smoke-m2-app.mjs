@@ -829,27 +829,76 @@ console.log('\n8. the axis rename');
 // and `fallback`. The idle summary can leave "something to try" empty, and an
 // empty field must leave nothing behind: no heading, no pause in the reveal, no
 // line in the share export.
-console.log('\n9. the End Session summary');
+console.log('\n9. the End Session summary (idle summary v2)');
 {
+  // utils/sessionSummary.ts decides what shows, for all three surfaces: the
+  // End Session screen, the Journey session detail and the share export.
+  const ss = await import(pathToFileURL(path.join(ROOT, 'utils', 'sessionSummary.ts')).href);
+  const v2 = {
+    kind: 'idle-v2',
+    whatWeTalkedAbout: 'You told what happened with your sister on Sunday.',
+    whatLanded: 'You said it was the first time you heard yourself say it.',
+    onYourMap: "You put 'going quiet first' on your map.",
+    yourWords: ['like a door closing', '  ', 'I go small'],
+    forNextTime: 'NEVER SHOWN: tired, mid-thought.',
+    // the old three the server sends beside the new ones
+    exploredText: 'OLD COPY: talked + landed', mapShowingText: 'OLD COPY: map', somethingToTryText: '',
+  };
+  const sec = ss.summarySections(v2);
+  ok('v2: whatWeTalkedAbout, then whatLanded, then onYourMap, then yourWords, in that order',
+    JSON.stringify(sec.map((s) => s.key)) === JSON.stringify(['talked', 'map', 'words'])
+      && sec[0].paragraphs[0] === v2.whatWeTalkedAbout && sec[0].paragraphs[1] === v2.whatLanded
+      && sec[1].paragraphs[0] === v2.onYourMap
+      && JSON.stringify(sec[2].paragraphs) === JSON.stringify(['like a door closing', 'I go small']) && sec[2].quoted === true,
+    JSON.stringify(sec));
+  ok('v2: the headings reused, listed for the founder: WHAT WE EXPLORED, WHAT THE MAP IS SHOWING, none on their words',
+    sec[0].label === 'WHAT WE EXPLORED' && sec[1].label === 'WHAT THE MAP IS SHOWING' && sec[2].label === null);
+  const flat = JSON.stringify(sec);
+  ok('v2: never forNextTime, and never the old fields beside the new ones',
+    !flat.includes('NEVER SHOWN') && !flat.includes('OLD COPY'));
+  const bare = ss.summarySections({ kind: 'idle-v2', whatWeTalkedAbout: 'Only this.', whatLanded: null, onYourMap: null, yourWords: [] });
+  ok('v2: whatLanded, onYourMap and yourWords only when present',
+    bare.length === 1 && bare[0].paragraphs.length === 1 && bare[0].paragraphs[0] === 'Only this.');
+  ok('v2: a fallback with nothing in it shows nothing (the screen shows the journal line)',
+    ss.summarySections({ kind: 'idle-v2', whatWeTalkedAbout: '', whatLanded: null, onYourMap: null, yourWords: [], exploredText: '', mapShowingText: '', somethingToTryText: '' }).length === 0);
+  const old = ss.summarySections({ kind: 'structured-v1', exploredText: 'We looked at X.', mapShowingText: 'The map shows Y.', somethingToTryText: 'Try Z.' });
+  ok('an older summary: explored, then map showing, and NO "something to try"',
+    old.length === 2 && old[0].label === 'WHAT WE EXPLORED' && old[1].label === 'WHAT THE MAP IS SHOWING'
+      && !JSON.stringify(old).includes('Try Z.'));
+  ok('a stored summary is read either way; prose is left to the REFLECTION fallback',
+    ss.parseStoredSummary(JSON.stringify(v2))?.kind === 'idle-v2'
+      && ss.parseStoredSummary('{"kind":"structured-v1","exploredText":"x"}')?.exploredText === 'x'
+      && ss.parseStoredSummary('Some prose.') === null && ss.parseStoredSummary('{not json') === null);
+  const resp = ss.summaryFromResponse(v2);
+  ok('the response keeps the new fields and never forNextTime or "something to try"',
+    resp.kind === 'idle-v2' && resp.whatLanded === v2.whatLanded && resp.yourWords.length === 2
+      && !('forNextTime' in resp) && !('somethingToTryText' in resp));
+
   const modal = codeOnly(read('components/session/SessionSummaryModal.tsx'));
-  ok('an empty section renders nothing — not even its heading',
-    /function Section\(\{ label, text \}: \{ label: string; text: string \}\) \{\s*if \(!text \|\| !text\.trim\(\)\) return null;/.test(modal));
-  ok('all three, "something to try" included, go through that section',
-    /<Section label="SOMETHING TO TRY" text=\{revealed\.somethingToTryText\} \/>/.test(modal)
-      && /<Section label="WHAT WE EXPLORED" text=\{revealed\.exploredText\} \/>/.test(modal));
-  ok('the word-by-word reveal skips an empty field instead of waiting on it',
-    /while \(fieldIdx < fields\.length && !\(summary!\[fields\[fieldIdx\]\] \|\| ''\)\.trim\(\)\)/.test(modal));
-  ok('one field with words is enough to show the summary; none shows the journal line',
-    /const hasContent = !!summary && \(\s*summary\.exploredText\.trim\(\) \|\| summary\.mapShowingText\.trim\(\) \|\| summary\.somethingToTryText\.trim\(\)/.test(modal)
+  ok('the screen shows exactly those sections, and an empty one renders nothing — not even its heading',
+    /const sections: SummarySection\[\] = summarySections\(summary\);/.test(modal)
+      && /const shown = paragraphs\.map\(\(p\) => p\.trim\(\)\)\.filter\(Boolean\);\s*if \(shown\.length === 0\) return null;/.test(modal)
+      && !/SOMETHING TO TRY|somethingToTryText|forNextTime/.test(modal));
+  ok('the word-by-word reveal runs over the shown paragraphs only, so it never waits on an empty field',
+    /const targets = summarySections\(summary\)\.flatMap\(\(s\) => s\.paragraphs\);/.test(modal));
+  ok('one paragraph with words is enough to show the summary; none shows the journal line',
+    /const hasContent = pieces\.length > 0;/.test(modal)
       && /\{\(failed \|\| \(summary && !hasContent\)\) \? \(/.test(modal));
+  const detail = codeOnly(read('components/session/SessionDetailModal.tsx'));
+  ok('Journey\'s session detail renders the same sections, and its share sends them',
+    /const structured = parseStoredSummary\(raw\);/.test(detail) && /const sections = summarySections\(structured\);/.test(detail)
+      && /summary: structured,/.test(detail) && !/SOMETHING TO TRY|somethingToTryText/.test(detail));
   const exp = codeOnly(read('utils/sessionExport.ts'));
-  ok('the share export drops an empty section', /function fmtSection\(label: string, text\?: string \| null\): string \{\s*const t = \(text \|\| ''\)\.trim\(\);\s*if \(!t\) return '';/.test(exp));
+  ok('the share export is built from the same sections, an empty one dropped',
+    /const shownSections = summarySections\(args\.summary\)/.test(exp)
+      && /function fmtSection\(label: string \| null, text\?: string \| null\): string \{\s*const t = \(text \|\| ''\)\.trim\(\);\s*if \(!t\) return '';/.test(exp)
+      && !/SOMETHING TO TRY|somethingToTryText/.test(exp));
   const a = api.indexOf('async getSessionSummary(');
   const body = a === -1 ? '' : api.slice(a, api.indexOf('\n  },', a));
-  ok('the response is read field by field, a missing one as empty, and fallback kept',
-    /somethingToTryText: String\(j\.somethingToTryText \|\| ''\),/.test(body) && /fallback: !!j\.fallback,/.test(body));
+  ok('the response is read through summaryFromResponse, and fallback kept',
+    /return \{ \.\.\.summaryFromResponse\(j\), fallback: !!j\.fallback \};/.test(body));
   ok('the server\'s fallback shows the journal line',
-    /if \(sum\.fallback\) setSummaryFailed\(true\);/.test(chat));
+    /const \{ fallback, \.\.\.shown \} = sum;\s*setSummary\(shown\);\s*if \(fallback\) setSummaryFailed\(true\);/.test(chat));
 }
 
 // ===========================================================================

@@ -1039,7 +1039,7 @@ export default function ChatScreen() {
 
   // ===== PENDING CHAT MESSAGE CONSUMER =====
   // Cross-tab handoff for "Establish your belief" in PartFolderModal:
-  // the button arms a prefilled chat message + target mode via
+  // the button arms a prefilled chat message (no mode, 1.4.0) via
   // utils/pendingChatMessage, then routes here. Round 9 fix —
   // previously we consumed inside the mount effect, but Expo Router
   // tabs stay mounted, so warm navigation (Map → Chat) never re-fired
@@ -2440,8 +2440,8 @@ export default function ChatScreen() {
             setDeepened([]);
             setSummaryVisible(true);
 
-            // Fire the structured-summary call. The server picks the
-            // PROCESS or EXPLORE summary prompt based on turnMode.
+            // Fire the summary call: the idle summary v2 (one prompt, whatever
+            // turnMode says; run once per conversation, server-side).
             // Persists the result onto the session row; we still call
             // saveSession so the messages array is stored.
             (async () => {
@@ -2449,12 +2449,11 @@ export default function ChatScreen() {
               api.getEnrichmentSummary(sessionIdForSave).then(setDeepened).catch(() => setDeepened([]));
               const sum = await api.getSessionSummary(transcriptForSave, sessionIdForSave, turnMode);
               if (sum) {
-                setSummary({
-                  exploredText: sum.exploredText,
-                  mapShowingText: sum.mapShowingText,
-                  somethingToTryText: sum.somethingToTryText,
-                });
-                if (sum.fallback) setSummaryFailed(true);
+                // The whole shape (idle-v2 or older); the screen decides what
+                // shows (utils/sessionSummary.ts summarySections).
+                const { fallback, ...shown } = sum;
+                setSummary(shown);
+                if (fallback) setSummaryFailed(true);
               } else {
                 setSummaryFailed(true);
               }

@@ -5,24 +5,24 @@
 // emailed to a therapist, or saved as plaintext without losing structure.
 
 import { Alert, Share } from 'react-native';
+import { summarySections, quotePhrase, type SessionSummaryShape } from './sessionSummary';
 
 export type ExportMessage = {
   role: 'user' | 'assistant';
   text: string;          // already marker-stripped
 };
 
-export type ExportSummary = {
-  exploredText?: string | null;
-  mapShowingText?: string | null;
-  somethingToTryText?: string | null;
-};
+// The summary as the screens show it (utils/sessionSummary.ts): the idle
+// summary v2's sections in their order, or an older summary's first two. No
+// "something to try", and never forNextTime.
+export type ExportSummary = SessionSummaryShape;
 
 const RULE = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
 
-function fmtSection(label: string, text?: string | null): string {
+function fmtSection(label: string | null, text?: string | null): string {
   const t = (text || '').trim();
   if (!t) return '';
-  return `${label}\n${t}`;
+  return label ? `${label}\n${t}` : t;
 }
 
 export function buildSessionExport(args: {
@@ -40,11 +40,10 @@ export function buildSessionExport(args: {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
-  const summarySections = [
-    fmtSection('WHAT WE EXPLORED', args.summary?.exploredText),
-    fmtSection('WHAT THE MAP IS SHOWING', args.summary?.mapShowingText),
-    fmtSection('SOMETHING TO TRY', args.summary?.somethingToTryText),
-  ].filter(Boolean).join('\n\n');
+  const shownSections = summarySections(args.summary)
+    .map((s) => fmtSection(s.label, s.paragraphs.map((p) => (s.quoted ? quotePhrase(p) : p)).join('\n\n')))
+    .filter(Boolean)
+    .join('\n\n');
 
   const wantsTranscript = args.includeTranscript !== false;
   const transcript = (wantsTranscript ? (args.messages || []) : [])
@@ -57,7 +56,7 @@ export function buildSessionExport(args: {
     dateStr,
     RULE,
   ];
-  if (summarySections) parts.push(summarySections, RULE);
+  if (shownSections) parts.push(shownSections, RULE);
   if (transcript) parts.push('CONVERSATION', '', transcript, RULE);
   parts.push('Shared from Inner Map');
   return parts.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();

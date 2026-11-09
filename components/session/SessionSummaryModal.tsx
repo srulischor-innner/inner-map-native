@@ -1,11 +1,14 @@
 // End-of-session summary screen.
 //
 // Slides up after the user confirms End Session, replacing the prior
-// "Your map has been updated." overlay. Shows the AI-generated 3-part
-// summary (WHAT WE EXPLORED / WHAT THE MAP IS SHOWING / SOMETHING TO TRY)
-// fetched from /api/session-summary while a breathing-triangle loader
-// fills in the wait. Only one button: "Begin New Session" — tapping it
-// fires the parent's onContinue which performs the actual reset.
+// "Your map has been updated." overlay. Shows the summary fetched from
+// /api/session-summary while a breathing-triangle loader fills in the wait:
+// since 2026-11-09 the idle summary v2 — what we talked about, what landed,
+// what went on the map, their own words — and for an older summary its
+// first two sections. No "something to try" in either (utils/
+// sessionSummary.ts says what shows, in what order, under which heading).
+// Only one button: "Begin New Session" — tapping it fires the parent's
+// onContinue which performs the actual reset.
 //
 // If the fetch returns null OR a soft fallback (empty fields), we show
 // a single warm fallback line and still let the user continue. The
@@ -25,6 +28,7 @@ import * as Haptics from 'expo-haptics';
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { buildSessionExport, shareSessionText, confirmSessionShare, ExportMessage } from '../../utils/sessionExport';
+import { summarySections, quotePhrase, type SessionSummaryShape, type SummarySection } from '../../utils/sessionSummary';
 
 // The line shown when the summary could not be made: the fetch failed, or it
 // came back empty — which includes a session that ended in a crisis hold.
@@ -35,11 +39,8 @@ import { buildSessionExport, shareSessionText, confirmSessionShare, ExportMessag
 // sentence, drop the map claim.
 const FALLBACK = 'This session has been saved to your journal.';
 
-export type SessionSummary = {
-  exploredText: string;
-  mapShowingText: string;
-  somethingToTryText: string;
-};
+/** Whatever /api/session-summary returned (utils/sessionSummary.ts). */
+export type SessionSummary = SessionSummaryShape;
 
 // One part that gained facets this session (consent-gated enrichment). Fed from
 // GET /api/sessions/:id/enrichment-summary.
@@ -81,48 +82,43 @@ export function SessionSummaryModal({ visible, summary, failed, messages, deepen
     weekday: 'long', month: 'long', day: 'numeric',
   });
 
-  // Word-by-word reveal of the three sections, same cadence as the chat
-  // tab (PER_WORD_MS = 45). The summary endpoint returns structured
-  // JSON in one shot, but the modal animates the text in across the
-  // three fields so the user sees the reflection 'land' rather than
-  // appearing all at once. Triangles + 'reflecting…' indicator stay
-  // visible until the FIRST word of the first section is revealed.
+  // Word-by-word reveal, same cadence as the chat tab (PER_WORD_MS = 45).
+  // The summary endpoint returns JSON in one shot, but the modal animates the
+  // text in, paragraph after paragraph in the order the sections show them,
+  // so the person sees the reflection 'land' rather than appearing all at
+  // once. Triangles + 'reflecting…' indicator stay visible until the FIRST
+  // word is revealed. Only non-empty paragraphs are in the list, so the
+  // reveal never waits on an empty one.
   const PER_WORD_MS = 45;
-  const [revealed, setRevealed] = useState<{
-    exploredText: string; mapShowingText: string; somethingToTryText: string;
-  }>({ exploredText: '', mapShowingText: '', somethingToTryText: '' });
-  // Reveal cursor: 0..2 (which field), and the char index inside that field.
+  const sections: SummarySection[] = summarySections(summary);
+  const pieces: string[] = sections.flatMap((s) => s.paragraphs);
+  const [revealed, setRevealed] = useState<string[]>([]);
   useEffect(() => {
     if (!summary) {
-      setRevealed({ exploredText: '', mapShowingText: '', somethingToTryText: '' });
+      setRevealed([]);
       return;
     }
+    const targets = summarySections(summary).flatMap((s) => s.paragraphs);
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const fields: Array<keyof typeof revealed> = ['exploredText', 'mapShowingText', 'somethingToTryText'];
-    let fieldIdx = 0;
+    let pieceIdx = 0;
     let charIdx = 0;
-    const next: typeof revealed = { exploredText: '', mapShowingText: '', somethingToTryText: '' };
+    const next: string[] = targets.map(() => '');
     function step() {
       if (cancelled) return;
-      // Skip empty fields entirely.
-      while (fieldIdx < fields.length && !(summary![fields[fieldIdx]] || '').trim()) {
-        fieldIdx++; charIdx = 0;
-      }
-      if (fieldIdx >= fields.length) {
-        setRevealed(next);
+      if (pieceIdx >= targets.length) {
+        setRevealed([...next]);
         return;
       }
-      const field = fields[fieldIdx];
-      const target = summary![field];
+      const target = targets[pieceIdx];
       // Advance one word: skip whitespace, run to next whitespace.
       let i = charIdx;
       while (i < target.length && /\s/.test(target[i])) i++;
       while (i < target.length && !/\s/.test(target[i])) i++;
       charIdx = i;
-      next[field] = target.slice(0, charIdx);
-      setRevealed({ ...next });
-      if (charIdx >= target.length) { fieldIdx++; charIdx = 0; }
+      next[pieceIdx] = target.slice(0, charIdx);
+      setRevealed([...next]);
+      if (charIdx >= target.length) { pieceIdx++; charIdx = 0; }
       timer = setTimeout(step, PER_WORD_MS);
     }
     timer = setTimeout(step, PER_WORD_MS);
@@ -130,18 +126,13 @@ export function SessionSummaryModal({ visible, summary, failed, messages, deepen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary]);
 
-  const hasContent = !!summary && (
-    summary.exploredText.trim() || summary.mapShowingText.trim() || summary.somethingToTryText.trim()
-  );
+  const hasContent = pieces.length > 0;
   // Show the breathing-triangle "reflecting…" loader UNTIL either:
   //   - the network call failed (failed prop), OR
   //   - the first word of the first non-empty section has been revealed.
   // This matches the spec's "modal opens immediately → triangle while
   // waiting → words begin appearing one by one".
-  const firstWordRevealed =
-    revealed.exploredText.length > 0 ||
-    revealed.mapShowingText.length > 0 ||
-    revealed.somethingToTryText.length > 0;
+  const firstWordRevealed = revealed.some((r) => r.length > 0);
   const isLoading = !failed && !firstWordRevealed;
 
   return (
@@ -164,11 +155,7 @@ export function SessionSummaryModal({ visible, summary, failed, messages, deepen
             const choice = await confirmSessionShare((messages || []).length > 0);
             if (choice === 'cancel') return;
             const text = buildSessionExport({
-              summary: summary ? {
-                exploredText: summary.exploredText,
-                mapShowingText: summary.mapShowingText,
-                somethingToTryText: summary.somethingToTryText,
-              } : null,
+              summary,
               messages: messages || [],
               includeTranscript: choice === 'everything',
             });
@@ -196,9 +183,14 @@ export function SessionSummaryModal({ visible, summary, failed, messages, deepen
 
           {summary && hasContent ? (
             <>
-              <Section label="WHAT WE EXPLORED" text={revealed.exploredText} />
-              <Section label="WHAT THE MAP IS SHOWING" text={revealed.mapShowingText} />
-              <Section label="SOMETHING TO TRY" text={revealed.somethingToTryText} />
+              {(() => {
+                // Each section takes its paragraphs' revealed text, in order.
+                let at = 0;
+                return sections.map((s) => {
+                  const shown = s.paragraphs.map(() => revealed[at++] || '');
+                  return <Section key={s.key} label={s.label} paragraphs={shown} quoted={s.quoted} />;
+                });
+              })()}
             </>
           ) : null}
 
@@ -235,12 +227,18 @@ export function SessionSummaryModal({ visible, summary, failed, messages, deepen
 // hairline divider underneath. Matches the existing Journey/Folder section
 // grammar so the screen feels native to the app, not bolted-on.
 // ============================================================================
-function Section({ label, text }: { label: string; text: string }) {
-  if (!text || !text.trim()) return null;
+function Section({ label, paragraphs, quoted }: { label: string | null; paragraphs: string[]; quoted?: boolean }) {
+  // Nothing revealed yet in this section: nothing at all, not even its heading.
+  const shown = paragraphs.map((p) => p.trim()).filter(Boolean);
+  if (shown.length === 0) return null;
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionLabel}>{label}</Text>
-      <Text style={styles.sectionText}>{text.trim()}</Text>
+      {label ? <Text style={styles.sectionLabel}>{label}</Text> : null}
+      {shown.map((p, i) => (
+        <Text key={i} style={[quoted ? styles.sectionQuote : styles.sectionText, i > 0 && styles.sectionNext]}>
+          {quoted ? quotePhrase(p) : p}
+        </Text>
+      ))}
       <View style={styles.divider} />
     </View>
   );
@@ -371,6 +369,16 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 15,
     lineHeight: 22,
+  },
+  // A second paragraph in one section (whatLanded under whatWeTalkedAbout),
+  // and each of their phrases after the first.
+  sectionNext: { marginTop: 10 },
+  // Their own words: italic, in quotation marks.
+  sectionQuote: {
+    color: colors.cream,
+    fontFamily: fonts.serifItalic,
+    fontSize: 16,
+    lineHeight: 23,
   },
   divider: {
     height: 0.5,
