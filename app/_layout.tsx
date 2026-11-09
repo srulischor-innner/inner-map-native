@@ -40,6 +40,7 @@ import {
 import { registerForPushNotifications } from '../services/push';
 import { configurePurchases, identifyUser } from '../services/purchases';
 import { peekUserId } from '../services/user';
+import { retryPendingJournalDeletes } from '../services/journalDeletes';
 import { NOTIFICATIONS_ENABLED } from '../constants/features';
 import {
   ensureDefaultPreference, authenticate as authenticateBiometric, isLockEnabled,
@@ -698,6 +699,14 @@ function RootLayout() {
             console.warn('[age-gate] reconcile threw:', (e as Error)?.message);
           }
         })();
+
+        // 4. JOURNAL DELETES THE SERVER NEVER CONFIRMED (founder, 2026-11-08).
+        //    A shared entry deleted offline stayed on the server, still read
+        //    by the AI and still in an export. Its id waits on a list until
+        //    the server answers OK or 404 (services/journalDeletes.ts). Same
+        //    shape as the two above: retry what this device actually asked
+        //    for, never block anything. Nothing awaits it.
+        void retryPendingJournalDeletes();
       } catch (e) {
         console.error('[boot] boot sequence threw — proceeding to main app anyway:', (e as Error)?.message, (e as Error)?.stack);
       }
