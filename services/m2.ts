@@ -259,11 +259,12 @@ const FIELD_WORDS: Record<string, string> = {
   'stands-on': 'what you stand on',
   'clenched-or-open': 'tight or open',
   // The wound's "underneath" (home-layer-for-code.md section 3): who the part
-  // is without what it carries, in their words. The founder's own phrase, not
-  // "who it is underneath": on a wound card that would sit beside "the belief
-  // underneath" and "the feeling underneath", which name the burden, the
-  // opposite layer. MICROCOPY — the founder may word it.
-  underneath: 'who it is without what it carries',
+  // is without what it carries, in their words. The founder's words (copy v2,
+  // 2026-11-09); it read "who it is without what it carries" before.
+  underneath: 'who it is underneath',
+  // A self_moment card (founder's copy v2, 2026-11-09): what the card is,
+  // shown as its category line (SELF_MOMENT_WORDS below).
+  self_moment: 'a moment of being yourself',
   // Self-like keys the server's rules still allow (lib/m2/rules.js) though
   // line 16 no longer lists them; labelled so no card can show the generic.
   'what-it-built': 'what you’ve built',
@@ -289,10 +290,10 @@ function ownerWords(part: string, label: string): string {
   return label || PART_WORDS[part] || 'a part of you';
 }
 
-// A self_moment's category line: the Self folder calls these "Moments of
-// Presence" (components/map/PartFolderModal.tsx SelfSections), so the card
-// says the same. MICROCOPY — the founder's to word.
-const SELF_MOMENT_WORDS = 'a moment of presence';
+// A self_moment's category line: the founder's words (copy v2, 2026-11-09),
+// the same as the Guide's Messages card. It read "a moment of presence",
+// after the Self folder's "Moments of Presence", before.
+const SELF_MOMENT_WORDS = FIELD_WORDS.self_moment;
 
 /** A short line saying what kind of thing this is, or null for none. */
 export function m2ItemCategory(it: M2CardItem): string | null {
@@ -360,6 +361,88 @@ export function m2RowKicker(payload: Record<string, unknown> | null | undefined)
   const date = m2RowDate(fromJournal ? (p.entryDate ?? p.sessionDate) : p.sessionDate);
   const head = fromJournal ? 'FROM A JOURNAL ENTRY' : 'FROM A CONVERSATION';
   return { fromJournal, kicker: date ? `${head} · ${date}` : head };
+}
+
+// ---------------------------------------------------------------------------
+// THE OLD INBOX KINDS, SHOWN AS M2 CARDS (founder's copy v2, 2026-11-09:
+// "Retire the old pending_parts 'FROM A JOURNAL ENTRY' kicker and raw
+// `{name} · {part}` lines and the enrichment card in favour of the M2 card
+// everywhere (already ruled).")
+//
+// The server stopped making pending_parts, enrichment and middle_ground rows
+// for M2 (its post-session passes and JOURNAL_INSIGHT are gone), but rows made
+// before it can still sit in someone's inbox until they expire. Each is read
+// here into the M2 card's item shape and drawn by the same M2InboxCard, so
+// Messages has one card. Nothing about the server side changes: the row keeps
+// its id and every item keeps its index, so the M2 card's ADD and "Not now"
+// go to the same /act and /decline with the same indices as before, and an
+// edit is the same single string those kinds always took (the name, the facet
+// value, the middle-ground label). An item that cannot be read stays in its
+// place as null, which the card leaves out, so no index shifts.
+//
+// What each old item becomes:
+//   pending_parts {part, name, context}  -> part  {part, value: name}
+//   enrichment {part, label, field, value} -> detail {part, label, field, value}
+//   middle_ground {label, note}          -> middle_ground {label, note}
+// The pending_parts context line has no place on the M2 card and is not
+// shown: it is the server's words, and the card's only source line says
+// "You said:".
+// ---------------------------------------------------------------------------
+export const LEGACY_CARD_KINDS = ['pending_parts', 'enrichment', 'middle_ground'] as const;
+type LegacyCardKind = (typeof LEGACY_CARD_KINDS)[number];
+
+export function isLegacyCardKind(kind: unknown): kind is LegacyCardKind {
+  return (LEGACY_CARD_KINDS as readonly unknown[]).includes(kind);
+}
+
+function legacyStatus(raw: unknown): Pick<M2CardItem, 'status' | 'declinedReason'> {
+  if (raw === 'accepted') return { status: 'accepted' };
+  // A no on an old card was always a tap ("Doesn't resonate"), so it reads
+  // "Left off your map." like a "Not now" on an M2 card.
+  if (raw === 'declined') return { status: 'declined', declinedReason: 'user' };
+  return { status: 'pending' };
+}
+
+/** One old inbox item as an M2 card item, or null when there is nothing to
+ *  show. PURE. */
+export function legacyItemAsM2(kind: LegacyCardKind, raw: unknown): M2CardItem | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const it = raw as Record<string, unknown>;
+  const st = legacyStatus(it.status);
+  if (kind === 'pending_parts') {
+    const value = str(it.editedName) || str(it.name);
+    if (!value) return null;
+    return { kind: 'part', payload: { part: str(it.part), value }, ...st };
+  }
+  if (kind === 'enrichment') {
+    const value = str(it.editedValue) || str(it.value);
+    if (!value) return null;
+    return { kind: 'detail', payload: { part: str(it.part), label: str(it.label), field: str(it.field), value }, ...st };
+  }
+  const label = str(it.editedLabel) || str(it.label);
+  if (!label) return null;
+  return { kind: 'middle_ground', payload: { label, note: str(it.note) }, ...st };
+}
+
+/** An old inbox row read as an m2_card row with the same id, or null when it
+ *  is not one of the old card kinds. PURE. */
+export function legacyRowAsM2(m: InboxMessage): InboxMessage | null {
+  if (!m || !isLegacyCardKind(m.kind)) return null;
+  const kind = m.kind;
+  const p = (m.payload || {}) as InboxMessage['payload'];
+  const items = (Array.isArray(p.items) ? p.items : []).map((raw) => legacyItemAsM2(kind, raw));
+  return {
+    ...m,
+    kind: M2_CARD_KIND,
+    payload: {
+      sessionId: p.sessionId,
+      sessionDate: p.sessionDate,
+      source: p.source,
+      entryId: p.entryId,
+      entryDate: p.entryDate,
+      items: items as unknown as NonNullable<InboxMessage['payload']['items']>,
+    },
+  };
 }
 
 /** A pending card the chat screen shows: one item of one inbox row. */
@@ -612,11 +695,11 @@ export function parseM2Done(m2Block: unknown): M2DoneInfo | null {
 // ---------------------------------------------------------------------------
 // THE AXIS RENAME (CHANGE-LIST-2026-11-08.md, ruling 5, Nov 8 21:02): the
 // blended axis is "Blended → You Leading", not "Self-Led": the one who leads
-// is "You", and Self is underneath. Only the label words change. The sentences
-// around them stay as they are until the founder's copy rewrite.
-// AXIS_RIGHT_LEGACY survives only as what youLeadingAxisCopy renames.
+// is "You", and Self is underneath. Since the founder's copy v2 (2026-11-09)
+// rewrote the panel's sentences as well, the panel is written in its own words
+// (SpectrumDetailModal.tsx BLENDED_YOU_LEADING) and the label-only rename that
+// stood here (youLeadingAxisCopy, AXIS_RIGHT_LEGACY) is gone.
 // ---------------------------------------------------------------------------
-export const AXIS_RIGHT_LEGACY = 'Self-Led';
 /** The blended axis's right pole, as the bars show it. */
 export const AXIS_RIGHT_M2 = 'You Leading';
 
@@ -625,23 +708,3 @@ export const AXIS_RIGHT_M2 = 'You Leading';
 // flowingKeywords; only what the person reads changes.
 /** The fragmented axis's right pole, as the bars and its panel show it. */
 export const AXIS_INTEGRATED = 'Integrated';
-
-type AxisCopy = {
-  title: string;
-  rightLabel: string;
-  rightIndicatorsHeading: string;
-  sections: { label: string; paragraphs: string[] }[];
-};
-
-/** The detail panel's copy for this axis on M2: its title, pole label,
- *  indicator heading and section headings renamed, every sentence untouched. */
-export function youLeadingAxisCopy<T extends AxisCopy>(legacy: T): T {
-  const rename = (s: string) => s.split(AXIS_RIGHT_LEGACY).join(AXIS_RIGHT_M2);
-  return {
-    ...legacy,
-    title: rename(legacy.title),
-    rightLabel: rename(legacy.rightLabel),
-    rightIndicatorsHeading: rename(legacy.rightIndicatorsHeading),
-    sections: legacy.sections.map((s) => ({ ...s, label: rename(s.label) })),
-  };
-}

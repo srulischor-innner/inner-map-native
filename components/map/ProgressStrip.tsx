@@ -74,7 +74,7 @@ export function ProgressStrip({
         onPress={() => { Haptics.selectionAsync().catch(() => {}); setExpanded((e) => !e); }}
         style={styles.header}
       >
-        <Text style={styles.headerText}>YOUR PROGRESS</Text>
+        <Text style={styles.headerText}>HOW THINGS ARE MOVING</Text>
         <Ionicons
           name={expanded ? 'chevron-down' : 'chevron-up'}
           size={14}
@@ -90,7 +90,7 @@ export function ProgressStrip({
               leftColor={colors.wound}
               rightColor={colors.self}
               value={isEarned('outsideIn') ? (outsideInScore ?? null) : null}
-              caption="How your protective parts orient to the world."
+              caption="Where what happens to you comes from."
             />
           </SpectrumRow>
           <SpectrumRow onInfo={() => openDetail('blendedSelfLed')}>
@@ -100,7 +100,7 @@ export function ProgressStrip({
               leftColor={colors.firefighters}
               rightColor={colors.self}
               value={isEarned('blendedSelfLed') ? (blendedSelfLedScore ?? null) : null}
-              caption="When parts activate, are you it — or with it?"
+              caption="When a part is loud, are you it, or with it?"
             />
           </SpectrumRow>
           <SpectrumRow onInfo={() => openDetail('fragmented')}>
@@ -110,7 +110,7 @@ export function ProgressStrip({
               leftColor={colors.firefighters}
               rightColor={colors.self}
               value={isEarned('fragmented') ? (fragmentedScore ?? null) : null}
-              caption="How your whole system is actually running."
+              caption="How the whole system is running."
             />
           </SpectrumRow>
         </View>

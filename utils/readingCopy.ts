@@ -76,30 +76,31 @@ export function readingWaitingLine(e: ReadingEligibility | null | undefined): st
   //    there is no reading to write without it — and no point naming any
   //    other gap first.
   if (!wound) {
-    return 'What it is waiting for is the belief at the centre — the thing your wound actually ' +
-      'says about you. Every other part on the map is answering it, so a reading has nowhere ' +
-      'to start until it is named.';
+    return "It's waiting for the belief at the centre, the thing the hurt says about you. " +
+      'Everything else on the map answers it, so a reading has nowhere to start until ' +
+      "it's there.";
   }
 
   // 2. Both sides absent. The wound alone is a statement, not a picture.
   if (!fixer && !skeptic) {
-    return 'Your wound is on the map. Neither side that answers it is yet — not the Fixer, which ' +
-      'works to prove the wound wrong, and not the Skeptic, which doubts that it can be. A ' +
-      'reading is mostly about how those two pull against each other, so it waits for them.';
+    return 'Your wound is on the map. Neither side that answers it is yet: not the part that ' +
+      'pushes to prove it wrong, and not the part that gives up on trying. A reading is mostly ' +
+      'about how those two pull against each other, so it waits for them.';
   }
 
   // 3 & 4. One side. This is the case the old copy failed: it told someone
   //        holding half the picture that "it needs both sides", which is true
   //        and useless. Name the side they have and the side they do not.
   if (!fixer) {
-    return 'Your wound and your Skeptic are on the map. The Fixer is not — the side that answers ' +
-      'the wound by trying to prove it wrong, through drive and achievement and performance. ' +
-      'A reading is mostly about how those two pull against each other, so it waits for that side.';
+    return "Your wound and the part that gives up are on the map. The part that pushes isn't " +
+      'yet, the side that answers the hurt by trying to prove it wrong. A reading is mostly ' +
+      'about how those two pull against each other, so it waits for that side.';
   }
   if (!skeptic) {
-    return 'Your wound and your Fixer are on the map. The Skeptic is not — the side that doubts, ' +
-      'and that keeps the Fixer from overreaching. A reading is mostly about how those two pull ' +
-      'against each other, so it waits for that side.';
+    return "Your wound and the part that pushes are on the map. The part that gives up isn't " +
+      "yet, the side that stopped believing the pushing would work and won't settle for a " +
+      'performance. A reading is mostly about how those two pull against each other, so it ' +
+      'waits for that side.';
   }
 
   // 5. The everyday layer. Split on nothing-vs-something because "they are

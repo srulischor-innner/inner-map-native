@@ -743,12 +743,12 @@ export default function MapScreen() {
           disclaimer nobody sees is not a disclaimer.
           Shown in BOTH views, above the circle-only header. */}
       <Text style={styles.readingProvenance} pointerEvents="none">
-        My reading from our conversations — not a measurement of you.
+        Built from what you've recognised in conversation. Not a measurement of you.
       </Text>
       {view === 'circle' ? (
         <View pointerEvents="none">
           <Text style={styles.circleTitle}>Integrated Map</Text>
-          <Text style={styles.circleHeader}>Tap any part to see its transformation</Text>
+          <Text style={styles.circleHeader}>Tap any part to see what it's made of.</Text>
         </View>
       ) : null}
 
@@ -942,7 +942,7 @@ export default function MapScreen() {
             pointerEvents="none"
           >
             <Text style={styles.secondLayerLabelText}>
-              A new layer has been added — swipe to explore
+              Something new is on your map. Swipe to see it.
             </Text>
           </Animated.View>
         ) : null}
@@ -1339,19 +1339,20 @@ function CircleIntroPanel({ visible, onClose }: { visible: boolean; onClose: () 
       <View style={[styles.introSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={styles.introHandle} />
         <View style={styles.introHeaderRow}>
-          <Text style={styles.introTitle}>Integration</Text>
+          <Text style={styles.introTitle}>Both sides, together</Text>
           <Pressable onPress={onClose} style={styles.introClose} accessibilityLabel="Close" hitSlop={10}>
             <Ionicons name="close" size={22} color={colors.creamFaint} />
           </Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.introBody} showsVerticalScrollIndicator={false}>
           <Text style={styles.introParagraph}>
-            This is what the same system looks like when the wound has healed.
-            Nothing is gone — everything has transformed. The parts that were
-            in conflict become one movement.
+            This is the same system with you leading it. Nothing is gone and
+            nothing got smaller. The two sides that pulled against each other
+            are both still here, at full strength, and together they make
+            something that was never there before.
           </Text>
           <Text style={styles.introParagraph}>
-            Tap any part to see what it becomes.
+            Tap any part to see what it's made of.
           </Text>
           <Pressable onPress={onClose} style={styles.introButton} accessibilityLabel="Explore">
             <Text style={styles.introButtonText}>Explore</Text>
@@ -1388,15 +1389,15 @@ function MapIntroPanel({ visible, onClose }: { visible: boolean; onClose: () => 
         </View>
         <ScrollView contentContainerStyle={styles.introBody} showsVerticalScrollIndicator={false}>
           <Text style={styles.introParagraph}>
-            This is where your inner world takes shape. As you have
-            conversations, parts of your system will appear here. Tap any
-            node to learn more. Your map gets more accurate the longer you
-            use it.
+            This is your inner system, drawn as one picture. The shapes are
+            the same for everyone; what's yours is what you put on it. As you
+            talk, the conversation offers things it hears for your map, and
+            your tap puts them here. Tap any part to see what's there.
           </Text>
           <Text style={styles.introParagraph}>
-            What you see here is my reading, drawn from patterns across our
-            conversations. It isn't a measurement, and it won't always be
-            right — tell me when something doesn't fit.
+            Everything here is in your words and came from you. It's a sketch
+            that gets sharper as you add to it, and if something stops
+            fitting, change it or take it off.
           </Text>
           <Pressable onPress={onClose} style={styles.introButton} accessibilityLabel="Got it">
             <Text style={styles.introButtonText}>Got it</Text>

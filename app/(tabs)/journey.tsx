@@ -209,7 +209,7 @@ export default function JourneyScreen() {
             leftColor={colors.wound}
             rightColor={colors.self}
             value={data?.spectrumEarned?.outsideIn ? (data?.outsideInScore ?? null) : null}
-            caption="How your protective parts orient to the world — a conceptual shift."
+            caption="Where what happens to you comes from."
           />
           <View style={{ height: spacing.md }} />
           <SpectrumBar
@@ -218,7 +218,7 @@ export default function JourneyScreen() {
             leftColor={colors.firefighters}
             rightColor={colors.self}
             value={data?.spectrumEarned?.blendedSelfLed ? (data?.blendedSelfLedScore ?? null) : null}
-            caption="When parts activate, are you it — or with it? A relational shift."
+            caption="When a part is loud, are you it, or with it?"
           />
           <View style={{ height: spacing.md }} />
           <SpectrumBar
@@ -227,7 +227,7 @@ export default function JourneyScreen() {
             leftColor={colors.firefighters}
             rightColor={colors.self}
             value={data?.spectrumEarned?.fragmented ? (data?.fragmentedScore ?? null) : null}
-            caption="How your whole system is actually running — an experiential shift."
+            caption="How the whole system is running."
           />
         </Section>
 

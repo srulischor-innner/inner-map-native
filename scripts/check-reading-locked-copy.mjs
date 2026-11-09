@@ -70,25 +70,30 @@ ok('every state gets its own sentence', dupFailures.length === 0);
 // ok('NEGATIVE CONTROL: identical copy across states would be caught',
 //   controlFailures.length === STATES.length - 1);
 
-// 2. NAMES WHAT IS THERE AND WHAT IS NOT, by the words printed on the map.
+// 2. NAMES WHAT IS THERE AND WHAT IS NOT. Since the founder's copy v2
+//    (2026-11-09) in plain words, not the node labels: the Fixer is "the part
+//    that pushes", the Skeptic "the part that gives up". Which side is THERE
+//    and which is NOT is still asserted per state.
 const byName = Object.fromEntries(lines.map((l) => [l.name, l.line]));
+const PUSHES = 'the part that pushes';
+const GIVES_UP = 'the part that gives up';
 ok('one-pole copy names the side they HAVE (skeptic only)',
-  /Skeptic/.test(byName['skeptic only']), byName['skeptic only']);
-ok('one-pole copy names the side they LACK (skeptic only → Fixer)',
-  /Fixer is not/.test(byName['skeptic only']), byName['skeptic only']);
+  byName['skeptic only'].includes(`${GIVES_UP} are on the map`), byName['skeptic only']);
+ok('one-pole copy names the side they LACK (skeptic only → the part that pushes)',
+  /The part that pushes isn't yet/.test(byName['skeptic only']), byName['skeptic only']);
 ok('one-pole copy names the side they HAVE (fixer only)',
-  /Fixer/.test(byName['fixer only']), byName['fixer only']);
-ok('one-pole copy names the side they LACK (fixer only → Skeptic)',
-  /Skeptic is not/.test(byName['fixer only']), byName['fixer only']);
+  byName['fixer only'].includes(`${PUSHES} are on the map`), byName['fixer only']);
+ok('one-pole copy names the side they LACK (fixer only → the part that gives up)',
+  /The part that gives up isn't yet/.test(byName['fixer only']), byName['fixer only']);
 ok('no-poles copy names BOTH missing sides',
-  /Fixer/.test(byName['wound only, no poles']) && /Skeptic/.test(byName['wound only, no poles']));
+  byName['wound only, no poles'].includes('not the part that pushes') && byName['wound only, no poles'].includes('not the part that gives up'));
 ok('protector copy names the everyday parts',
   /Managers/.test(byName['both poles, 0 protectors']) && /Firefighters/.test(byName['both poles, 0 protectors']));
 ok('having SOME protectors is not described as having none',
   !/What is not there is the day-to-day/.test(byName['both poles, 2 protectors']),
   'a person looking at two protectors would be told they have none');
 ok('no-wound copy leads with the belief, not with the poles',
-  /belief at the centre/.test(byName['no wound belief']) && !/Fixer/.test(byName['no wound belief']));
+  /belief at the centre/.test(byName['no wound belief']) && !/Fixer|part that pushes|part that gives up/.test(byName['no wound belief']));
 
 // 3. NO COUNTS, NO DISTANCE. Mechanically enforced, because this is the rule
 //    that erodes first when someone tries to be helpful.

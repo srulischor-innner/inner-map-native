@@ -73,8 +73,8 @@ type Meta = { title: string; color: string; subtitle?: string; description: stri
 // The YOU folder's opening paragraph, split out so M2 can replace it alone.
 // Runtime-identical to the single string it was: biography, blank line, rest.
 const YOU_REST =
-  "You don't choose which part speaks up — the system does that. What you choose is your relationship to what arrives. That's what changes: instead of being run by whichever part is loudest, you stand on ground of your own — what you believe, separate from what your parts believe — and lead from there.\n\n" +
-  "You and Self are not the same thing. You is the one who receives and chooses; Self is what there is to receive from — always there underneath, and reachable once you can let a part go.";
+  "You don't choose which part speaks up; the system does that. What you choose is where you stand when it does. That's what changes: instead of being run by whichever part is loudest, you stand on ground of your own, what you believe, separate from what your parts believe, and lead from there.\n\n" +
+  "You and Self are not the same thing. You is the one who receives and chooses; Self is what there is to receive from, always there underneath. It can be touched at any moment, and the more you stand there, the more of it gets lived.";
 
 // The biography (ruling 2026-11-05, "invented memory"). The old stack's told
 // every person they built a career and relationships, which the app has no way
@@ -84,14 +84,14 @@ const YOU_REST =
 // paragraph changed: the two after it are framework-noun findings the ruling
 // did not cover.
 const YOU_BIOGRAPHY =
-  'You are the one all of this arrives at — the everyday you that takes it all in, finds ways to feel okay, and built the life you have.';
+  'You are the one all of this arrives at: the everyday you that takes it all in, finds ways to feel okay, and built the life you have.';
 
 const META: Record<NodeKey, Meta> = {
   wound: {
     title: 'The Wound',
     color: '#E05050',
     description:
-      'The core belief formed in childhood that shapes everything since. It is experienced as fact, not perspective.',
+      "The belief the hurt formed, early, that the rest of the map is arranged around. It's experienced as fact, not as a belief.",
   },
   fixer: {
     title: 'The Fixer',
@@ -103,7 +103,7 @@ const META: Record<NodeKey, Meta> = {
     title: 'The Skeptic',
     color: '#86BDDC',
     description:
-      'The part that protects against the fixer overreaching. Its logic deserves genuine respect.',
+      "The part that stopped believing the pushing would work. On the surface it protects you from the crash; underneath, it won't settle for a version of you that isn't real. Its logic deserves respect.",
   },
   self: {
     title: 'Self',
@@ -227,7 +227,7 @@ const SELF_LIKE_DEEPER: DeeperField[] = [
   // The Lean — which pole self-like tilts toward when managing the
   // tension between fixer and skeptic. Surfaces in the AI's narration
   // ("leans toward fixer — defaults to doing more under stress" etc).
-  { label: 'The Lean',       key: 'lean',      placeholder: 'Which pole self-like tilts toward under stress...' },
+  { label: 'The Lean',       key: 'lean',      placeholder: "Which side you tilt toward under stress, when you've seen it." },
 ];
 
 const MANAGER_FIREFIGHTER_DEEPER: DeeperField[] = [
@@ -266,14 +266,15 @@ type BodyRecord = Record<string, BodyField>;
 
 const WOUND_BODY = {
   belief:  { label: 'The Belief' },
+  // Who the part is without what it carries (home-layer-for-code.md section
+  // 3), in their words: the server keeps it on the wound row as
+  // markerFields.underneath, written when its card is tapped. Founder's copy
+  // v2 (2026-11-09): its own row right after The Belief, always shown, with
+  // a placeholder until it is filled.
+  underneath: { label: 'Underneath', key: 'underneath' },
   feeling: { label: 'The Feeling Layer', key: 'feeling' },
   body:    { label: 'Where It Lives',    key: 'body' },
   history: { label: 'When It Started',   key: 'history' },
-  // Only once they've said it (home-layer-for-code.md section
-  // 3): who the part is without what it carries. No placeholder, so the row
-  // is hidden while empty; empty-state wording is the founder's to write.
-  // Same words as the card's field (services/m2.ts).
-  underneath: { label: 'Who It Is Without What It Carries', key: 'underneath' },
 } as const;
 
 const FIXER_BODY = {
@@ -394,14 +395,14 @@ export function PartFolderModal({
               partsRows={allParts.filter((p) => p?.category === 'manager')}
               fallbackItems={mapData?.detectedManagers || []}
               color={meta.color}
-              emptyLine="The protective strategies that feel like personality traits will be mapped here as they emerge in conversation."
+              emptyLine="Managers go here when you've recognised one in conversation and added it."
             /> : null}
           {partKey === 'firefighter' ? <ProtectorList
               category="firefighter"
               partsRows={allParts.filter((p) => p?.category === 'firefighter')}
               fallbackItems={mapData?.detectedFirefighters || []}
               color={meta.color}
-              emptyLine="The reactive parts that show up when pain breaks through will be mapped here. These are never things to stop — they're trying to help."
+              emptyLine="Firefighters go here when you've recognised one and added it. They're never things to stop; they're trying to help."
             /> : null}
         </ScrollView>
       </View>
@@ -417,8 +418,8 @@ export function PartFolderModal({
 // the bottom of every section.
 // ============================================================================
 function Section({
-  label, value, placeholder,
-}: { label: string; value?: string | null; placeholder: string }) {
+  label, value, placeholder, line,
+}: { label: string; value?: string | null; placeholder: string; line?: string }) {
   // A field off the wire is not always a string (an object or a number in an
   // odd payload); `.trim()` on one would throw and take the folder with it.
   const text = typeof value === 'string' ? value : value == null ? '' : String(value);
@@ -427,6 +428,8 @@ function Section({
   return (
     <View>
       <Text style={styles.sectionLabel}>{label.toUpperCase()}</Text>
+      {/* An always-shown line saying what the row is for, filled or not. */}
+      {line ? <Text style={styles.middleSubtitle}>{line}</Text> : null}
       <Text style={has ? styles.sectionValue : styles.sectionPlaceholder}>
         {has ? value : placeholder}
       </Text>
@@ -443,8 +446,8 @@ function Section({
 //
 //   1. EMPTY  → "Establish your belief" button. Arms a pre-filled
 //      chat message via utils/pendingChatMessage, then routes to the
-//      chat tab where the index screen consumes the prefill on mount
-//      and sends it in Explore mode.
+//      chat tab where the index screen consumes the prefill on focus
+//      and sends it as an ordinary message (no mode).
 //
 //   2. FILLED → belief text + Edit + Clear actions. Clear shows a
 //      confirmation Alert (the user just spent real effort articulating
@@ -477,13 +480,14 @@ function BeliefSection({ part, color, onClose }: { part: any; color: string; onC
 
   const handleEstablish = useCallback(() => {
     Haptics.selectionAsync().catch(() => {});
+    // Founder's copy v2 (2026-11-09): exactly these words, and NO MODE. The
+    // message goes to the ordinary conversation as if typed: the chat tab's
+    // consumer (app/(tabs)/index.tsx, PENDING CHAT MESSAGE CONSUMER) sends it
+    // through handleSend like any other message, with nothing beside it but
+    // the wire chatMode every turn carries. (It once armed 'explore', then
+    // Leading it; the handoff has carried no mode since 1.4.0.)
     const text =
-      "I want to work on my own belief — what I stand on that's separate from my parts.";
-    // LEADING IT, not Explore (founder ruling 2026-09-03). Tapping this button
-    // is someone asking, as explicitly as the app allows, to arrive at ground of
-    // their own — which is Leading it's work. It armed 'explore' for months,
-    // sending the clearest possible request for belief-building to the mode that
-    // only reads an existing belief.
+      "I want to find something of my own to stand on, separate from what my parts believe.";
     armPendingChatMessage(text);
     // Close the folder BEFORE navigating — otherwise the sheet stays
     // open behind the chat handoff and the map is in a confusing state
@@ -564,7 +568,8 @@ function BeliefSection({ part, color, onClose }: { part: any; color: string; onC
     <View style={styles.beliefWrap}>
       <Text style={styles.beliefLabel}>YOUR BELIEF</Text>
       <Text style={styles.beliefSubtitle}>
-        What you stand on — separate from what your parts believe.
+        What you stand on, separate from what your parts believe. It comes
+        out of conversation, from the moments the old voice was quiet.
       </Text>
 
       {editing ? (
@@ -730,7 +735,9 @@ function MiddleGroundSection({ part }: { part: any; color: string }) {
     <View style={styles.middleWrap}>
       <Text style={styles.middleLabel}>WHERE YOU LIVE</Text>
       <Text style={styles.middleSubtitle}>
-        What you keep coming back to — the ground that steadies you.
+        The truce you've made between the two sides: what you're good at,
+        what you're known for, what keeps things quiet. It's where most of
+        life happens.
       </Text>
 
       {items.length === 0 ? (
@@ -891,8 +898,6 @@ function GoDeeperSection({ part, fields }: { part: any; fields: DeeperField[] })
 // GoDeeperSection.
 // ============================================================================
 function WoundSections({ mapData, part }: { mapData: any; part: any }) {
-  // Hidden until filled; every other row keeps its placeholder.
-  const underneath = readField(part, WOUND_BODY.underneath.key);
   return (
     <View style={styles.sections}>
       <DetectedPill part={part} color="#E05050" />
@@ -900,6 +905,11 @@ function WoundSections({ mapData, part }: { mapData: any; part: any }) {
         label={WOUND_BODY.belief.label}
         value={mapData?.wound || part?.corePhrase}
         placeholder="The core belief is still taking shape..."
+      />
+      <Section
+        label={WOUND_BODY.underneath.label}
+        value={readField(part, WOUND_BODY.underneath.key)}
+        placeholder="Who this part is without what it carries, when you've found it."
       />
       <Section
         label={WOUND_BODY.feeling.label}
@@ -916,9 +926,6 @@ function WoundSections({ mapData, part }: { mapData: any; part: any }) {
         value={readField(part, WOUND_BODY.history.key) || mapData?.objectiveStory}
         placeholder="Still emerging..."
       />
-      {underneath ? (
-        <Section label={WOUND_BODY.underneath.label} value={underneath} placeholder="" />
-      ) : null}
       <SelfVoiceButton part={part} />
       <PartRecencyRows firstDetected={part?.firstDetected} lastVisitedAt={part?.lastVisitedAt} lastSource={part?.lastSource} />
       <GoDeeperSection part={part} fields={WOUND_DEEPER_SHOWN} />
@@ -1009,12 +1016,16 @@ function SelfSections({
   return (
     <View style={styles.sections}>
       <Text style={styles.selfFramer}>
-        Self is always complete — never wounded. These are the moments it
-        has become visible in your conversations.
+        Self is always whole, never wounded. These are moments it showed
+        itself in your conversations, in your words.
       </Text>
 
+      {/* The Self folder's place for Self moments. Its line (founder's copy
+          v2, the WHERE YOU LIVE note) sits under the label like WHERE YOU
+          LIVE's own line, always shown. */}
       <Section
         label="Moments of Presence"
+        line="Moments that rose above the everyday: a concert, being there for someone, a time you forgot yourself."
         value={part?.historicalEntries?.length ? `${part.historicalEntries.length} noticed so far` : undefined}
         placeholder="Moments of genuine presence will be noted here..."
       />
@@ -1054,7 +1065,7 @@ function SelfLikeSections({ part, mapData }: { part: any; mapData: any }) {
       <Section
         label={SELF_LIKE_BODY.manages.label}
         value={readField(part, SELF_LIKE_BODY.manages.key)}
-        placeholder="How this part navigates between your fixer and skeptic to keep things workable."
+        placeholder="How you keep things workable between the two sides, when you've seen it."
       />
       <Section
         label={SELF_LIKE_BODY.wants.label}

@@ -339,12 +339,15 @@ console.log('\n3b. what a card says, and what an edit sends');
   ok('a belief card\'s belief is what they stand on, a wound\'s is the belief underneath',
     m2.m2FieldWords('belief', 'belief') === m2.m2FieldWords('stands-on')
       && m2.m2FieldWords('belief', 'part') !== m2.m2FieldWords('belief', 'belief'));
-  // Who the part is without what it carries — not another "… underneath",
-  // which on a wound card already names the burden (the belief, the feeling).
+  // Who the part is without what it carries. The founder's words (copy v2,
+  // 2026-11-09): "who it is underneath", still distinct from the belief and
+  // the feeling underneath on the same card.
   const under = m2.m2FieldWords('underneath');
-  ok('the wound\'s underneath reads as who the part is without what it carries',
-    under === 'who it is without what it carries'
+  ok('the wound\'s underneath reads "who it is underneath", distinct on its card',
+    under === 'who it is underneath'
       && !['belief', 'feeling'].some((k) => m2.m2FieldWords(k) === under), under);
+  ok('a self_moment has its own words too: "a moment of being yourself"',
+    m2.m2FieldWords('self_moment') === 'a moment of being yourself');
   ok('a pass proposal of it says the same words, never the raw key',
     m2.m2ItemCategory({ kind: 'part', payload: { part: 'wound', field: 'underneath', value: 'x' } }) === under
       && m2.m2ItemCategory({ kind: 'detail', payload: { part: 'wound', field: 'underneath', label: 'the lonely one', value: 'x' } })
@@ -408,6 +411,43 @@ const msgs = codeOnly(read('app/messages.tsx'));
 ok('an m2_card row renders through the shared M2 card',
   /m\.kind === M2_CARD_KIND \? \(\s*<M2InboxCard key=\{m\.id\} message=\{m\} onEditFocus=\{ensureEditVisible\} \/>/.test(msgs));
 ok('the legacy cards carry nothing M2', !/M2_VARIANT|showItem/.test(msgs));
+// THE OLD KINDS AS M2 CARDS (founder's copy v2, 2026-11-09): pending_parts,
+// enrichment and middle_ground rows are drawn by the same M2 card, same id,
+// same item indices; the old kicker, the raw "{name} · {part}" lines and the
+// enrichment card are gone.
+ok('an old pending_parts / enrichment / middle_ground row renders through the same M2 card',
+  /isLegacyCardKind\(m\.kind\) \? \(\s*<M2InboxCard key=\{m\.id\} message=\{legacyRowAsM2\(m\) \?\? m\} onEditFocus=\{ensureEditVisible\} \/>/.test(msgs)
+    && !/PendingPartsCard|EnrichmentCard|FROM A PAST SESSION|YOUR PARTS, IN MORE DETAIL|ENRICH_FACET_LABEL/.test(msgs));
+{
+  const legacy = {
+    id: 'old1', kind: 'pending_parts', readAt: null, actedAt: null, expiresAt: null, createdAt: '',
+    payload: { source: 'journal', entryDate: '2026-11-03', items: [
+      { part: 'manager', name: 'the planner', context: 'server words', status: 'pending' },
+      { part: 'fixer', name: '', status: 'pending' },
+      { part: 'skeptic', name: 'the brake', editedName: 'my brake', status: 'declined' },
+    ] },
+  };
+  const r = m2.legacyRowAsM2(legacy);
+  const its = r ? r.payload.items : [];
+  ok('...keeping the id and every index: an unreadable item stays in its place as null',
+    r && r.id === 'old1' && r.kind === 'm2_card' && its.length === 3 && its[1] === null
+      && m2.isM2Item(its[0]) && m2.m2ItemTitle(its[0]) === 'the planner' && m2.m2ItemCategory(its[0]) === 'one way you cope'
+      && m2.m2ItemTitle(its[2]) === 'my brake' && m2.m2ItemShownStatus(its[2]) === 'declined'
+      && !m2.m2ItemSource(its[0]),
+    JSON.stringify(its));
+  ok('...with the M2 kicker: FROM A JOURNAL ENTRY · Nov 3, not the raw date',
+    m2.m2RowKicker(r.payload).kicker === 'FROM A JOURNAL ENTRY · Nov 3');
+  const enr = m2.legacyRowAsM2({ ...legacy, kind: 'enrichment', payload: { sessionDate: '2026-11-05', items: [{ part: 'fixer', label: 'the driver', field: 'trigger', value: 'deadlines' }] } });
+  ok('...an enrichment facet is a detail card: their part, the field in words, an edit as one string',
+    m2.m2ItemCategory(enr.payload.items[0]) === 'the driver · what sets it off' && m2.m2ItemTitle(enr.payload.items[0]) === 'deadlines'
+      && m2.m2BuildEdit(enr.payload.items[0], { title: 'tight deadlines', fields: {} }) === 'tight deadlines');
+  const mg = m2.legacyRowAsM2({ ...legacy, kind: 'middle_ground', payload: { items: [{ label: 'the garden', note: 'it is quiet there' }] } });
+  ok('...a middle-ground item keeps its words and its note',
+    m2.m2ItemTitle(mg.payload.items[0]) === 'the garden' && m2.m2ItemNote(mg.payload.items[0]) === 'it is quiet there');
+  ok('...and anything else is not one of them', m2.legacyRowAsM2({ ...legacy, kind: 'system_note' }) === null);
+}
+ok('the empty state is the founder\'s',
+  read('app/messages.tsx').replace(/\s+/g, ' ').includes("After a conversation goes quiet, anything it recognised for your map comes here, along with any card you didn't tap."));
 const cardSrc = read('components/m2/M2Cards.tsx');
 const card = codeOnly(cardSrc);
 ok('both surfaces accept and decline through the store, so a tap updates the count wherever it happens',
@@ -656,20 +696,26 @@ console.log('\n7. invented memory');
     /description: YOU_BIOGRAPHY \+ '\\n\\n' \+ YOU_REST,/.test(code) && /\{meta\.description\}/.test(code)
       && !/YOU_BIOGRAPHY_M2|descriptionFor/.test(code));
 
-  // The Wound folder's `underneath` row (home-layer-for-code.md section 3):
-  // the person's words, and no row at all while it's empty.
+  // The Wound folder's `underneath` row (home-layer-for-code.md section 3;
+  // founder's copy v2, 2026-11-09): label "Underneath", right after The
+  // Belief, always shown, with the founder's placeholder until their words
+  // are there. It reads the server's markerFields.underneath.
   const bodySrc = (code.match(/const WOUND_BODY = (\{[\s\S]*?\}) as const;/) || [])[1];
   const body = bodySrc ? new Function(`return (${bodySrc});`)() : null;
-  ok('the Wound folder declares the underneath row with the card\'s own words',
-    body && body.underneath && body.underneath.key === 'underneath'
-      && body.underneath.label.toLowerCase() === m2.m2FieldWords('underneath'),
+  ok('the Wound folder declares the underneath row: label "Underneath", the server\'s field',
+    body && body.underneath && body.underneath.key === 'underneath' && body.underneath.label === 'Underneath',
     body && body.underneath ? body.underneath.label : 'not declared');
   const wound = code.slice(code.indexOf('function WoundSections'), code.indexOf('<GoDeeperSection', code.indexOf('function WoundSections')));
   ok('it reads the field for everyone',
-    /const underneath = readField\(part, WOUND_BODY\.underneath\.key\);/.test(wound)
+    /value=\{readField\(part, WOUND_BODY\.underneath\.key\)\}/.test(wound)
       && /<WoundSections\s+mapData=\{mapData\} part=\{part\} \/>/.test(code));
-  ok('the row renders only when the field has their words, with no placeholder of its own',
-    /\{underneath \? \(\s*<Section label=\{WOUND_BODY\.underneath\.label\} value=\{underneath\} placeholder="" \/>\s*\) : null\}/.test(wound));
+  const iBelief = wound.indexOf('label={WOUND_BODY.belief.label}');
+  const iUnder = wound.indexOf('label={WOUND_BODY.underneath.label}');
+  const iFeeling = wound.indexOf('label={WOUND_BODY.feeling.label}');
+  ok('the row comes right after The Belief, always, with the founder\'s placeholder',
+    iBelief >= 0 && iUnder > iBelief && iFeeling > iUnder
+      && /label=\{WOUND_BODY\.underneath\.label\}\s*value=\{readField\(part, WOUND_BODY\.underneath\.key\)\}\s*placeholder="Who this part is without what it carries, when you've found it\."/.test(wound)
+      && !/\{underneath \?/.test(wound));
   ok('the four rows that were there keep their placeholders, unchanged',
     ['The core belief is still taking shape...', 'The feeling beneath the story...', 'Where this lives in the body...', 'Still emerging...']
       .every((p) => wound.includes(`placeholder="${p}"`)));
@@ -701,28 +747,37 @@ console.log('\n8. the axis rename');
     const m = code.match(new RegExp(`const ${name}: SpectrumCopy = (\\{[\\s\\S]*?\\n\\});`));
     return m ? new Function(`return (${m[1]});`)() : null;
   };
-  const legacy = lift('BLENDED_SELF_LED');
-  const now = legacy ? m2.youLeadingAxisCopy(legacy) : null;
-  ok('the source copy the rename reads from is the old "Blended → Self-Led" panel',
-    legacy && legacy.title === 'Blended → Self-Led' && legacy.rightLabel === 'Self-Led');
+  // Since the founder's copy v2 (2026-11-09) the blended panel is written in
+  // its own words (BLENDED_YOU_LEADING) rather than renamed at run time from
+  // a "Self-Led" source; youLeadingAxisCopy and AXIS_RIGHT_LEGACY are gone.
+  const blended = lift('BLENDED_YOU_LEADING');
+  ok('the label-only rename is gone: no BLENDED_SELF_LED source, no youLeadingAxisCopy',
+    !/const BLENDED_SELF_LED\b/.test(code) && !/youLeadingAxisCopy/.test(code)
+      && typeof m2.youLeadingAxisCopy === 'undefined' && typeof m2.AXIS_RIGHT_LEGACY === 'undefined');
   ok('the panel\'s title, pole and indicator heading say "You Leading"',
-    now && now.title === 'Blended → You Leading' && now.rightLabel === 'You Leading'
-      && now.rightIndicatorsHeading === 'You Leading indicators' && now.leftLabel === 'Blended',
-    now ? `${now.title} | ${now.rightLabel} | ${now.rightIndicatorsHeading}` : 'not lifted');
-  ok('no heading on the panel still says "Self-Led"',
-    now && ![now.title, now.rightLabel, now.rightIndicatorsHeading, ...now.sections.map((s) => s.label)]
-      .some((l) => /self-led/i.test(l)),
-    now ? now.sections.map((s) => s.label).join(' | ') : '');
-  ok('every sentence on the panel is unchanged: paragraphs, examples, how it moves',
-    now && JSON.stringify(now.sections.map((s) => s.paragraphs)) === JSON.stringify(legacy.sections.map((s) => s.paragraphs))
-      && now.howItMoves === legacy.howItMoves
-      && JSON.stringify(now.leftPlaceholders) === JSON.stringify(legacy.leftPlaceholders)
-      && JSON.stringify(now.rightPlaceholders) === JSON.stringify(legacy.rightPlaceholders)
-      && now.leftIndicatorsHeading === legacy.leftIndicatorsHeading
-      && now.leftKeysField === legacy.leftKeysField && now.rightKeysField === legacy.rightKeysField);
-  ok('the panel always takes the renamed copy, and the other two axes not at all',
-    /spectrum === 'blendedSelfLed' \? BLENDED_YOU_LEADING :/.test(code)
-      && /const BLENDED_YOU_LEADING: SpectrumCopy = youLeadingAxisCopy\(BLENDED_SELF_LED\);/.test(code));
+    blended && blended.title === 'Blended → You Leading' && blended.rightLabel === 'You Leading'
+      && blended.rightIndicatorsHeading === 'You Leading indicators' && blended.leftLabel === 'Blended',
+    blended ? `${blended.title} | ${blended.rightLabel} | ${blended.rightIndicatorsHeading}` : 'not lifted');
+  ok('no heading on the panel says "Self-Led"; its side is "Toward the You Leading side"',
+    blended && ![blended.title, blended.rightLabel, blended.rightIndicatorsHeading, ...blended.sections.map((s) => s.label)]
+      .some((l) => /self-led/i.test(l))
+      && blended.sections.some((s) => s.label === 'Toward the You Leading side'),
+    blended ? blended.sections.map((s) => s.label).join(' | ') : '');
+  ok('the payload keys are unchanged (blendedKeywords / selfLedKeywords)',
+    blended && blended.leftKeysField === 'blendedKeywords' && blended.rightKeysField === 'selfLedKeywords');
+  {
+    // The founder's sentences, word for word (empty-map-copy-v2.md).
+    const para = (label) => (blended?.sections.find((s) => s.label === label) || { paragraphs: [] }).paragraphs;
+    ok('the founder\'s blended-side, you-leading-side and three-levels sentences, and how it moves',
+      blended
+        && para('Toward the Blended side')[0] === "When a part is loud, it takes you over. There's no space between you and it; for as long as it's running, it feels like you. This isn't a failure. It's how a system runs before anyone has looked at it."
+        && para('Toward the You Leading side')[0] === "When a part is loud, there's a you that can notice it and stay. You can say \"a part of me is feeling this\" rather than \"I am this.\" Not distance; closer to company. The part is still there, at full strength. You're just not lost in it, and you choose where you stand."
+        && para('Three levels of unblending')[4] === "All three are real. They don't arrive together, and nobody has to reach all three for this to count. Don't try to make it happen; chasing it becomes another performance. It arrives when a part has been received."
+        && blended.howItMoves === "This moves through repeated experience, usually with smaller parts before bigger ones. Reading about it helps a little; living it is the teacher. It isn't measured by how fluently you talk about parts, but by whether you can stand somewhere while one is loud.",
+      blended ? JSON.stringify(blended.sections.map((s) => s.paragraphs[0])).slice(0, 300) : 'not lifted');
+  }
+  ok('the panel always takes the blended copy for the blended spectrum',
+    /spectrum === 'blendedSelfLed' \? BLENDED_YOU_LEADING :/.test(code));
   const others = lift('OUTSIDE_IN');
   const frag = lift('FRAGMENTED');
   ok('Outside-In → Inside-Out keeps its name; the third axis is Fragmented → Integrated',
@@ -732,31 +787,38 @@ console.log('\n8. the axis rename');
       && m2.AXIS_INTEGRATED === 'Integrated',
     frag ? `${frag.title} | ${frag.rightLabel} | ${frag.rightIndicatorsHeading}` : 'not lifted');
   ok('where the blended panel names the third axis, it says Integrated',
-    legacy && JSON.stringify(legacy).includes('Fragmented → Integrated') && !JSON.stringify(legacy).includes('Fragmented → Flowing'));
+    blended && JSON.stringify(blended).includes('Fragmented → Integrated') && !JSON.stringify(blended).includes('Fragmented → Flowing'));
+  ok('the fragmented panel carries the founder\'s indicators',
+    frag && JSON.stringify(frag.leftPlaceholders) === JSON.stringify(['a part running the whole conversation', 'parts in conflict', 'nothing from you between them'])
+      && JSON.stringify(frag.rightPlaceholders) === JSON.stringify(['both sides named in one breath', 'curiosity without an agenda', 'I can stay with this', 'you speaking while a part is loud']),
+    frag ? JSON.stringify([frag.leftPlaceholders, frag.rightPlaceholders]) : 'not lifted');
   {
     // Nothing a person reads says "Flowing" or "Self-Led" any more. The
-    // server's payload key flowingKeywords, the renamed source object and
-    // comments are not reading.
+    // server's payload keys (flowingKeywords, selfLedKeywords) and comments
+    // are not reading.
     const shown = [];
-    for (const f of ['components/map/SpectrumDetailModal.tsx', 'components/map/ProgressStrip.tsx', 'app/(tabs)/journey.tsx']) {
-      const c = codeOnly(read(f)).replace(/const BLENDED_SELF_LED: SpectrumCopy = \{[\s\S]*?\n\};/, '');
+    for (const f of ['components/map/SpectrumDetailModal.tsx', 'components/map/ProgressStrip.tsx', 'app/(tabs)/journey.tsx', 'services/m2.ts']) {
+      const c = codeOnly(read(f));
       for (const m of c.matchAll(/['"`]([^'"`\n]*\b(?:Flowing|Self-Led)\b[^'"`\n]*)['"`]/g)) shown.push(`${f}: ${m[1]}`);
     }
     ok('no string a person reads says Flowing or Self-Led', shown.length === 0, shown.slice(0, 4).join(' | '));
   }
 
-  for (const [f, caption] of [
-    ['components/map/ProgressStrip.tsx', 'When parts activate, are you it — or with it?'],
-    ['app/(tabs)/journey.tsx', 'When parts activate, are you it — or with it? A relational shift.'],
-  ]) {
+  // The bars' captions, the founder's (empty-map-copy-v2.md), the same on the
+  // Map tab's strip and on Journey.
+  for (const f of ['components/map/ProgressStrip.tsx', 'app/(tabs)/journey.tsx']) {
     const c = codeOnly(read(f));
-    ok(`${f}: the blended bar's right pole is AXIS_RIGHT_M2, its caption is the same sentence`,
+    ok(`${f}: the blended bar's right pole is AXIS_RIGHT_M2, and the three captions are the founder's`,
       /leftLabel="Blended"\s*rightLabel=\{AXIS_RIGHT_M2\}/.test(c)
         && !/"Self-Led"/.test(c)
-        && c.includes(`caption="${caption}"`)
+        && c.includes('caption="Where what happens to you comes from."')
+        && c.includes('caption="When a part is loud, are you it, or with it?"')
+        && c.includes('caption="How the whole system is running."')
         && /leftLabel="Outside-In"\s*rightLabel="Inside-Out"/.test(c)
         && /leftLabel="Fragmented"\s*rightLabel=\{AXIS_INTEGRATED\}/.test(c));
   }
+  ok('the strip is headed "HOW THINGS ARE MOVING"',
+    /<Text style=\{styles\.headerText\}>HOW THINGS ARE MOVING<\/Text>/.test(read('components/map/ProgressStrip.tsx')));
 }
 
 // ===========================================================================
@@ -799,7 +861,7 @@ console.log('\n10. self moments and the journal kicker');
     payload: { label: 'Laughing with my brother on the porch', note: 'it felt easy' } };
   ok('a self_moment item is a card', m2.isM2Item(sm));
   ok('...headed by their words, with its note beneath', m2.m2ItemTitle(sm) === 'Laughing with my brother on the porch' && m2.m2ItemNote(sm) === 'it felt easy');
-  ok('...called what the Self folder calls it', m2.m2ItemCategory(sm) === 'a moment of presence');
+  ok('...called what the founder calls it: a moment of being yourself', m2.m2ItemCategory(sm) === 'a moment of being yourself');
   ok('...and editing it sends the new words as one string, which the tap writes',
     m2.m2BuildEdit(sm, { title: 'On the porch with my brother', fields: {} }) === 'On the porch with my brother'
       && m2.m2BuildEdit(sm, m2.m2EditDraft(sm)) === undefined);

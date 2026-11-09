@@ -80,10 +80,13 @@ step('(b) the title is short enough for a modal heading',
   TITLE.length <= 40, `${TITLE.length} chars: ${TITLE}`);
 
 // ===== (c) the body states the condition, warmly, without instructing =====
+// Founder's copy v2 (2026-11-09): "It opens once you've found what you stand
+// on, in conversation; it's kept in your You folder." Found, not established;
+// and where it is kept, rather than "separate from what your parts believe".
 step('(c) the body says the voice OPENS on a condition, not that it is missing',
-  /\bopens\b/i.test(BODY) && /once you'?ve established/i.test(BODY), BODY);
-step('(c) the body names what unlocks it in the app\'s vocabulary',
-  /what you stand on/i.test(BODY) && /separate from what your parts believe/i.test(BODY),
+  /\bopens\b/i.test(BODY) && /once you'?ve found/i.test(BODY), BODY);
+step('(c) the body names what unlocks it in the app\'s vocabulary, and where it is kept',
+  /what you stand on/i.test(BODY) && /in conversation/i.test(BODY) && /your You folder/.test(BODY),
   BODY);
 step('(c) the body is NON-INSTRUCTIONAL — no tap/go/first/get started directions',
   !/\btap\b|\bget started\b|\bfirst,? \b|\bgo to\b|\bhead to\b/i.test(BODY), BODY);
@@ -129,8 +132,14 @@ step('(e2) the mic label names the state',
 step('(e2) no user-visible "Self-like" survives in the mic bar',
   !/self-like/i.test(barCode.replace(/'self-like'/g, '')),
   'the stored category may say self-like; nothing a person READS may');
-step('(e2) the pointer sends people to YOU on the map, not to a Self-like part',
-  /Tap YOU on your map/.test(bar));
+// Founder's copy v2 (2026-11-09): the pointers no longer say "Tap YOU on your
+// map"; ground comes out of conversation and is kept in the You folder, which
+// the footnote, the lock card and the missing-belief toast now say (the toast
+// by the conversation alone). Still never a Self-like part.
+step('(e2) the pointer sends people to the You folder, not to a Self-like part',
+  /const EXPLAINER_FOOTNOTE =\s*"\(This voice opens once you have a belief of your own, found in conversation and kept in your You folder\.\)";/.test(bar)
+    && /What you stand on comes out of conversation\. When you've found it, this opens\./.test(bar)
+    && !/Tap YOU on your map/.test(bar));
 step('(e2) the map diamond is labelled YOU',
   /label="YOU"/.test(fs.readFileSync(path.join(NATIVE, 'components', 'map', 'InnerMapCanvas.tsx'), 'utf8')));
 step('(e2) the stored category is UNTOUCHED — the database keeps its name',

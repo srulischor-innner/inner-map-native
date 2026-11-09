@@ -1,12 +1,12 @@
 // Messages — the in-app inbox, reached from the hamburger menu.
 //
-// Catches parts the AI noticed in sessions that never reached the
-// end-session flow (kind 'pending_parts' — created by the server's
-// abandoned-session sweep), plus general read-only notes. Each
-// pending_parts message shows the parked items with their context
-// lines and checkboxes; "Add to map" fires the act endpoint, which
-// writes the consented subset through the normal parts path
-// (confidence 'confirmed' — the tap IS the consent).
+// Where things wait: the M2 cards the idle pass proposes, cards not tapped
+// in the chat, anything drawn from a shared journal entry, plus read-only
+// notes. Every card is the M2 card (components/m2/M2Cards), the same one the
+// chat screen shows; rows of the old kinds (pending_parts, enrichment,
+// middle_ground) made before M2 are drawn as that card too
+// (services/m2.ts legacyRowAsM2). ADD fires the act endpoint, which writes
+// through the server's own path for that kind — the tap IS the consent.
 //
 // Visual language matches the rest of the app: dark background,
 // serif headers, amber accents, calm spacing. Messages expire after
@@ -14,7 +14,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator, TextInput,
+  View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator,
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,7 +26,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, fonts, spacing } from '../constants/theme';
 import { api, InboxMessage } from '../services/api';
 import { refreshInboxStatus } from '../services/messagesInbox';
-import { M2_CARD_KIND } from '../services/m2';
+import { M2_CARD_KIND, isLegacyCardKind, legacyRowAsM2 } from '../services/m2';
 import { M2InboxCard } from '../components/m2/M2Cards';
 import { getInboxPushOptIn, enableInboxPush } from '../services/push';
 import { useKeyboardInset } from '../utils/useKeyboardInset';
@@ -42,8 +42,8 @@ export default function MessagesScreen() {
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [showPushPrompt, setShowPushPrompt] = useState(false);
 
-  // Keyboard avoidance for the per-item EDIT fields (enrichment +
-  // pending_parts cards). Manual lift via useKeyboardInset — the app-wide
+  // Keyboard avoidance for the M2 card's EDIT fields (every card in
+  // Messages since build 55). Manual lift via useKeyboardInset — the app-wide
   // pattern (adjustResize is a no-op under Android 15 edge-to-edge, and iOS
   // never resizes; see utils/useKeyboardInset.ts). The inset pads the scroll
   // content so the covered region becomes scrollable, and ensureEditVisible
@@ -126,8 +126,8 @@ export default function MessagesScreen() {
           <Ionicons name="file-tray-outline" size={28} color={colors.creamFaint} />
           <Text style={styles.emptyText}>Nothing waiting.</Text>
           <Text style={styles.emptySub}>
-            When something surfaces in a conversation that might belong on
-            your map and the session ends before it's asked, it lands here.
+            After a conversation goes quiet, anything it recognised for your
+            map comes here, along with any card you didn't tap.
           </Text>
         </View>
       ) : (
@@ -156,17 +156,17 @@ export default function MessagesScreen() {
             </View>
           ) : null}
           {messages.map((m) =>
-            m.kind === 'pending_parts' ? (
-              <PendingPartsCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
-            ) : m.kind === 'enrichment' ? (
-              <EnrichmentCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
-            ) : m.kind === 'middle_ground' ? (
-              <PendingPartsCard key={m.id} message={m} onEditFocus={ensureEditVisible} variant={MIDDLE_GROUND_VARIANT} />
-            ) : m.kind === M2_CARD_KIND ? (
+            m.kind === M2_CARD_KIND ? (
               // M2: the same card the chat screen shows (components/m2/M2Cards),
-              // so a card in both places behaves the same in both. Only an M2
-              // account is ever sent this kind.
+              // so a card in both places behaves the same in both.
               <M2InboxCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
+            ) : isLegacyCardKind(m.kind) ? (
+              // An old pending_parts / enrichment / middle_ground row, made
+              // before M2: drawn as the same M2 card, same id and item indices
+              // (services/m2.ts legacyRowAsM2). The old kicker, the raw
+              // "{name} · {part}" lines and the enrichment card are retired
+              // (founder's copy v2, 2026-11-09).
+              <M2InboxCard key={m.id} message={legacyRowAsM2(m) ?? m} onEditFocus={ensureEditVisible} />
             ) : (
               <NoteCard key={m.id} message={m} />
             ),
@@ -174,348 +174,6 @@ export default function MessagesScreen() {
         </ScrollView>
       )}
     </SafeAreaView>
-  );
-}
-
-// One pending_parts message: each noticed item is its own row with
-// Accept / Edit / "Doesn't resonate". Per-item — the card stays in the inbox
-// until EVERY item is resolved (accepted or declined). Nothing the AI noticed
-// is lost. (MICROCOPY here — "ADD TO MAP" / "EDIT" / "Doesn't resonate" /
-// resolved lines — is flagged for the copy pass.)
-type ItemState = 'pending' | 'sending' | 'accepted' | 'declined';
-
-type EditFocusHandler = (node: { measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void } | null) => void;
-
-// TWO CARDS, ONE MECHANISM (2026-09-02). middle_ground cards were being written
-// by the server, replicated, and pushed -- and then rendered by NoteCard, which
-// reads only payload.title and payload.body. A middle_ground payload has neither;
-// it has {items:[{label,note,status}]}. So every one displayed as a card reading
-// "NOTE" with an empty body, and the accept branch at server.js:13773 -- the
-// filing consent for ruling 2026-08-19e -- could never be reached. A consent
-// surface nobody can tap is not a consent surface.
-//
-// The accept / edit / decline flow is identical for both kinds; only the field
-// name and the copy differ. Parameterised rather than duplicated, so the two
-// cards cannot drift into two different consent behaviours.
-type CardVariant = {
-  kicker: (m: InboxMessage) => string;
-  lede: string;
-  labelOf: (it: any) => string;
-  editedOf: (it: any) => string | undefined;
-  subOf: (it: any) => string | null;
-  categoryOf: (it: any) => string | null;
-  acceptText: string;
-  acceptingText: string;
-  acceptedText: string;
-  editA11y: string;
-};
-
-const PENDING_PARTS_VARIANT: CardVariant = {
-  kicker: (m) =>
-    m.payload.source === 'journal'
-      ? `FROM A JOURNAL ENTRY${m.payload.entryDate ? ` \u00b7 ${m.payload.entryDate}` : ''}`
-      : `FROM A PAST SESSION${m.payload.sessionDate ? ` \u00b7 ${m.payload.sessionDate}` : ''}`,
-  lede: 'A few things surfaced that might belong on your map:',
-  labelOf: (it) => it.name || '',
-  editedOf: (it) => it.editedName,
-  subOf: (it) => it.context || null,
-  categoryOf: (it) => it.part || null,
-  acceptText: 'ADD TO MAP',
-  acceptingText: 'ADDING\u2026',
-  acceptedText: 'Added to your map.',
-  editA11y: 'Edit the part name',
-};
-
-// Middle ground is a place the person described standing, in their own words --
-// not a part. So: no category chip, and copy about keeping something they said
-// rather than adding something we noticed.
-const MIDDLE_GROUND_VARIANT: CardVariant = {
-  kicker: (m) => `FROM A PAST SESSION${m.payload.sessionDate ? ` \u00b7 ${m.payload.sessionDate}` : ''}`,
-  lede: 'You described somewhere you can stand that isn\u2019t either side:',
-  labelOf: (it) => it.label || '',
-  editedOf: (it) => it.editedLabel,
-  subOf: (it) => it.note || null,
-  categoryOf: () => null,
-  acceptText: 'KEEP THIS',
-  acceptingText: 'KEEPING\u2026',
-  acceptedText: 'Kept on your map.',
-  editA11y: 'Edit the wording',
-};
-
-function PendingPartsCard({ message, onEditFocus, variant = PENDING_PARTS_VARIANT }: { message: InboxMessage; onEditFocus?: EditFocusHandler; variant?: CardVariant }) {
-  const editInputRef = useRef<TextInput>(null);
-  const items = message.payload.items || [];
-  const [states, setStates] = useState<ItemState[]>(
-    items.map((it) =>
-      it.status === 'accepted' || it.status === 'declined' ? it.status : 'pending',
-    ),
-  );
-  const [names, setNames] = useState<string[]>(items.map((it) => variant.editedOf(it) || variant.labelOf(it)));
-  const [editingIdx, setEditingIdx] = useState<number | null>(null);
-
-  function setItemState(i: number, s: ItemState) {
-    setStates((prev) => prev.map((v, j) => (j === i ? s : v)));
-  }
-
-  async function accept(i: number) {
-    if (states[i] !== 'pending') return;
-    setItemState(i, 'sending');
-    Haptics.selectionAsync().catch(() => {});
-    const trimmed = names[i].trim();
-    const edits = trimmed && trimmed !== variant.labelOf(items[i]) ? { [i]: trimmed } : undefined;
-    const res = await api.actOnMessage(message.id, [i], edits);
-    setItemState(i, res.ok ? 'accepted' : 'pending');
-    if (res.ok) {
-      if (editingIdx === i) setEditingIdx(null);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      refreshInboxStatus(true).catch(() => {});
-    }
-  }
-
-  async function decline(i: number) {
-    if (states[i] !== 'pending') return;
-    setItemState(i, 'sending');
-    Haptics.selectionAsync().catch(() => {});
-    const res = await api.declineMessageItems(message.id, [i]);
-    setItemState(i, res.ok ? 'declined' : 'pending');
-    if (res.ok) {
-      if (editingIdx === i) setEditingIdx(null);
-      refreshInboxStatus(true).catch(() => {});
-    }
-  }
-
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardKicker}>{variant.kicker(message)}</Text>
-      <Text style={styles.cardLede}>{variant.lede}</Text>
-      {items.map((it, i) => {
-        const st = states[i];
-        const editing = editingIdx === i;
-        return (
-          <View key={`${message.id}-${i}`} style={styles.noticedItem}>
-            {editing ? (
-              <TextInput
-                ref={editInputRef}
-                value={names[i]}
-                onChangeText={(t) => setNames((prev) => prev.map((v, j) => (j === i ? t : v)))}
-                style={styles.itemNameInput}
-                selectionColor={colors.amber}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={() => setEditingIdx(null)}
-                onFocus={() => onEditFocus?.(editInputRef.current)}
-                accessibilityLabel={variant.editA11y}
-              />
-            ) : (
-              <Text style={[styles.itemName, st === 'declined' && styles.itemNameDim]}>
-                {names[i]}
-                {variant.categoryOf(it) ? (
-                  <Text style={styles.itemCategory}>  ·  {variant.categoryOf(it)}</Text>
-                ) : null}
-              </Text>
-            )}
-            {variant.subOf(it) ? <Text style={styles.itemContext}>{variant.subOf(it)}</Text> : null}
-
-            {st === 'accepted' ? (
-              <View style={styles.itemResolvedRow}>
-                <Ionicons name="checkmark-circle" size={15} color={colors.amber} />
-                <Text style={styles.itemResolvedText}>{variant.acceptedText}</Text>
-              </View>
-            ) : st === 'declined' ? (
-              <View style={styles.itemResolvedRow}>
-                <Ionicons name="close-circle-outline" size={15} color={colors.creamFaint} />
-                <Text style={styles.itemResolvedTextDim}>Doesn’t resonate — dismissed.</Text>
-              </View>
-            ) : (
-              <View style={styles.itemActionRow}>
-                <Pressable
-                  onPress={() => accept(i)}
-                  disabled={st === 'sending'}
-                  style={[styles.itemBtnAccept, st === 'sending' && styles.itemBtnDim]}
-                  accessibilityLabel={`${variant.acceptText} — ${names[i]}`}
-                >
-                  <Text style={styles.itemBtnAcceptText}>{st === 'sending' ? variant.acceptingText : variant.acceptText}</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setEditingIdx(editing ? null : i)}
-                  disabled={st === 'sending'}
-                  style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
-                  accessibilityLabel={variant.editA11y}
-                >
-                  <Text style={styles.itemBtnText}>{editing ? 'DONE' : 'EDIT'}</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => decline(i)}
-                  disabled={st === 'sending'}
-                  style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
-                  accessibilityLabel={`Dismiss ${names[i]}`}
-                >
-                  <Text style={styles.itemBtnTextDim}>Doesn’t resonate</Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
-        );
-      })}
-    </View>
-  );
-}
-
-// One enrichment message: new facets of parts already on the map, surfaced
-// when the in-session consent handshake hadn't happened. Same per-item
-// accept/edit/decline machinery as PendingPartsCard (same endpoints), but
-// EDIT refines the facet VALUE, and accepting appends to the part's folder
-// rather than creating anything new.
-const ENRICH_FACET_LABEL: Record<string, string> = {
-  trigger: 'trigger', body: 'where it lives', situation: 'situation',
-  example: 'example', voice: 'phrase', manner: 'way of speaking',
-  worldview: 'worldview', story: 'story it carries', memory: 'memory',
-};
-
-function EnrichmentCard({ message, onEditFocus }: { message: InboxMessage; onEditFocus?: EditFocusHandler }) {
-  const editInputRef = useRef<TextInput>(null);
-  const items = message.payload.items || [];
-  const [states, setStates] = useState<ItemState[]>(
-    items.map((it) =>
-      it.status === 'accepted' || it.status === 'declined' ? it.status : 'pending',
-    ),
-  );
-  const [values, setValues] = useState<string[]>(items.map((it) => it.editedValue || it.value || ''));
-  // ITEM 14: which item, if any, came back from the server as a failed write.
-  // EnrichmentCard had no error surface at all — a failure just snapped the
-  // button back to ADD TO PART with nothing said, and the far more common case
-  // (the server reporting success over a write that never landed) said the
-  // opposite of the truth.
-  const [failedIdx, setFailedIdx] = useState<number | null>(null);
-  const [editingIdx, setEditingIdx] = useState<number | null>(null);
-
-  function setItemState(i: number, s: ItemState) {
-    setStates((prev) => prev.map((v, j) => (j === i ? s : v)));
-  }
-
-  async function accept(i: number) {
-    if (states[i] !== 'pending') return;
-    setItemState(i, 'sending');
-    setFailedIdx((prev) => (prev === i ? null : prev));
-    Haptics.selectionAsync().catch(() => {});
-    const trimmed = values[i].trim();
-    const edits = trimmed && trimmed !== items[i].value ? { [i]: trimmed } : undefined;
-    const res = await api.actOnMessage(message.id, [i], edits);
-    setItemState(i, res.ok ? 'accepted' : 'pending');
-    if (res.ok) {
-      if (editingIdx === i) setEditingIdx(null);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      refreshInboxStatus(true).catch(() => {});
-    } else {
-      // ITEM 14: the success haptic and "Added to the part’s folder." used to
-      // fire whatever happened, because the server always said ok. It can now
-      // say no — so say no back, and leave the item where the person can retry
-      // it or dismiss it. Nothing about their words is lost either way.
-      setFailedIdx(i);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-    }
-  }
-
-  async function decline(i: number) {
-    if (states[i] !== 'pending') return;
-    setItemState(i, 'sending');
-    Haptics.selectionAsync().catch(() => {});
-    const res = await api.declineMessageItems(message.id, [i]);
-    setItemState(i, res.ok ? 'declined' : 'pending');
-    if (res.ok) {
-      if (editingIdx === i) setEditingIdx(null);
-      refreshInboxStatus(true).catch(() => {});
-    }
-  }
-
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardKicker}>
-        {`YOUR PARTS, IN MORE DETAIL${message.payload.sessionDate ? ` · ${message.payload.sessionDate}` : ''}`}
-      </Text>
-      <Text style={styles.cardLede}>
-        New facets of parts already on your map surfaced in conversation. Keep what fits:
-      </Text>
-      {items.map((it, i) => {
-        const st = states[i];
-        const editing = editingIdx === i;
-        const partName = it.label || it.part;
-        const facetLabel = ENRICH_FACET_LABEL[it.field || ''] || it.field || 'detail';
-        return (
-          <View key={`${message.id}-${i}`} style={styles.noticedItem}>
-            <Text style={[styles.itemName, st === 'declined' && styles.itemNameDim]}>
-              {partName}
-              <Text style={styles.itemCategory}>  ·  new {facetLabel}</Text>
-            </Text>
-            {editing ? (
-              <TextInput
-                ref={editInputRef}
-                value={values[i]}
-                onChangeText={(t) => setValues((prev) => prev.map((v, j) => (j === i ? t : v)))}
-                style={styles.itemNameInput}
-                selectionColor={colors.amber}
-                autoFocus
-                multiline
-                returnKeyType="done"
-                onSubmitEditing={() => setEditingIdx(null)}
-                onFocus={() => onEditFocus?.(editInputRef.current)}
-                accessibilityLabel="Edit the facet wording"
-              />
-            ) : (
-              <Text style={styles.itemContext}>{values[i]}</Text>
-            )}
-
-            {failedIdx === i && st === 'pending' ? (
-              <View style={styles.itemResolvedRow}>
-                <Ionicons name="alert-circle-outline" size={15} color={colors.creamDim} />
-                <Text style={styles.itemResolvedTextDim}>
-                  Couldn’t add this one — it’s still here.
-                </Text>
-              </View>
-            ) : null}
-
-            {st === 'accepted' ? (
-              <View style={styles.itemResolvedRow}>
-                <Ionicons name="checkmark-circle" size={15} color={colors.amber} />
-                <Text style={styles.itemResolvedText}>Added to the part’s folder.</Text>
-              </View>
-            ) : st === 'declined' ? (
-              <View style={styles.itemResolvedRow}>
-                <Ionicons name="close-circle-outline" size={15} color={colors.creamFaint} />
-                <Text style={styles.itemResolvedTextDim}>Doesn’t fit — dismissed.</Text>
-              </View>
-            ) : (
-              <View style={styles.itemActionRow}>
-                <Pressable
-                  onPress={() => accept(i)}
-                  disabled={st === 'sending'}
-                  style={[styles.itemBtnAccept, st === 'sending' && styles.itemBtnDim]}
-                  accessibilityLabel={`Add this ${facetLabel} to ${partName}`}
-                >
-                  <Text style={styles.itemBtnAcceptText}>{st === 'sending' ? 'ADDING…' : 'ADD TO PART'}</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setEditingIdx(editing ? null : i)}
-                  disabled={st === 'sending'}
-                  style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
-                  accessibilityLabel="Edit the facet wording"
-                >
-                  <Text style={styles.itemBtnText}>{editing ? 'DONE' : 'EDIT'}</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => decline(i)}
-                  disabled={st === 'sending'}
-                  style={[styles.itemBtn, st === 'sending' && styles.itemBtnDim]}
-                  accessibilityLabel="Dismiss this facet"
-                >
-                  <Text style={styles.itemBtnTextDim}>Doesn’t fit</Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
-        );
-      })}
-    </View>
   );
 }
 
@@ -623,91 +281,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     marginBottom: 6,
   },
-  cardLede: {
-    color: colors.cream,
-    fontFamily: fonts.sans,
-    fontSize: 14,
-    lineHeight: 21,
-    marginBottom: spacing.sm,
-  },
-  // ----- per-item noticed rows (Accept / Edit / Doesn't resonate) -----
-  noticedItem: {
-    paddingVertical: 12,
-    borderTopWidth: 0.5,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-  },
-  itemName: {
-    color: colors.cream,
-    fontFamily: fonts.serifItalic,
-    fontSize: 16,
-  },
-  itemNameDim: {
-    color: colors.creamFaint,
-    textDecorationLine: 'line-through',
-  },
-  itemNameInput: {
-    color: colors.cream,
-    fontFamily: fonts.serifItalic,
-    fontSize: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(230,180,122,0.5)',
-    paddingVertical: 2,
-  },
-  itemCategory: {
-    color: colors.creamFaint,
-    fontFamily: fonts.sans,
-    fontSize: 12,
-  },
-  itemContext: {
-    color: colors.creamDim,
-    fontFamily: fonts.sans,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 2,
-  },
-  itemActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 16,
-    marginTop: 10,
-  },
-  itemBtn: { paddingVertical: 6 },
-  itemBtnDim: { opacity: 0.4 },
-  itemBtnAccept: {
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(230, 180, 122, 0.45)',
-    backgroundColor: 'rgba(230, 180, 122, 0.05)',
-  },
-  itemBtnAcceptText: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 12,
-    letterSpacing: 0.8,
-  },
-  itemBtnText: {
-    color: colors.amber,
-    fontFamily: fonts.sansBold,
-    fontSize: 12,
-    letterSpacing: 0.8,
-  },
-  itemBtnTextDim: {
-    color: colors.creamFaint,
-    fontFamily: fonts.sansBold,
-    fontSize: 12,
-    letterSpacing: 0.8,
-  },
-  itemResolvedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 10,
-  },
-  itemResolvedText: { color: colors.creamDim, fontFamily: fonts.sans, fontSize: 13 },
-  itemResolvedTextDim: { color: colors.creamFaint, fontFamily: fonts.sans, fontSize: 13 },
   noteTitle: {
     color: colors.cream,
     fontFamily: fonts.serifBold,

@@ -144,23 +144,23 @@ const EXPLAINER_BODY = [
   // paragraphs so the prose breathes.
   "Most of the time, when a part is loud — anxious, harsh, fearful — you don't notice. You ARE the anxiety. That's called blending. You're fused with the part. From the inside, it just feels like you.",
   "When you tap a mic and speak, the AI listens for which part is talking through you. That part lights up on the map — you see it externally, separate from you. The moment you see \"oh, that's a part — I'm not that,\" a small space opens.",
-  "Then a voice responds:",
+  "Then a voice answers:",
 ];
 const EXPLAINER_SELF_LINE =
-  '🎙 Self — "I see you. I\'m here." Pure presence. When you need to be witnessed and settle — without being managed.';
+  "Self: the part of you that was never hurt, speaking to the part that's loud. It doesn't fix anything. You hear what your own steadiest voice sounds like, so you can find it in yourself.";
 const EXPLAINER_SELF_LIKE_LINE =
-  '🎙 Leading — "I hear you, AND we\'re going a different way." When you need to hold a line with a part: make a different choice, redirect.';
-// "Part on your map" framing is deliberate in the three strings below:
-// the mic itself is ALSO labeled SELF-LIKE, so "tap Self-like" alone was
-// ambiguous (users tapped the mic again). Every pointer names the PART on
-// the map — the diamond on the triangle — so it can't be read as the mic.
+  "Leading: you, standing on what you stand on, speaking to the part. It doesn't argue with the part or ask it to stop; it sees what the part is doing, says what's true in it, and stands where you stand.";
+// FOUNDER'S COPY V2 (2026-11-09): the mic strings no longer point at the
+// diamond. Ground comes out of conversation and is kept in the You folder, so
+// the footnote, the lock card and the toast say that. (The You folder's
+// "Establish your belief" button stays, and opens the ordinary conversation.)
 const EXPLAINER_FOOTNOTE =
-  "(This voice becomes available once you've established your own belief, separate from what your parts believe. Tap YOU on your map — the diamond on the triangle — to begin.)";
+  "(This voice opens once you have a belief of your own, found in conversation and kept in your You folder.)";
 
 const SELF_INFO_BODY =
-  "Self — pure presence. Speak, and the part you're blended with lights up; Self responds to it. This is what your own grounded presence sounds like — so you can begin to recognize it, and find it, in yourself.";
+  "Self, speaking to whichever part is active. Say what's true, let go, and hear what your own steadiest voice sounds like, so you can begin to recognise it, and find it, in yourself.";
 const SELF_LIKE_INFO_BODY =
-  "You, leading. It speaks to the part that's active, from the ground you stand on. You didn't pick which part shows up — the system does that — but you choose how you meet it. Hear what that sounds like, so you can come to speak it yourself.";
+  "You, leading. It speaks to the part that's active from the ground you stand on. You didn't pick which part shows up; you choose how you meet it. Hear what that sounds like, so you can come to say it yourself.";
 // THE LEADING MIC LOCK — title + body.
 //
 // This is a DESIGNED LOCK, not an unbuilt feature, and the copy has to say so.
@@ -171,22 +171,14 @@ const SELF_LIKE_INFO_BODY =
 // it is gated on the person having a belief for it to speak from, because a
 // Self-like voice with no established ground has nothing to lead from.
 //
-// So the copy states the CONDITION, not an absence. It also stops giving
-// directions: EXPLAINER_FOOTNOTE above already carries the "tap YOU on your
-// map" pointer, and repeating it here turned a warm gate into a
-// two-step instruction. Vocabulary is the app's own — "what you stand on" and
-// "separate from what your parts believe", both from the Self-like folder's
-// belief section (PartFolderModal.tsx).
-//
-// The ground metaphor used to be rendered too: a belief band across the foot
-// of the map, literally the floor the triangle stood on. It was removed on
-// 2026-08-27 and "what you stand on" now lives only in the Self-like folder.
-// That makes the pointer above load-bearing rather than merely helpful — the
-// diamond on the triangle is the ONLY way in, so if that pointer is ever
-// dropped this lock becomes a dead end.
+// So the copy states the CONDITION, not an absence, and where ground comes
+// from: conversation, kept in the You folder (founder's copy v2, 2026-11-09).
+// The diamond pointer this lock once leaned on is gone from all three strings;
+// the You folder's "Establish your belief" button still opens a conversation
+// for it, so the lock is not a dead end.
 const SELF_LIKE_DISABLED_TITLE = "Unlocks with what you stand on";
 const SELF_LIKE_DISABLED_BODY =
-  "This voice speaks from your own ground — so it waits until there's ground to speak from. It opens once you've established what you stand on, separate from what your parts believe.";
+  "This voice speaks from your own ground, so it waits until there's ground to speak from. It opens once you've found what you stand on, in conversation; it's kept in your You folder.";
 
 type Props = {
   sessionId: string;
@@ -1056,7 +1048,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
           <View style={styles.toast}>
             <Text style={styles.toastText}>
               {fallbackToast.kind === 'missing_belief'
-                ? 'To develop your belief, tap YOU on your map — the diamond on the triangle.'
+                ? "What you stand on comes out of conversation. When you've found it, this opens."
                 : fallbackToast.kind === 'no_part_detected'
                   ? 'Couldn’t identify a single part — try again with one specific situation.'
                   : fallbackToast.kind === 'hold-to-record'
@@ -1077,7 +1069,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       >
         <Pressable style={styles.backdrop} onPress={dismissExplainer}>
           <Pressable style={styles.card} onPress={() => {}}>
-            <Text style={styles.cardTitle}>Seeing your parts, hearing Self speak to them</Text>
+            <Text style={styles.cardTitle}>Seeing your parts, hearing a different voice</Text>
             {EXPLAINER_BODY.map((p, i) => (
               <Text key={i} style={styles.cardBody}>{p}</Text>
             ))}

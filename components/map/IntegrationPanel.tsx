@@ -24,43 +24,43 @@ const META: Record<IntegrationKey, { title: string; color: string; body: string 
     title: 'Wound',
     color: '#FF5555',
     body:
-      "The place where your deepest sensitivity lives. No longer the center of defense — the source of your capacity to feel deeply, to understand others, to know what matters. The wound transformed is where your most precious gifts come from.",
+      "The place your deepest sensitivity lives. Underneath what it carries is a part of you that was made for something: often the very thing the hurt is about. Held rather than defended, it's where your capacity to feel, to understand others and to know what matters comes from.",
   },
   fixer: {
     title: 'Fixer',
     color: '#F0C070',
     body:
-      "The drive, freed from proving. Still moves forward — now from wholeness rather than from lack. The same energy that was trying to earn worth becomes the energy of genuine contribution. It no longer needs to win. It just moves.",
+      "The drive, no longer having to prove anything, and still yours. The force that was pressed into earning your worth shows what you're capable of; standing in what you are, it moves because it wants to, not because it has to.",
   },
   skeptic: {
     title: 'Skeptic',
     color: '#90C8E8',
     body:
-      "The wisdom, freed from withdrawal. Still discerns — now in service of genuine judgment rather than self-protection. The part that knew something was wrong and refused to pretend otherwise becomes the part that knows what is true and can say so.",
+      "The discernment, no longer having to brace, and still yours. The part that refused to be fooled, that wouldn't settle for a version of you that wasn't real, becomes the part that knows what's true and can say so.",
   },
   'self-like': {
     title: 'You',
     color: '#A090C0',
     body:
-      "Still present. Transparent now. The part that was managing and controlling — open rather than clenched — becomes the bridge between your inner world and everything outside it. Da'at serving connection rather than defense. The ego not gone. Just no longer in the way.",
+      "Still here, and no longer only keeping the peace. You are the one everything arrives at and the one who chooses where to stand. Standing in what you are rather than in the hurt, you lead both sides instead of brokering between them.",
   },
   self: {
     title: 'Self',
     color: '#D4B8E8',
     body:
-      "Was always here. Always complete. Now simply visible as what it always was — the center of the whole system. Not a destination you reached. What you are underneath everything that was built on top.",
+      "Was always here, always whole. Not somewhere you arrive; what you are underneath everything built on top, and what gets lived, a little more each time, the more you stand there.",
   },
   manager: {
     title: 'Managers',
     color: '#A8DCC0',
     body:
-      "No longer needed for defense. Their intelligence — the strategies, the organization, the vigilance — now available for living rather than protecting. The same capacity, turned toward what you actually want.",
+      "Still watchful, no longer on duty alone. Their intelligence, the strategies, the order, the attention, is available for living rather than only for protecting. The same capacity, turned toward what you actually want.",
   },
   firefighter: {
     title: 'Firefighters',
     color: '#F0A050',
     body:
-      "No longer reaching for relief from pain that isn't there anymore. Their energy now available for genuine pleasure, genuine rest, genuine engagement. The same intensity — now in service of life rather than escape from it.",
+      "Still quick, no longer only putting out fires. Their intensity, which reached for relief when the hurt broke through, is available for real pleasure, real rest, real engagement. The hurt is still yours; how it's held has changed.",
   },
 };
 

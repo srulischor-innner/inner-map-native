@@ -1,8 +1,8 @@
 // Bottom-sheet explainer panel for one of the THREE spectrum bars:
 //   1. Outside-In  → Inside-Out   (perspective)
-//   2. Blended     → You Leading   (position when parts activate; the copy
-//      below is written as BLENDED_SELF_LED and shown renamed, see
-//      BLENDED_YOU_LEADING)
+//   2. Blended     → You Leading   (position when parts activate;
+//      BLENDED_YOU_LEADING, written in its own words since the founder's
+//      copy v2, 2026-11-09)
 //   3. Fragmented  → Integrated    (system integration)
 //
 // All "score" language has been removed app-wide. The bar shows a position
@@ -16,7 +16,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
-import { youLeadingAxisCopy } from '../../services/m2';
 
 export type SpectrumKey = 'outsideIn' | 'blendedSelfLed' | 'fragmented';
 
@@ -88,13 +87,13 @@ export function SpectrumDetailModal({
                 ]}
               />
             ) : (
-              <Text style={styles.barNoData}>Still learning where you are — this sharpens as we talk.</Text>
+              <Text style={styles.barNoData}>Nothing to show yet; this fills in as you talk.</Text>
             )}
           </View>
 
           {/* Per-spectrum sections — ORDER and HEADINGS come from the copy
               object so each spectrum can have a different structure (the
-              Blended → Self-Led panel adds a "Three levels of unblending"
+              Blended → You Leading panel adds a "Three levels of unblending"
               section the others don't have). */}
           {copy.sections.map((s, i) => (
             <View key={i}>
@@ -109,7 +108,7 @@ export function SpectrumDetailModal({
           <Text style={styles.sectionLabel}>WHAT THE SPECTRUM IS PICKING UP</Text>
           {leftKeys.length === 0 && rightKeys.length === 0 ? (
             <Text style={styles.empty}>
-              More conversations will reveal the specific language patterns the spectrum is reading.
+              After a few conversations, the words that keep coming back show here.
             </Text>
           ) : (
             <>
@@ -161,7 +160,7 @@ function KeywordList({
 
 // ============================================================================
 // COPY — three spectrum panels. Sections are an ordered list so the Blended
-// → Self-Led panel can add its "Three levels of unblending" section without
+// → You Leading panel can add its "Three levels of unblending" section without
 // the others needing to carry it.
 // ============================================================================
 type SpectrumCopy = {
@@ -225,17 +224,21 @@ const OUTSIDE_IN: SpectrumCopy = {
     },
   ],
   howItMoves:
-    "This shifts as genuine recognition deepens — not just understanding the concept but actually beginning to live from the inside out. It often moves first through insight, then through practice, then through the outer life gradually beginning to reflect the inner shift. The mirror becomes clearer over time.",
+    "This moves as recognition deepens and gets lived, usually in small ways first, until your outer life begins to reflect the inner shift. There's no order it has to go in.",
 };
 
-const BLENDED_SELF_LED: SpectrumCopy = {
-  title: 'Blended → Self-Led',
+// "Self-Led" → "You Leading" (CHANGE-LIST-2026-11-08 ruling 5, then the
+// founder's copy v2, 2026-11-09, which rewrote the sentences too): the one who
+// leads is You, and Self is underneath. Written here in its own words; the
+// payload keys (blendedKeywords / selfLedKeywords) are unchanged.
+const BLENDED_YOU_LEADING: SpectrumCopy = {
+  title: 'Blended → You Leading',
   leftLabel: 'Blended',
-  rightLabel: 'Self-Led',
+  rightLabel: 'You Leading',
   leftKeysField: 'blendedKeywords',
   rightKeysField: 'selfLedKeywords',
   leftIndicatorsHeading: 'Blended indicators',
-  rightIndicatorsHeading: 'Self-Led indicators',
+  rightIndicatorsHeading: 'You Leading indicators',
   leftPlaceholders: [
     "I am furious",
     "I'm just so anxious",
@@ -259,13 +262,13 @@ const BLENDED_SELF_LED: SpectrumCopy = {
     {
       label: 'Toward the Blended side',
       paragraphs: [
-        "When parts activate, they take you over. You become the fixer, become the skeptic, become the wound. There's no space between you and the part — you ARE the part for as long as it's running. This isn't a failure. It's how the system runs by default before any inner work has happened.",
+        "When a part is loud, it takes you over. There's no space between you and it; for as long as it's running, it feels like you. This isn't a failure. It's how a system runs before anyone has looked at it.",
       ],
     },
     {
-      label: 'Toward the Self-Led side',
+      label: 'Toward the You Leading side',
       paragraphs: [
-        "When parts activate, there's a 'you' that can notice them. You can say 'a part of me is feeling this' rather than 'I am this.' Not detachment — closer to companionship. The part is still there. You're just not lost in it anymore.",
+        "When a part is loud, there's a you that can notice it and stay. You can say \"a part of me is feeling this\" rather than \"I am this.\" Not distance; closer to company. The part is still there, at full strength. You're just not lost in it, and you choose where you stand.",
       ],
     },
     {
@@ -275,18 +278,13 @@ const BLENDED_SELF_LED: SpectrumCopy = {
         "Thought — you can name the part. \"A part of me is anxious.\" The words are right, the framework applies. This is real but it's the most surface layer.",
         "Feeling — you sense yourself with the part rather than in it. There's a felt difference. You can stay with what's there without being taken over by it.",
         "Sensation — your body reflects the shift. Chest softens. Breath deepens. The grip lets go. The part itself feels less heavy, less urgent. Something has actually moved.",
-        "All three are unblending. One level alone is partial. Two levels is a real shift. All three together is the genuine arrival. Don't try to make this happen — chasing it creates another performance. Real unblending arrives when a part is genuinely received.",
+        "All three are real. They don't arrive together, and nobody has to reach all three for this to count. Don't try to make it happen; chasing it becomes another performance. It arrives when a part has been received.",
       ],
     },
   ],
   howItMoves:
-    "This shifts through repeated experience of unblending — usually first with smaller parts before bigger ones. Reading about the difference helps. Actually living it is the real teacher. Self energy is what allows unblending, so this spectrum and Fragmented → Integrated tend to influence each other over time.",
+    "This moves through repeated experience, usually with smaller parts before bigger ones. Reading about it helps a little; living it is the teacher. It isn't measured by how fluently you talk about parts, but by whether you can stand somewhere while one is loud.",
 };
-
-// On M2 the axis is "Blended → You Leading" (CHANGE-LIST-2026-11-08 ruling 5).
-// Only the title, the pole label, the indicator heading and the section
-// headings change; every sentence above is the same until the copy rewrite.
-const BLENDED_YOU_LEADING: SpectrumCopy = youLeadingAxisCopy(BLENDED_SELF_LED);
 
 const FRAGMENTED: SpectrumCopy = {
   title: 'Fragmented → Integrated',
@@ -296,22 +294,19 @@ const FRAGMENTED: SpectrumCopy = {
   rightKeysField: 'flowingKeywords',
   leftIndicatorsHeading: 'Fragmented indicators',
   rightIndicatorsHeading: 'Integrated indicators',
+  // Founder's copy v2 (2026-11-09). The third was "little getting through
+  // from Self" (2026-09-06), and before that "no Self access detected", which
+  // was wrong on the framework: Self is always there.
   leftPlaceholders: [
-    "intense blending language",
+    "a part running the whole conversation",
     "parts in conflict",
-    // FRAMEWORK CORRECTION (founder ruling 2026-09-06). Was "no Self access
-    // detected", which is wrong on the framework rather than merely blunt:
-    // Self is always there. What varies is whether You can receive from it. The
-    // same phrase was also in the scoring prompt (spectrumReadings.js), so the
-    // model kept generating it as real data regardless of what this screen said
-    // — the placeholder was the visible half of a two-place error.
-    "little getting through from Self",
+    "nothing from you between them",
   ],
   rightPlaceholders: [
-    "moments of Self energy",
-    "genuine curiosity without agenda",
-    "I feel okay with this",
-    "unblending language",
+    "both sides named in one breath",
+    "curiosity without an agenda",
+    "I can stay with this",
+    "you speaking while a part is loud",
   ],
   sections: [
     {
@@ -322,14 +317,14 @@ const FRAGMENTED: SpectrumCopy = {
         // readout and a healing-outcome claim, about a person this app cannot
         // assess. Describes what shows up in the conversations instead, which
         // is the only thing the score is actually derived from.
-        "This tracks what shows up across your conversations — how often Self energy appears, how your parts are relating to each other, and how much the system is still working to manage things.",
-        "Unlike the Outside-In spectrum, this one doesn't shift through understanding alone. It shifts with what actually shows up as you talk — moments of unblending, parts being heard, Self energy appearing, the system holding less tightly.",
-        "Toward Fragmented doesn't mean you're doing something wrong. It means the system is still working hard to manage the wound. That's where most people are when they begin.",
+        "This tracks what shows up across your conversations: how your parts relate to each other, whether both sides can be in the room at once, and how much of you is leading rather than brokering.",
+        "It doesn't shift through understanding alone. It shifts with what actually shows up as you talk: parts being heard, both sides held at once, you standing somewhere while they're loud.",
+        "Toward fragmented doesn't mean you're doing something wrong. It means the sides are still taking turns, each looking out for itself. That's where most people are when they begin.",
       ],
     },
   ],
   howItMoves:
-    "This shifts slowly and genuinely — it cannot be manufactured. What moves it: staying with difficult feelings rather than managing them, parts feeling truly received, moments when the system relaxes on its own. Trust the process.",
+    "This moves slowly and can't be manufactured. What moves it: staying with difficult feelings rather than managing them, parts being received, and you standing between the sides rather than inside one of them. Integrated isn't quieter; it's both sides at full strength, with you leading.",
 };
 
 // ============================================================================
