@@ -20,6 +20,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AppState, View, Image, StyleSheet, Alert, Platform } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import Constants from 'expo-constants';
+import * as Application from 'expo-application';
 import * as Sentry from '@sentry/react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -57,9 +58,34 @@ import { LockScreen } from '../components/LockScreen';
 // A NEW EAS build is required for any of this to take effect on device.
 // =============================================================================
 const SENTRY_DSN = ((Constants.expoConfig?.extra as any)?.sentryDsn as string) || '';
+// THE EXACT BINARY ON EVERY EVENT (2026-11-09). Sentry was initialised with no
+// release and no dist, so each event's version came from whatever the SDK
+// derived. The Expo manifest still carries app.config.js's ios.buildNumber '3'
+// and android.versionCode 4, which EAS remote versioning ignores (production is
+// at iOS 53 / Android 48), and staging builds share the 1.3.0 version string —
+// so an event could not be tied to the build it came from. These read the
+// running binary itself (CFBundleShortVersionString / CFBundleVersion on iOS,
+// versionName / versionCode on Android), never the manifest:
+//   release      com.srulischor.innermap@1.4.0+54
+//   dist         54
+//   environment  production for the store app id, internal for .dev builds,
+//                development under Metro
+// scripts/check-sentry-release.js holds this.
+const SENTRY_APP_ID = Application.applicationId || 'unknown-app';
+const SENTRY_VERSION = Application.nativeApplicationVersion || 'unknown-version';
+const SENTRY_BUILD = Application.nativeBuildVersion || 'unknown-build';
+const SENTRY_RELEASE = `${SENTRY_APP_ID}@${SENTRY_VERSION}+${SENTRY_BUILD}`;
+const SENTRY_ENVIRONMENT = __DEV__ ? 'development'
+  : SENTRY_APP_ID === 'com.srulischor.innermap' ? 'production' : 'internal';
 if (SENTRY_DSN) {
   Sentry.init({
     dsn: SENTRY_DSN,
+    release: SENTRY_RELEASE,
+    dist: SENTRY_BUILD,
+    environment: SENTRY_ENVIRONMENT,
+    // Searchable on every event, including native crashes, which carry the
+    // scope's tags once the SDK is up.
+    initialScope: { tags: { 'app.version': SENTRY_VERSION, 'app.build': SENTRY_BUILD } },
     sendDefaultPii: false,
     // --- Content scrubbing (mental-health app: a crash report must carry NO
     // user content — conversations, journals, messages, or map data). We keep

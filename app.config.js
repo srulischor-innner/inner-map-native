@@ -73,7 +73,13 @@ const base = {
     // user-facing surface. It is also the safe direction: App Store Connect
     // refuses a new build under a version that has already been released, and
     // a build number alone would not clear that.
-    version: '1.3.0',
+    //
+    // 1.3.0 -> 1.4.0 (2026-11-09). M2 becomes the app (founder): one prompt, no
+    // mode control, cards the person taps, the journal privacy release, the
+    // Apple button App Review asked for (11b1d5f). Build numbers stay remote:
+    // EAS reported iOS 53 / Android 48 on 2026-11-09, so the next production
+    // build is iOS 54 / Android 49 by autoIncrement, with nothing set by hand.
+    version: '1.4.0',
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'dark',
