@@ -38,6 +38,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeyboardInset } from '../../utils/useKeyboardInset';
+import { useM2Flag } from '../../services/m2Store';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -69,6 +70,28 @@ type Props = {
 // Part-specific header content (title / subtitle / description)
 // ============================================================================
 type Meta = { title: string; color: string; subtitle?: string; description: string };
+
+// The YOU folder's opening paragraph, split out so M2 can replace it alone.
+// Runtime-identical to the single string it was: biography, blank line, rest.
+const YOU_BIOGRAPHY =
+  'You are the one all of this arrives at. You navigated between your fixer and your skeptic and built your career, your relationships, the rhythms of your life — finding ways to feel okay inside the system. You have done this brilliantly, for your whole life.';
+const YOU_REST =
+  "You don't choose which part speaks up — the system does that. What you choose is your relationship to what arrives. That's what changes: instead of being run by whichever part is loudest, you stand on ground of your own — what you believe, separate from what your parts believe — and lead from there.\n\n" +
+  "You and Self are not the same thing. You is the one who receives and chooses; Self is what there is to receive from — always there underneath, and reachable once you can let a part go.";
+
+// M2 (ruling 2026-11-05, "invented memory"): the biography above tells every
+// person they built a career and relationships, which the app has no way of
+// knowing, and praises how they did it. This replacement is the audit's
+// suggested fix (package-test-prompts/other-surfaces-audit.md, YOU folder,
+// PartFolderModal.tsx:107), and it changes ONLY that paragraph: the two after
+// it are framework-noun findings the ruling did not cover. M2 accounts only.
+const YOU_BIOGRAPHY_M2 =
+  'You are the one all of this arrives at — the everyday you that takes it all in, finds ways to feel okay, and built the life you have.';
+
+function descriptionFor(partKey: NodeKey, meta: Meta, m2: boolean): string {
+  return m2 && partKey === 'self-like' ? YOU_BIOGRAPHY_M2 + '\n\n' + YOU_REST : meta.description;
+}
+
 const META: Record<NodeKey, Meta> = {
   wound: {
     title: 'The Wound',
@@ -103,10 +126,7 @@ const META: Record<NodeKey, Meta> = {
     // how well, then (2) name the new possibility — leading from its own
     // ground (the belief, separate from the parts) rather than being run by
     // the loudest part. Two paragraphs joined by a blank line.
-    description:
-      'You are the one all of this arrives at. You navigated between your fixer and your skeptic and built your career, your relationships, the rhythms of your life — finding ways to feel okay inside the system. You have done this brilliantly, for your whole life.\n\n' +
-      "You don't choose which part speaks up — the system does that. What you choose is your relationship to what arrives. That's what changes: instead of being run by whichever part is loudest, you stand on ground of your own — what you believe, separate from what your parts believe — and lead from there.\n\n" +
-      "You and Self are not the same thing. You is the one who receives and chooses; Self is what there is to receive from — always there underneath, and reachable once you can let a part go.",
+    description: YOU_BIOGRAPHY + '\n\n' + YOU_REST,
   },
   manager: {
     title: 'Managers',
@@ -255,6 +275,11 @@ const WOUND_BODY = {
   feeling: { label: 'The Feeling Layer', key: 'feeling' },
   body:    { label: 'Where It Lives',    key: 'body' },
   history: { label: 'When It Started',   key: 'history' },
+  // M2 only, and only once they've said it (home-layer-for-code.md section
+  // 3): who the part is without what it carries. No placeholder, so the row
+  // is hidden while empty; empty-state wording is the founder's to write.
+  // Same words as the card's field (services/m2.ts).
+  underneath: { label: 'Who It Is Without What It Carries', key: 'underneath' },
 } as const;
 
 const FIXER_BODY = {
@@ -302,6 +327,8 @@ const PROTECTOR_ROW_DEEPER_SHOWN = deeperMinusBody(MANAGER_FIREFIGHTER_DEEPER, P
 export function PartFolderModal({
   visible, partKey, mapData, parts, onClose,
 }: Props) {
+  // Before the early return, so the hook runs on every render.
+  const m2 = useM2Flag();
   if (!partKey) return null;
   const meta = META[partKey];
   // For wound/fixer/skeptic/self-like, the canonical part row is the
@@ -343,7 +370,7 @@ export function PartFolderModal({
           {meta.subtitle ? (
             <Text style={[styles.subtitle, { color: meta.color }]}>{meta.subtitle.toUpperCase()}</Text>
           ) : null}
-          <Text style={styles.description}>{meta.description}</Text>
+          <Text style={styles.description}>{descriptionFor(partKey, meta, m2)}</Text>
 
           {/* User's articulated belief — the single belief that
               activates the leading voice across the whole map (round 9
@@ -364,7 +391,7 @@ export function PartFolderModal({
               empty fields show a quiet italic placeholder so the user can
               see what the map is building toward, instead of a missing row.
               Folders refine over time as the AI files content. */}
-          {partKey === 'wound'       ? <WoundSections      mapData={mapData} part={part} /> : null}
+          {partKey === 'wound'       ? <WoundSections      mapData={mapData} part={part} m2={m2} /> : null}
           {partKey === 'fixer'       ? <FixerSections      part={part} />                    : null}
           {partKey === 'skeptic'     ? <SkepticSections    part={part} />                    : null}
           {partKey === 'self'        ? <SelfSections       part={part} color={meta.color} /> : null}
@@ -866,7 +893,9 @@ function GoDeeperSection({ part, fields }: { part: any; fields: DeeperField[] })
 // Order within each: DetectedPill → main sections → SelfVoiceButton →
 // GoDeeperSection.
 // ============================================================================
-function WoundSections({ mapData, part }: { mapData: any; part: any }) {
+function WoundSections({ mapData, part, m2 }: { mapData: any; part: any; m2: boolean }) {
+  // Hidden unless M2 and filled; every other row keeps its placeholder.
+  const underneath = m2 ? readField(part, WOUND_BODY.underneath.key) : '';
   return (
     <View style={styles.sections}>
       <DetectedPill part={part} color="#E05050" />
@@ -890,6 +919,9 @@ function WoundSections({ mapData, part }: { mapData: any; part: any }) {
         value={readField(part, WOUND_BODY.history.key) || mapData?.objectiveStory}
         placeholder="Still emerging..."
       />
+      {underneath ? (
+        <Section label={WOUND_BODY.underneath.label} value={underneath} placeholder="" />
+      ) : null}
       <SelfVoiceButton part={part} />
       <PartRecencyRows firstDetected={part?.firstDetected} lastVisitedAt={part?.lastVisitedAt} lastSource={part?.lastSource} />
       <GoDeeperSection part={part} fields={WOUND_DEEPER_SHOWN} />

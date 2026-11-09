@@ -66,6 +66,16 @@ const argvProfile =
     ? process.argv[argvProfileIdx + 1]
     : null;
 const profile = argvProfile || process.env.EAS_BUILD_PROFILE || 'production';
+
+// STAGING (2026-11-05): an internal build of the M2 branch pointed at a
+// staging server, for the founder's own device. It gets its own checks, the
+// inverse of production's on the two points that matter: it must NOT use the
+// store identifier and must NOT talk to the production server. The production
+// path below is untouched.
+if (profile === 'staging') {
+  process.exit(checkStaging() ? 0 : 1);
+}
+
 // Only enforce in production. Dev / preview builds may legitimately
 // point at localhost or a staging URL.
 if (profile !== 'production') {
@@ -365,3 +375,85 @@ if (easSecrets === null) {
 
 console.log(pass ? '[prebuild-check] ALL CHECKS PASSED' : '[prebuild-check] FAILURES — aborting build');
 process.exit(pass ? 0 : 1);
+
+// ---- STAGING (2026-11-05) ----------------------------------------------------
+// Self-contained on purpose: it runs before the production block's `let pass`
+// exists, and must not share state with it. Hoisted, so the early call above
+// reaches it.
+//
+// Evaluates app.config.js exactly as the staging build will — the profile's
+// env from eas.json applied first — and checks the four things a staging
+// build gets wrong in a way nobody sees until the device:
+//   1. it is internal distribution, never auto-increments, never submits;
+//   2. it uses the internal identifier on both platforms, never the store one;
+//   3. it points at an https server that is not production and not a dev URL;
+//   4. Android keeps INTERNET (the May 2026 outage applies to every build).
+function checkStaging() {
+  const fs = require('fs');
+  const STORE_ID = 'com.srulischor.innermap';
+  const INTERNAL_ID = 'com.srulischor.innermap.dev';
+  const PRODUCTION_URL = 'https://inner-map-production.up.railway.app';
+  let ok = true;
+  const say = (label, good, hint) => {
+    console.log(`  ${good ? '✓' : '✗'} ${label}${good ? '' : ` — ${hint || 'FAIL'}`}`);
+    if (!good) ok = false;
+  };
+  console.log('[prebuild-check] profile=staging — running staging checks');
+
+  let eas;
+  try {
+    eas = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'eas.json'), 'utf8'));
+  } catch (e) {
+    say('eas.json parses', false, e?.message || String(e));
+    return false;
+  }
+  const prof = eas?.build?.staging;
+  say('eas.json has a staging profile', !!prof, 'add build.staging to eas.json');
+  if (!prof) return false;
+  say('staging is internal distribution', prof.distribution === 'internal',
+    `distribution is "${prof.distribution}" — a staging build must never be a store build`);
+  say('staging never auto-increments build numbers', !prof.autoIncrement,
+    'remove autoIncrement from build.staging');
+  say('nothing submits a staging build', !(eas?.submit && eas.submit.staging),
+    'remove submit.staging from eas.json');
+
+  // The profile's env, applied the way EAS applies it, so this evaluates the
+  // same config the builder will.
+  for (const [k, v] of Object.entries(prof.env || {})) process.env[k] = String(v);
+  say('APP_VARIANT is staging', process.env.APP_VARIANT === 'staging',
+    'set build.staging.env.APP_VARIANT to "staging"');
+
+  let expo;
+  try {
+    const fn = require(path.join(__dirname, '..', 'app.config.js'));
+    expo = (typeof fn === 'function' ? fn() : fn)?.expo;
+  } catch (e) {
+    say('app.config.js evaluates for staging', false, e?.message || String(e));
+    console.log('[prebuild-check] FAILURES — aborting staging build');
+    return false;
+  }
+  say('app.config.js evaluates for staging', !!expo, 'app.config.js returned no expo object');
+  if (!expo) return false;
+
+  say('iOS bundle id is the internal one, never the store one',
+    expo?.ios?.bundleIdentifier === INTERNAL_ID && expo?.ios?.bundleIdentifier !== STORE_ID,
+    `got "${expo?.ios?.bundleIdentifier}"`);
+  say('Android package is the internal one, never the store one',
+    expo?.android?.package === INTERNAL_ID && expo?.android?.package !== STORE_ID,
+    `got "${expo?.android?.package}"`);
+
+  const url = String(expo?.extra?.apiBaseUrl || '');
+  say('apiBaseUrl is absolute https', /^https:\/\/[^\s/]+/i.test(url), `got "${url}"`);
+  say('apiBaseUrl is NOT the production server',
+    url.replace(/\/+$/, '').toLowerCase() !== PRODUCTION_URL,
+    'a staging build must not put test conversations on the live server');
+  say('apiBaseUrl is not a localhost / dev URL',
+    !/localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2|192\.168\.|exp:\/\//i.test(url), `got "${url}"`);
+
+  const perms = Array.isArray(expo?.android?.permissions) ? expo.android.permissions : [];
+  say('android.permissions includes INTERNET', perms.includes('INTERNET'),
+    'add "INTERNET" to android.permissions (May 2026 outage)');
+
+  console.log(ok ? `[prebuild-check] STAGING CHECKS PASSED — ${url}` : '[prebuild-check] FAILURES — aborting staging build');
+  return ok;
+}

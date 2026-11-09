@@ -58,6 +58,8 @@ export type GuideSlide = {
 
 // ===== SECTION 0: WELCOME =====
 // Same slides shown during onboarding AND in the Guide tab's WELCOME pill.
+// Both read them through welcomeSlidesFor(m2), below the array: an M2 account
+// gets one paragraph changed, everyone else gets exactly these.
 // Single source of truth so concepts can be revisited later without
 // drifting out of sync with the first-time experience.
 //
@@ -76,6 +78,24 @@ export type GuideSlide = {
 // the chatBubble visual, whose renderer had outlived its original
 // slide), so the patterns slide reads as a payoff, not a cold open.
 // Result: 7 slides total.
+
+// The companion slide's second paragraph, split out so M2 can replace it
+// alone. Runtime-identical to the literal it was.
+const LEARNS_WHO_YOU_ARE =
+  "Over time, Inner Map learns who you are and what you're moving through. The more it knows you, the more its responses can meet you where you actually are.";
+
+// M2 (ruling 2026-11-05, "invented memory"): "learns who you are … the more it
+// knows you" claims more than the app keeps. What it keeps across
+// conversations is the map, key moments and some of what was said — Draft
+// 3.5's own description (draft3 (10).md, line 99). The words are the app's,
+// written to that line for the founder's review; the audit
+// (other-surfaces-audit.md, guideContent.ts:130) named the problem and
+// offered no replacement. No "transcript" claim either way: the app does save
+// conversations to the person's history, so "it doesn't keep a transcript"
+// would be false here.
+const KEEPS_WHAT_IT_KEEPS =
+  "Over time, Inner Map keeps your map, key moments and some of what you've said, so you don't have to start over each time.";
+
 export const WELCOME_SLIDES: GuideSlide[] = [
   {
     visual: 'intro',
@@ -127,7 +147,7 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     title: 'A companion for the long journey',
     body: [
       "Open the app when something is activated and you can't quite name the feeling. Return when a pattern keeps repeating and you want to understand why. Use it when you need to be heard without advice or fixing. Mark the moments when something shifts. Sit with it between therapy sessions, when you need somewhere to land.",
-      "Over time, Inner Map learns who you are and what you're moving through. The more it knows you, the more its responses can meet you where you actually are.",
+      LEARNS_WHO_YOU_ARE,
     ],
   },
   {
@@ -145,6 +165,19 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     ],
   },
 ];
+
+// The same slides with the one M2 change. Every other slide and paragraph is
+// the same object, so the two decks cannot drift apart anywhere else.
+export const M2_WELCOME_SLIDES: GuideSlide[] = WELCOME_SLIDES.map((s) =>
+  s.body.includes(LEARNS_WHO_YOU_ARE)
+    ? { ...s, body: s.body.map((p) => (p === LEARNS_WHO_YOU_ARE ? KEEPS_WHAT_IT_KEEPS : p)) }
+    : s,
+);
+
+/** The welcome deck for this account. Off M2 it is WELCOME_SLIDES itself. */
+export function welcomeSlidesFor(m2: boolean): GuideSlide[] {
+  return m2 ? M2_WELCOME_SLIDES : WELCOME_SLIDES;
+}
 
 // ===== SECTION 1: THE MAP =====
 export const MAP_SLIDES: GuideSlide[] = [

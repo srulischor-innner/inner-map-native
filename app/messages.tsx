@@ -26,6 +26,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors, fonts, spacing } from '../constants/theme';
 import { api, InboxMessage } from '../services/api';
 import { refreshInboxStatus } from '../services/messagesInbox';
+import { M2_CARD_KIND } from '../services/m2';
+import { M2InboxCard } from '../components/m2/M2Cards';
 import { getInboxPushOptIn, enableInboxPush } from '../services/push';
 import { useKeyboardInset } from '../utils/useKeyboardInset';
 
@@ -160,6 +162,11 @@ export default function MessagesScreen() {
               <EnrichmentCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
             ) : m.kind === 'middle_ground' ? (
               <PendingPartsCard key={m.id} message={m} onEditFocus={ensureEditVisible} variant={MIDDLE_GROUND_VARIANT} />
+            ) : m.kind === M2_CARD_KIND ? (
+              // M2: the same card the chat screen shows (components/m2/M2Cards),
+              // so a card in both places behaves the same in both. Only an M2
+              // account is ever sent this kind.
+              <M2InboxCard key={m.id} message={m} onEditFocus={ensureEditVisible} />
             ) : (
               <NoteCard key={m.id} message={m} />
             ),

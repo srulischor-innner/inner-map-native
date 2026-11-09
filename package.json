@@ -12,6 +12,8 @@
     "build:android:prod": "node scripts/check-production-build.js --profile production && eas build --platform android --profile production",
     "build:ios:prod": "node scripts/check-production-build.js --profile production && eas build --platform ios --profile production",
     "build:all:prod": "node scripts/check-production-build.js --profile production && eas build --platform all --profile production",
+    "build:ios:staging": "node scripts/check-production-build.js --profile staging && eas build --platform ios --profile staging",
+    "build:android:staging": "node scripts/check-production-build.js --profile staging && eas build --platform android --profile staging",
     "preview:reading": "node scripts/preview-reading-web.js"
   },
   "dependencies": {

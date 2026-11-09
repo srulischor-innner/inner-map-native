@@ -25,8 +25,9 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { colors, radii, spacing, fonts } from '../../constants/theme';
+import { useM2Flag } from '../../services/m2Store';
 import {
-  WELCOME_SLIDES,
+  welcomeSlidesFor,
   MAP_SLIDES,
   HEALING_SLIDES,
   USING_FEATURES,
@@ -58,6 +59,9 @@ export default function GuideScreen() {
   // start to grok the framing on the second or third pass after they've
   // had real conversations, so it lives here permanently.
   const [section, setSection] = useState<SectionId>('welcome');
+  // M2 changes one welcome paragraph (utils/guideContent.ts); off M2 this is
+  // WELCOME_SLIDES itself.
+  const welcomeSlides = welcomeSlidesFor(useM2Flag());
   // Ask modal — opened by the floating chat bubble. Available from any
   // pill so users never have to leave their slide to ask a question.
   const [askOpen, setAskOpen] = useState(false);
@@ -143,7 +147,7 @@ export default function GuideScreen() {
         // the onboarding flow (app/onboarding.tsx) and runs once per
         // install. The Guide tab always renders the same slides
         // statically with standard typography.
-        <SlideSection slides={WELCOME_SLIDES} />
+        <SlideSection slides={welcomeSlides} />
       ) : section === 'map' ? (
         <SlideSection slides={MAP_SLIDES} />
       ) : section === 'healing' ? (

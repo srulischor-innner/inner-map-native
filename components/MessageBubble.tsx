@@ -52,6 +52,11 @@ export type ChatMsg = {
    *  to the Map tab. Set by the chat send pipeline in app/(tabs)/index.tsx
    *  on the streamed rawAccum BEFORE markers are stripped for display. */
   starterMapComplete?: boolean;
+  /** M2 only: the cards this reply offered (services/m2.ts m2CardKey), from
+   *  the done frame's cardsAdded. The chat screen draws each one under this
+   *  bubble — live until tapped, greyed once declined or replaced. The bubble
+   *  itself never reads it. */
+  m2CardKeys?: string[];
   /** Phase 2 (polish round 8) — when present, the bubble renders as a
    *  belief-saved confirmation card instead of a regular chat bubble.
    *  No avatar, no streaming caret, no part badge — just a centered
