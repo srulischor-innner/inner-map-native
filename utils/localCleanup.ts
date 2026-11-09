@@ -17,6 +17,10 @@
 //   5. Clear all onboarding / preference flags from AsyncStorage.
 //   6. Reset module-level identity cache so getUserId() mints fresh
 //      on the next call.
+//   7. Empty the voice recorder's cache folders (iOS <Caches>/ExpoAudio,
+//      Android <cacheDir>/Audio): every mic deletes its own file once the
+//      server has had it, and this takes anything a crash or a killed app
+//      left behind (utils/recordingCleanup.ts).
 //
 // Each step is wrapped in try/catch — a partial failure on one
 // surface shouldn't block the others. The user will see the
@@ -28,6 +32,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as encryptedStorage from './encryptedStorage';
 import { clearTokens } from '../services/user';
+import { clearRecorderCaches } from './recordingCleanup';
 
 // Keys we own and need to clear on account deletion. The match is
 // EXACT for these — any future addition to AsyncStorage should
@@ -91,6 +96,9 @@ const ASYNC_KEYS_TO_CLEAR = [
   // the four surfaces that describe this setting promise — and one left with
   // 'true' is a stale echo of a choice the new person never made.
   'journal.shareDefault',
+  // The journal's retry list of server deletes (services/journalDeletes.ts).
+  // The server has purged the account, so there is nothing left to retry.
+  'journal.pendingServerDeletes',
   // Push opt-in. Leaving this set meant the new account was recorded as having
   // already answered a question nobody asked it, so app/messages.tsx never
   // offered the prompt again.
@@ -187,6 +195,9 @@ export async function wipeLocalAccountData(): Promise<{
   } catch (e) {
     console.warn('[local-cleanup] clearTokens failed:', (e as Error)?.message);
   }
+
+  // 7. The voice recorder's cache folders.
+  await clearRecorderCaches();
 
   console.log(`[local-cleanup] journal=${journalCleared} secureKeys=${secureKeysCleared}/${SECURE_KEYS_TO_CLEAR.length} asyncKeys=${asyncKeysCleared}`);
   return { journalCleared, secureKeysCleared, asyncKeysCleared };

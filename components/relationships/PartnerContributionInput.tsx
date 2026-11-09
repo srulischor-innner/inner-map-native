@@ -33,6 +33,7 @@ import { useAudioRecorder, AudioModule, RecordingPresets, setAudioModeAsync } fr
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
+import { deleteRecording } from '../../utils/recordingCleanup';
 import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
 import { ensureRecordingMode } from '../../utils/ttsStream';
 
@@ -229,6 +230,7 @@ export function PartnerContributionInput({
       console.warn('[shared-compose-voice] recorder.stop threw:', (e as Error)?.message);
     }
     if (willDiscard) {
+      void deleteRecording(uri); // a too-short take is never kept
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
       Alert.alert(
         'Hold a bit longer',
@@ -255,6 +257,8 @@ export function PartnerContributionInput({
     } catch (err) {
       console.warn('[shared-compose-voice] transcribe failed:', (err as Error)?.message);
     }
+    // Gone once the server has had it (utils/recordingCleanup.ts).
+    void deleteRecording(uri);
     setTranscribing(false);
     if (!transcript) {
       Alert.alert(

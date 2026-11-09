@@ -38,6 +38,7 @@ import * as Haptics from 'expo-haptics';
 // places in this codebase (app/settings.tsx, app/account/delete.tsx)
 // use. The new top-level API removed these symbols.
 import * as FileSystem from 'expo-file-system/legacy';
+import { deleteRecording } from '../../utils/recordingCleanup';
 import {
   useAudioRecorder, AudioModule, RecordingPresets,
   setAudioModeAsync,
@@ -517,7 +518,9 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
     console.log(`[map-voice-bar] sendAudio START mode=${mode}`);
     setState('thinking');
     try {
-      const result = await api.mapVoiceTurn(uri, mime, mode);
+      // The recording is deleted the moment the server has had it, answered
+      // or not (utils/recordingCleanup.ts). Nothing retries from the file.
+      const result = await api.mapVoiceTurn(uri, mime, mode).finally(() => { void deleteRecording(uri); });
       console.log(`[map-voice-bar] sendAudio — mapVoiceTurn resolved (${result ? 'truthy' : 'null'})`);
       if (!result) {
         console.warn('[map-voice-bar] turn returned null');
@@ -649,6 +652,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       console.log('[map-voice-bar] slide-cancelled — discarding');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       showFallbackToast({ kind: 'slide-cancelled' });
+      void deleteRecording(recorder.uri); // a discarded take is never kept
       setState('idle');
       setActiveMic(null);
       return;
@@ -660,6 +664,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       // as "the mic is broken." Now they see "Hold to record."
       console.log(`[map-voice-bar] hold too short (${heldMs}ms < ${MIN_HOLD_MS}ms) — toast`);
       showFallbackToast({ kind: 'hold-to-record' });
+      void deleteRecording(recorder.uri); // a too-short take is never kept
       setState('idle');
       setActiveMic(null);
       return;

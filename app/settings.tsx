@@ -58,6 +58,7 @@ import {
   biometricsAvailable, isLockEnabled, setLockEnabled,
 } from '../services/biometrics';
 import { getJournalShareDefault, setJournalShareDefault } from '../services/journal';
+import { clearRecorderCaches } from '../utils/recordingCleanup';
 import { getInboxPushOptIn, enableInboxPush, disableInboxPush } from '../services/push';
 import { api } from '../services/api';
 import type { BillingStatus } from '../services/api';
@@ -960,6 +961,10 @@ function AccountSection() {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             try { await clearUserId(); } catch {}
             try { await resetOnboarding(); } catch {}
+            // Sign-out hands the device to whoever signs in next, so no voice
+            // recording stays behind (utils/recordingCleanup.ts). Every mic
+            // deletes its own file; this takes anything a crash left.
+            try { await clearRecorderCaches(); } catch {}
             // Replace, not push — the back stack should be empty
             // post-sign-out so the user can't navigate "back" into
             // their previous session's screens.

@@ -37,6 +37,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useRouter, useFocusEffect } from 'expo-router';
 
 import { api, ChatMessage } from '../../services/api';
+import { deleteRecording } from '../../utils/recordingCleanup';
 import type { BudgetRefusal, TrialFreezeRefusal } from '../../services/api';
 import { getTopUpProduct, purchase } from '../../services/purchases';
 import { parseChatMeta, parseAttentionStatePayload, stripMarkers, stripMarkersForDisplay, hasStarterMapComplete, holdBackBoundary } from '../../utils/markers';
@@ -1291,6 +1292,12 @@ export default function ChatScreen() {
     } catch (err) {
       console.warn('[chat] voice transcribe failed:', (err as Error)?.message);
     }
+    // THE RECORDING IS GONE ONCE THE SERVER HAS HAD IT (founder, 2026-11-09).
+    // It used to stay for the bubble's play button; the bubble now shows the
+    // voice note's shape, its length and the transcript, with nothing to play
+    // (components/MessageBubble.tsx). Deleted whether or not transcription
+    // worked: nothing retries from the file (utils/recordingCleanup.ts).
+    void deleteRecording(uri);
     // Update the bubble in place — transcript becomes a real string (possibly
     // empty-string, which the bubble renders as "(nothing heard)").
     // Update IN the captured turnMode's thread so a mode switch

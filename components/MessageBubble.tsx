@@ -9,14 +9,9 @@
 // See components/AudioToggle.tsx.
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { View, Text, Pressable, Animated, Easing, StyleSheet, PanResponder, LayoutChangeEvent, ActivityIndicator, ActionSheetIOS, Alert, Platform } from 'react-native';
+import { View, Text, Pressable, Animated, Easing, StyleSheet, ActivityIndicator, ActionSheetIOS, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { setAudioModeAsync } from 'expo-audio';
-import {
-  createManagedPlayer, pauseManaged, playManaged, releaseManagedPlayer,
-  type ManagedPlayer,
-} from '../utils/audioSession';
 
 import { colors, fonts, radii, spacing } from '../constants/theme';
 import { PartBadge } from './PartBadge';
@@ -395,10 +390,20 @@ function AssistantBubbleBody({
 }
 
 // ============================================================================
-// VoiceNoteBubble — play/pause + static waveform + duration. Uses expo-audio's
-// createAudioPlayer pointed at the local file URI expo-audio saved when the
-// user released the press-and-hold mic in ChatInput. Singleton pattern with
-// currentPlayer lets tapping another voice note auto-stop the previous.
+// VoiceNoteBubble — the SHAPE of what was said, and what it became.
+//
+// NO PLAYBACK (founder, 2026-11-09). The recording is deleted the moment the
+// server has transcribed it (utils/recordingCleanup.ts), so there is nothing
+// to play. It used to be a play/pause button over an expo-audio player, a
+// tap-and-drag waveform and a running "0:03 / 0:08" counter; that player
+// pointed at a file that no longer exists. The bubble now shows:
+//   - a mic glyph where the play button was (not a button: nothing happens on
+//     tap), so it still reads as something spoken rather than typed;
+//   - the same 20-bar waveform, static, seeded from the note so each one keeps
+//     its own shape;
+//   - the length, "0:08";
+//   - below the hairline, the transcript — "Transcribing…" until it lands, and
+//     "(nothing heard)" if it came back empty — exactly as before.
 // ============================================================================
 function VoiceNoteBubble({
   id, uri, durationSec, transcript,
@@ -408,27 +413,13 @@ function VoiceNoteBubble({
   durationSec: number;
   transcript: string | null;
 }) {
-  const [playing, setPlaying] = useState(false);
-  const [loading, setLoading] = useState(false);
-  // Live playback position in seconds — drives the progress coloring on the
-  // waveform AND the "0:03 / 0:08" counter. Updated every 100ms while the
-  // player is active.
-  const [currentTime, setCurrentTime] = useState(0);
-  const playerRef = useRef<ManagedPlayer | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Measured width of the waveform view — used to map finger x → seek seconds
-  // for both tap-to-seek and drag-to-scrub.
-  const waveformWidthRef = useRef<number>(0);
-  // (Voice notes used to coordinate with the AI-message TTS player via a
-  // shared slot. That coordination layer was removed when audio became a
-  // simple session-level toggle. Each voice note now manages its own
-  // playback in isolation — if you want it paused, tap pause yourself.)
-
-  // 20 fixed-height bars derived from the URI hash so the waveform is stable
-  // across renders but different per message.
+  // 20 fixed-height bars derived from the note's id so the waveform is stable
+  // across renders but different per message. (It hashed the file URI before;
+  // the id is just as stable and does not depend on a file.)
   const bars = useMemo(() => {
+    const key = id || uri || '';
     let seed = 0;
-    for (let i = 0; i < uri.length; i++) seed = (seed * 31 + uri.charCodeAt(i)) >>> 0;
+    for (let i = 0; i < key.length; i++) seed = (seed * 31 + key.charCodeAt(i)) >>> 0;
     const out: number[] = [];
     for (let i = 0; i < 20; i++) {
       seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -437,186 +428,22 @@ function VoiceNoteBubble({
       out.push(6 + Math.round(t * 16 * edgeFade));
     }
     return out;
-  }, [uri]);
+  }, [id, uri]);
 
-  // Release the native player on unmount — prevents leaks if the session is
-  // reset while a bubble is cached in the Messages list.
-  useEffect(() => () => {
-    stopPolling();
-    releaseManagedPlayer(playerRef.current);
-    playerRef.current = null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function stopPolling() {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  }
-
-  function startPolling() {
-    if (pollRef.current) return;
-    pollRef.current = setInterval(() => {
-      const p = playerRef.current;
-      if (!p) return;
-      try {
-        const s = p.currentStatus;
-        const t = typeof s?.currentTime === 'number' ? s.currentTime : 0;
-        setCurrentTime(t);
-        if (s?.didJustFinish) {
-          // Reached the end — reset UI so next tap plays from the start.
-          stopPolling();
-          // Drop the audio-session lease. The player stays loaded so a later
-          // tap resumes instantly; what must not stay claimed is the session.
-          pauseManaged(p);
-          try { p.seekTo(0); } catch {}
-          setCurrentTime(0);
-          setPlaying(false);
-        }
-      } catch {}
-    }, 100);
-  }
-
-  async function ensurePlayer() {
-    if (playerRef.current) return playerRef.current;
-    try {
-      await setAudioModeAsync({
-        allowsRecording: false, playsInSilentMode: true,
-        interruptionMode: 'mixWithOthers', shouldPlayInBackground: false,
-      });
-    } catch {}
-    // BORROWED REASONING, CORRECTED. This block used to carry the
-    // every-other-message silent-dictation argument, pasted verbatim from
-    // utils/ttsStream.ts. It is FALSE here: this is a mixWithOthers voice-note
-    // player, it never precedes a capture, and no recording surface waits on
-    // its teardown. Nothing about dictation was ever at stake on this player.
-    //
-    // The flag still belongs, for a different reason. expo-audio's own
-    // deactivation (ios/AudioModule.swift — onPlaybackComplete and
-    // Function("pause")) is process-wide, and its hasActivePlayers guard reads
-    // clear during the ~60ms gap between two read-aloud sentences: pausing a
-    // voice note in that window would tear the session out from under chat.
-    // One owner decides instead — utils/audioSession.ts.
-    const p = createManagedPlayer({ uri }, 'voice-note');
-    playerRef.current = p;
-    return p;
-  }
-
-  async function toggle() {
-    Haptics.selectionAsync().catch(() => {});
-    // PAUSE — keep the player alive so a later tap resumes from here.
-    if (playing) {
-      pauseManaged(playerRef.current);
-      setPlaying(false);
-      stopPolling();
-      return;
-    }
-    // PLAY (or resume) this voice note's own player. No cross-bubble
-    // coordination — the audio mode toggle controls AI-message TTS;
-    // user voice notes are tap-to-play in isolation.
-    setLoading(true);
-    try {
-      const p = await ensurePlayer();
-      playManaged(p, 'voice-note');
-      setPlaying(true);
-      setLoading(false);
-      startPolling();
-    } catch (e) {
-      console.warn('[voice-note] play failed:', (e as Error).message);
-      setLoading(false);
-      setPlaying(false);
-    }
-  }
-
-  async function seekToRatio(ratio: number) {
-    const r = Math.max(0, Math.min(1, ratio));
-    const secs = durationSec * r;
-    const p = await ensurePlayer();
-    try { await p.seekTo(secs); } catch (e) {
-      console.warn('[voice-note] seek failed:', (e as Error).message);
-    }
-    setCurrentTime(secs);
-  }
-
-  function onWaveformLayout(e: LayoutChangeEvent) {
-    waveformWidthRef.current = e.nativeEvent.layout.width;
-  }
-
-  // Tap / drag scrubbing on the waveform. PanResponder captures the gesture
-  // (including initial tap) so both a single tap on a bar AND a finger drag
-  // across the waveform seek the audio. locationX is relative to the
-  // responder view — exactly what we want.
-  const panResponder = useMemo(
-    () => PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt) => {
-        const w = waveformWidthRef.current;
-        if (w > 0) seekToRatio(evt.nativeEvent.locationX / w);
-      },
-      onPanResponderMove: (evt) => {
-        const w = waveformWidthRef.current;
-        if (w > 0) {
-          const x = Math.max(0, Math.min(w, evt.nativeEvent.locationX));
-          seekToRatio(x / w);
-        }
-      },
-    }),
-    // uri + durationSec captured by seekToRatio's closure; re-creating on
-    // those changes keeps the handler consistent if the same bubble ever
-    // gets a different source.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [uri, durationSec],
-  );
-
-  const ratio = durationSec > 0 ? Math.min(1, currentTime / durationSec) : 0;
-  // Fractional bar position so the color-cutoff moves smoothly across the
-  // 20-bar waveform (e.g. 7.4 means bars 0-7 lit, bar 8 partially, 9-19 dim).
-  const playedBoundary = ratio * 20;
-
-  const counterText = playing
-    ? `${formatDuration(currentTime)} / ${formatDuration(durationSec)}`
-    : formatDuration(durationSec);
-
+  const length = formatDuration(durationSec);
+  const said = transcript === null ? 'transcribing' : transcript.trim() ? transcript : 'nothing heard';
   return (
-    <View>
+    <View accessible accessibilityLabel={`Voice note, ${length}. ${said}`}>
       <View style={voiceStyles.row}>
-        <Pressable
-          onPress={toggle}
-          style={voiceStyles.playBtn}
-          accessibilityLabel={playing ? 'Pause voice note' : 'Play voice note'}
-          hitSlop={6}
-        >
-          {loading ? (
-            <Ionicons name="sync" size={18} color={colors.amber} />
-          ) : (
-            <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.amber} />
-          )}
-        </Pressable>
-
-        {/* Waveform — tap to seek, drag to scrub. Wrapped in a View that
-            owns the PanResponder handlers + onLayout measurement. */}
-        <View
-          style={voiceStyles.waveform}
-          onLayout={onWaveformLayout}
-          {...panResponder.panHandlers}
-        >
+        <View style={voiceStyles.micGlyph} importantForAccessibility="no">
+          <Ionicons name="mic" size={16} color={colors.amber} />
+        </View>
+        <View style={voiceStyles.waveform} importantForAccessibility="no">
           {bars.map((h, i) => (
-            <View
-              key={i}
-              style={[
-                voiceStyles.bar,
-                {
-                  height: h,
-                  // Bar at index i is "played" if its center falls below
-                  // the fractional boundary — gives a smooth progressing
-                  // dividing line as currentTime advances.
-                  backgroundColor: i + 0.5 <= playedBoundary ? '#E6B47A' : 'rgba(230,180,122,0.3)',
-                },
-              ]}
-            />
+            <View key={i} style={[voiceStyles.bar, { height: h }]} />
           ))}
         </View>
-
-        <Text style={voiceStyles.duration}>{counterText}</Text>
+        <Text style={voiceStyles.duration}>{length}</Text>
       </View>
 
       {/* Transcript row below the hairline divider. */}
@@ -647,11 +474,12 @@ const voiceStyles = StyleSheet.create({
     gap: 10,
     minWidth: 240,
   },
-  playBtn: {
+  // Where the play button was: the same circle, read as a label, not a button.
+  micGlyph: {
     width: 32, height: 32, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: colors.amberDim,
-    backgroundColor: 'rgba(230,180,122,0.1)',
+    backgroundColor: 'rgba(230,180,122,0.06)',
   },
   waveform: {
     flex: 1,
@@ -663,17 +491,14 @@ const voiceStyles = StyleSheet.create({
   bar: {
     width: 2.5,
     borderRadius: 1.5,
-    // backgroundColor is set inline per-bar based on playback progress.
+    backgroundColor: 'rgba(230,180,122,0.45)',
   },
   duration: {
     color: colors.creamDim,
     fontFamily: fonts.sans,
     fontSize: 12,
     letterSpacing: 0.3,
-    // Wider — "0:03 / 0:08" is ~10 glyphs; the idle state "0:08" fits fine
-    // in the same column so the play button doesn't jump horizontally when
-    // playback toggles.
-    minWidth: 70,
+    minWidth: 36,
     textAlign: 'right',
   },
   transcriptWrap: {

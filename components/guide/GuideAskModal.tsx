@@ -35,6 +35,7 @@ import {
 import { TypingIndicator } from '../TypingIndicator';
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api, ChatMessage } from '../../services/api';
+import { deleteRecording } from '../../utils/recordingCleanup';
 import type { BudgetRefusal } from '../../services/api';
 import { getTopUpProduct, purchase } from '../../services/purchases';
 import { BudgetRefusalSheet } from '../billing/BudgetRefusalSheet';
@@ -506,6 +507,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
     setRecording(false);
     setSeconds(0);
     setTranscribing(true);
+    let uri: string | null = null;
     try {
       await recorder.stop();
       try {
@@ -514,7 +516,7 @@ export function GuideAskModal({ visible, onClose }: Props) {
           interruptionMode: 'doNotMix', shouldPlayInBackground: false,
         });
       } catch {}
-      const uri = recorder.uri;
+      uri = recorder.uri;
       if (!uri || heldSec < 0.3) { setTranscribing(false); return; }
       const mime = uri.toLowerCase().endsWith('.m4a') ? 'audio/m4a' : 'audio/webm';
       const transcript = await api.transcribe(uri, mime);
@@ -525,6 +527,10 @@ export function GuideAskModal({ visible, onClose }: Props) {
     } catch (err) {
       console.warn('[guide-ask-mic] endRecording failed:', (err as Error).message);
       setTranscribing(false);
+    } finally {
+      // Gone once the server has had it, or once it is discarded as too short
+      // (utils/recordingCleanup.ts). Nothing retries from the file.
+      void deleteRecording(uri ?? recorder.uri);
     }
   }
 

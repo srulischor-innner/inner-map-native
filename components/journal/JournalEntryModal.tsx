@@ -38,6 +38,7 @@ import ReAnimated, {
 
 import { colors, fonts, radii, spacing } from '../../constants/theme';
 import { api } from '../../services/api';
+import { deleteRecording } from '../../utils/recordingCleanup';
 import { JournalKind, getJournalShareDefault } from '../../services/journal';
 import { useRecorderWatch } from '../../utils/recorderWatch';
 import { useRecordingWakeLock, WAKE_TAG } from '../../utils/recordingWakeLock';
@@ -444,6 +445,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     setLocked(false);
     setSeconds(0);
     setTranscribing(true);
+    let uri: string | null = null;
     try {
       await recorder.stop();
       // Reset audio session back to playback mode in case other components
@@ -454,7 +456,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
           interruptionMode: 'doNotMix', shouldPlayInBackground: false,
         });
       } catch {}
-      const uri = recorder.uri;
+      uri = recorder.uri;
       if (!uri || heldSec < 0.3) {
         setTranscribing(false);
         return;
@@ -481,6 +483,11 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     } catch (err) {
       console.warn('[journal-mic] endRecording failed:', (err as Error).message);
       setTranscribing(false);
+    } finally {
+      // Gone once the server has had it, or once it is discarded — too short,
+      // or a private entry's, which never leaves the device at all
+      // (utils/recordingCleanup.ts). Nothing retries from the file.
+      void deleteRecording(uri ?? recorder.uri);
     }
   }
 

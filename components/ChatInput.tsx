@@ -107,6 +107,7 @@ import { colors, fonts, spacing } from '../constants/theme';
 import { ensureRecordingMode, verifyCaptureLive, METERED_HIGH_QUALITY } from '../utils/ttsStream';
 import { useRecorderWatch } from '../utils/recorderWatch';
 import { useRecordingWakeLock, WAKE_TAG } from '../utils/recordingWakeLock';
+import { deleteRecording } from '../utils/recordingCleanup';
 
 export function ChatInput({
   disabled,
@@ -704,6 +705,7 @@ export function ChatInput({
       }
       if (heldMs < MIN_RECORDING_MS) {
         console.warn(`[voice-note] recording too short (${heldMs}ms < ${MIN_RECORDING_MS}ms) — not sending to /api/transcribe`);
+        void deleteRecording(uri); // a too-short take is never kept
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
         Alert.alert(
           'Hold a bit longer',
@@ -740,6 +742,8 @@ export function ChatInput({
     } catch (err) {
       console.warn('[voice-note] cancelRecording stop failed:', (err as Error).message);
     }
+    // A discarded take is never kept (utils/recordingCleanup.ts).
+    void deleteRecording(recorder.uri);
   }
 
   // Called once per hold (from the pan worklet via runOnJS) when the finger

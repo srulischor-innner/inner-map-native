@@ -39,6 +39,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { colors, fonts, spacing } from '../../constants/theme';
 import { api, ChatMessage, RelationshipSession } from '../../services/api';
+import { deleteRecording } from '../../utils/recordingCleanup';
 import { MessageBubble, ChatMsg } from '../MessageBubble';
 import { stripMarkers, stripMarkersForDisplay } from '../../utils/markers';
 import { ChatInput } from '../ChatInput';
@@ -544,6 +545,9 @@ export function RelationshipChat({
     } catch (err) {
       console.warn('[rel-chat] voice transcribe failed:', (err as Error)?.message);
     }
+    // The recording is gone once the server has had it (utils/recordingCleanup.ts);
+    // the bubble keeps its transcript and no longer plays back.
+    void deleteRecording(uri);
     // Update the bubble in place. Empty transcript → bubble stays
     // ("nothing heard"), no AI turn triggered.
     setMessages((prev) =>
