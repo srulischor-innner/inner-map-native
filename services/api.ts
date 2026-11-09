@@ -2166,6 +2166,11 @@ export const api = {
     // tap a voice — the resources need to appear on screen).
     crisis_detected?: boolean;
     crisis_tier?: 1 | 2 | null;
+    // M2 (chat stack, lib/m2/mics.js CRISIS_RESOURCES): the spoken reply no
+    // longer reads URLs out, so a crisis turn sends the resources for the
+    // screen instead. Shown by CrisisResourcesCard (utils/micResources.ts
+    // turns each into its links). Absent from the old stack.
+    crisis_resources?: unknown;
     audio_base64: string;
     audio_mime: string;
   } | { error: string; message?: string } | null> {

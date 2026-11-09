@@ -39,6 +39,7 @@ import * as Haptics from 'expo-haptics';
 // use. The new top-level API removed these symbols.
 import * as FileSystem from 'expo-file-system/legacy';
 import { deleteRecording } from '../../utils/recordingCleanup';
+import { parseMicResources, type MicResource } from '../../utils/micResources';
 import {
   useAudioRecorder, AudioModule, RecordingPresets,
   setAudioModeAsync,
@@ -233,6 +234,8 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
   // until the user dismisses it — they shouldn't be able to press the
   // mic again on the same turn without seeing the resources.
   const [crisisVisible, setCrisisVisible] = useState(false);
+  // The resources the crisis turn carried (M2), for the card; [] shows its own list.
+  const [crisisResources, setCrisisResources] = useState<MicResource[]>([]);
 
   // Recording infra — same expo-audio hook the chat tab voice-note
   // path uses. HIGH_QUALITY gives m4a on iOS / mp4 on Android, both
@@ -554,6 +557,9 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
       //   4. Skip the onDetectedPart callback entirely on crisis.
       if (result.crisis_detected) {
         console.log('[map-voice-bar] crisis_detected — surfacing resources card');
+        // The spoken reply no longer reads URLs out (M2); the resources it
+        // names come with the turn and the card shows them as links.
+        setCrisisResources(parseMicResources(result.crisis_resources));
         setCrisisVisible(true);
         await playReplyAudio(result.audio_base64);
         // Don't refreshBeliefStatus here — irrelevant on crisis turn.
@@ -896,6 +902,7 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
         // be with you in this", which never named a person as the next step
         // and framed the AI as "with you" — five-screens audit, section 3.)
         lede={MAP_CRISIS_LEDE}
+        resources={crisisResources}
       />
       <View
         ref={barRef}

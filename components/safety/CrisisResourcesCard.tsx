@@ -36,6 +36,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, fonts, spacing } from '../../constants/theme';
+import type { MicResource } from '../../utils/micResources';
 
 type Props = {
   /** When true, renders as a full-screen modal with a Close (X) button
@@ -55,6 +56,10 @@ type Props = {
   /** Optional lede paragraph override. Defaults to the standard
    *  "You're not alone. These resources are available 24/7." copy. */
   lede?: string;
+  /** The resources a spoken mic reply carried (utils/micResources.ts
+   *  parseMicResources). When there are any, the card shows THAT list as
+   *  links, since the voice no longer reads URLs aloud; otherwise its own. */
+  resources?: MicResource[];
 };
 
 // Word for word from safety.md (see the header). Capitalised where a line
@@ -66,7 +71,7 @@ export const SAFETY_LINES = {
   psychosisOrMania: 'For psychosis or mania: a doctor, a psychiatrist or 988.',
 } as const;
 
-function CrisisResourcesContent({ header, lede }: { header?: string; lede?: string }) {
+function CrisisResourcesContent({ header, lede, resources }: { header?: string; lede?: string; resources?: MicResource[] }) {
   const open = useCallback((url: string) => {
     Haptics.selectionAsync().catch(() => {});
     Linking.openURL(url).catch((e) =>
@@ -80,6 +85,39 @@ function CrisisResourcesContent({ header, lede }: { header?: string; lede?: stri
         {lede || "You're not alone. These resources are available 24/7."}
       </Text>
 
+      {resources && resources.length > 0 ? (
+        <>
+          {/* THE LIST THE SPOKEN REPLY CARRIED (M2 mics). Each entry's links
+              were checked in utils/micResources.ts: only a dialable number
+              calls or texts, only an https URL opens. */}
+          {resources.map((r, i) => (
+            <View key={`${r.name}-${i}`}>
+              <Text style={[styles.localeLabel, i > 0 && styles.localeLabelTop]}>{r.name.toUpperCase()}</Text>
+              {r.context ? <Text style={styles.sub}>{r.context}</Text> : null}
+              {r.links.length > 0 ? (
+                <View style={styles.row}>
+                  {r.links.map((l) => (
+                    <Pressable
+                      key={l.href}
+                      onPress={() => open(l.href)}
+                      style={styles.btn}
+                      accessibilityRole={l.kind === 'web' ? 'link' : 'button'}
+                      accessibilityLabel={`${l.label}, ${r.name}`}
+                    >
+                      <Text style={styles.btnText}>{l.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+              {r.details.map((d) => <Text key={d} style={styles.sub}>{d}</Text>)}
+              {r.hours ? <Text style={styles.sub}>{r.hours}</Text> : null}
+            </View>
+          ))}
+          <Text style={[styles.body, styles.bodyTop]}>{SAFETY_LINES.worriedAboutSomeone}</Text>
+          <Text style={[styles.body, styles.bodyTop]}>{SAFETY_LINES.psychosisOrMania}</Text>
+        </>
+      ) : (
+      <>
       <Text style={styles.localeLabel}>UNITED STATES</Text>
       <View style={styles.row}>
         <Pressable onPress={() => open('tel:988')} style={styles.btn} accessibilityLabel="Call 988">
@@ -134,6 +172,8 @@ function CrisisResourcesContent({ header, lede }: { header?: string; lede?: stri
         For immediate danger, call your local emergency number (911 in the US,
         999 in the UK, 112 in much of Europe).
       </Text>
+      </>
+      )}
 
       <Text style={[styles.localeLabel, styles.localeLabelTop]}>A NOTE</Text>
       <Text style={styles.body}>
@@ -146,10 +186,10 @@ function CrisisResourcesContent({ header, lede }: { header?: string; lede?: stri
 }
 
 export function CrisisResourcesCard({
-  asModal = false, visible, onClose, header, lede,
+  asModal = false, visible, onClose, header, lede, resources,
 }: Props) {
   if (!asModal) {
-    return <CrisisResourcesContent header={header} lede={lede} />;
+    return <CrisisResourcesContent header={header} lede={lede} resources={resources} />;
   }
   return (
     <Modal
@@ -173,7 +213,7 @@ export function CrisisResourcesCard({
           contentContainerStyle={styles.modalScroll}
           showsVerticalScrollIndicator={false}
         >
-          <CrisisResourcesContent header={header} lede={lede} />
+          <CrisisResourcesContent header={header} lede={lede} resources={resources} />
         </ScrollView>
       </SafeAreaView>
     </Modal>
