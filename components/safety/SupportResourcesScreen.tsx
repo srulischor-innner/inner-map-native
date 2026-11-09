@@ -1,4 +1,4 @@
-// SupportResourcesScreen — the "You're not alone" resources screen shown
+// SupportResourcesScreen — the "People who can be with you" resources screen (titled "You're not alone" until 1.4.0 build 55) shown
 // when someone picks "I'm in a hard place right now" from the
 // experience-level question.
 //
@@ -81,7 +81,7 @@ export function SupportResourcesScreen({ onContinue, continueLabel }: Props) {
 
   return (
     <ScrollView contentContainerStyle={styles.root} showsVerticalScrollIndicator={false}>
-      <Text style={styles.title}>You're not alone</Text>
+      <Text style={styles.title}>People who can be with you</Text>
       <Text style={styles.body}>
         Inner Map can be a thoughtful companion, but it's not a substitute for a
         real person who knows you. If something is heavy, please also reach out

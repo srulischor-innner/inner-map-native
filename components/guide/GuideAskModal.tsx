@@ -64,8 +64,8 @@ const STARTER_QUESTIONS: string[] = [
   'What is a part?',
   'How is this different from therapy?',
   'What is the wound?',
-  'What does healing actually look like?',
-  "What's the difference between Self and the self-like part?",
+  'What does change look like here?',
+  "What's the difference between Self and 'you'?",
 ];
 
 type Turn = { id: string; role: 'user' | 'assistant'; text: string };

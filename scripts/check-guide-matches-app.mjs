@@ -198,8 +198,15 @@ const youLabel = lift(/<DiamondTapTarget[^>]*\blabel="([A-Z][A-Z \-]*)"/, CANVAS
 const micLabel = lift(/const SELF_LIKE_LABEL = '([^']+)';/, BAR, 'the leading mic label');
 const establishText = lift(/styles\.beliefEstablishText[\s\S]{0,60}?>\s*([^<]+?)\s*<\/Text>/, FOLDER, 'the establish-belief button text');
 const youBeliefLabel = lift(/<Text style=\{styles\.beliefLabel\}>([^<]+)<\/Text>/, FOLDER, "the You folder's belief heading");
-const standOnClause = lift(/<Text style=\{styles\.beliefSubtitle\}>\s*([^<]+?)\s*<\/Text>/, FOLDER, "the You folder's belief subtitle")
-  .split('—')[0].trim();
+// The subtitle's first sentence, "What you stand on, separate from what your
+// parts believe." (founder's copy v2, 2026-11-09; it read "What you stand on —
+// separate from …" before). Its head is how the Map card names the You
+// folder's belief; its clause is how the leading-mic card words it.
+const standOnSentence = lift(/<Text style=\{styles\.beliefSubtitle\}>\s*([^<]+?)\s*<\/Text>/, FOLDER, "the You folder's belief subtitle")
+  .replace(/\s+/g, ' ').split(/(?<=\.)\s/)[0].replace(/\.$/, '').trim();
+const standOnHead = standOnSentence.split(/\s*[,—]\s*/)[0].trim();
+const standOnClause = standOnSentence.split(/\s*[,—]\s*/).slice(1).join(', ').trim();
+if (!standOnHead || !standOnClause) die(`could not split the You folder's belief subtitle: "${standOnSentence}"`);
 const goDeeper = lift(/<Text style=\{styles\.deeperToggleText\}>\{expanded \? '([^']+)'/, FOLDER, 'the Go Deeper toggle text');
 // Lifted THROUGH the render: find the folder that shows a belief row, read
 // which *_BODY record it takes that label from, then read the label off the
@@ -533,11 +540,20 @@ const near = (card, a, b, span = 140) => {
 // Quoting the heading as the app prints it is the whole point. (Measured: with
 // a case-insensitive match, "names the wound's belief row (The Belief)" passed
 // on the SHIPPED BROKEN copy.)
-ok(`the Map card names the wound's belief row (${woundBeliefLabel})`, hasExact(MAP_CARD, woundBeliefLabel),
+// FOUNDER'S COPY V2 (2026-11-09) names the two beliefs in plain words, not by
+// their headings: "The wound's belief …" and "What you stand on, in the You
+// folder, is yours". Both are still lifted from the implementation (the
+// wound's row label, the You folder's subtitle and the map's YOU), so a rename
+// over there still turns this red. GO DEEPER is no longer named on the card.
+const woundBeliefWords = `wound's ${woundBeliefLabel.replace(/^The\s+/i, '').toLowerCase()}`;
+const YOU_FOLDER = new RegExp(`\\b${rx(youLabel)} folder\\b`, 'i');
+ok(`the Map card names the wound's belief ("${woundBeliefWords}", from the row ${woundBeliefLabel})`, has(MAP_CARD, woundBeliefWords),
   'a person who taps the Fixer has to be told where the belief actually is');
-ok(`the Map card names the You folder's belief heading (${youBeliefLabel})`, hasExact(MAP_CARD, youBeliefLabel),
+ok(`the Map card names the other belief as the You folder's ("${standOnHead}", in the ${youLabel} folder)`,
+  has(MAP_CARD, standOnHead) && YOU_FOLDER.test(MAP_CARD.text),
   'the two beliefs are different things and the card has to separate them');
-ok(`the Map card names the ${goDeeper} section`, hasExact(MAP_CARD, goDeeper));
+notes.push(`the Map card no longer names the ${goDeeper} section (founder's copy v2, 2026-11-09); that assertion is retired.`);
+pass++;
 
 // Gated positives: each one is required only while the app is shaped that way,
 // and lifts with a note if the app changes.
@@ -545,7 +561,7 @@ if (barrenKinds.length) {
   for (const k of barrenKinds) {
     const label = k === 'self-like' ? youLabel : k;
     ok(`the Map card marks "${label}" as the folder that carries none of that furniture`,
-      has(MAP_CARD, label) && near(MAP_CARD, label, 'except') && near(MAP_CARD, label, `no ${goDeeper}`),
+      has(MAP_CARD, label) && near(MAP_CARD, label, 'except') && near(MAP_CARD, label, 'nothing to add'),
       `${k} renders none of [${FURNITURE.join(' ')}] — an unqualified account of a folder is false there`);
   }
 } else {
@@ -564,10 +580,18 @@ ok('the Map card says the first press of a mic opens the explainer',
   explainerIntercepts && /first time you press|explainer/i.test(MAP_CARD.text),
   'every reader meets this on their literal first press, and the card described a press that records');
 
-ok(`the leading-mic card uses the mic's own label (${micLabel})`, hasExact(LEADING_CARD, micLabel));
-ok(`the leading-mic card sends people to the node the map labels ${youLabel}`, hasExact(LEADING_CARD, youLabel),
-  'the diamond is the only route to the belief that unlocks this mic');
-ok(`the leading-mic card names the button that starts it ("${establishText}")`, has(LEADING_CARD, establishText));
+// FOUNDER'S COPY V2 (2026-11-09): "the Leading mic" (the label in words, not
+// shouted), and the belief "comes out of the conversation … it's kept in your
+// You folder" instead of "tap YOU … press Establish your belief". The button
+// is still in the You folder and still opens the conversation; the card no
+// longer names it, so that assertion is retired with a note.
+ok(`the leading-mic card uses the mic's own label (${micLabel}, in any case)`,
+  new RegExp(`\\b${rx(micLabel)}\\b`, 'i').test(LEADING_CARD.text));
+ok(`the leading-mic card says where the belief is kept: the ${youLabel} folder`, YOU_FOLDER.test(LEADING_CARD.text),
+  'the You folder is where the belief that unlocks this mic lives');
+ok('the leading-mic card says the belief comes out of the conversation', /comes out of the conversation/i.test(LEADING_CARD.text));
+notes.push(`the leading-mic card no longer names the "${establishText}" button (founder's copy v2, 2026-11-09); that assertion is retired.`);
+pass++;
 ok(`the leading-mic card uses the app's own words for the belief ("${standOnClause}")`, has(LEADING_CARD, standOnClause));
 ok('the leading-mic card says the mic is locked until then', micLocked
   && /\bopens?\b|\bunlocks?\b/i.test(LEADING_CARD.text)

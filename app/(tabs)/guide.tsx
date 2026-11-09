@@ -33,7 +33,6 @@ import {
   USING_PRINCIPLES,
   GuideFeature,
 } from '../../utils/guideContent';
-import { PARTNER_ENABLED } from '../../constants/features';
 import { GuideSlide } from '../../components/guide/GuideSlide';
 import { GuideDots } from '../../components/guide/GuideDots';
 import { GuideAskModal } from '../../components/guide/GuideAskModal';
@@ -293,7 +292,9 @@ function UsingSection() {
       contentContainerStyle={[styles.usingContent, { paddingBottom: spacing.xxl + insets.bottom }]}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.usingH2}>The {PARTNER_ENABLED ? 'seven' : 'six'} ways to use Inner Map</Text>
+      {/* No count (founder's copy v2): it read "six" over seven cards since
+          Partner was hidden. */}
+      <Text style={styles.usingH2}>How to use Inner Map</Text>
       {USING_FEATURES.map((f, i) => (
         <FeatureCard key={i} feature={f} />
       ))}
@@ -330,6 +331,8 @@ function FeatureCard({ feature }: { feature: GuideFeature }) {
   // journal = book, journey = trending line.
   const iconName: Record<GuideFeature['icon'], keyof typeof Ionicons.glyphMap> = {
     chat: 'chatbubble-ellipses-outline',
+    // The same glyph as the menu's Messages row (HamburgerMenu.tsx).
+    messages: 'file-tray-outline',
     map: 'triangle-outline',
     self: 'ellipse-outline',
     'self-like': 'diamond-outline',

@@ -117,19 +117,19 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     visual: 'mapDrawing',
     title: 'Inner Map helps you see them',
     body: [
-      'As you talk, patterns emerge. The same feelings, the same voices, the same pushes and pulls — the AI listens for them and gradually reflects them back. We call it your map.',
+      "As you talk, patterns show themselves: the same feelings, the same voices, the same pushes and pulls. The conversation notices them and offers them back to you, and what you recognise goes on your map, in your own words.",
     ],
   },
   {
     // Merged slide — keeps slide-5's nodeDetect visual (the open
     // circle outline). The earlier chatBubble visual was discarded
-    // with its slide. Title stays "The map changes everything"; body
-    // opens with the sketch framing then flows into the impact
-    // paragraph as one continuous thought.
+    // with its slide. Body opens with the sketch framing then flows
+    // into the impact paragraph as one continuous thought. Title and
+    // body: the founder's copy v2 (2026-11-09).
     visual: 'nodeDetect',
-    title: 'The map changes everything',
+    title: 'The map is the point',
     body: [
-      'Your map starts as a sketch. Every conversation adds a layer. And as it grows clearer — where your patterns come from, what drives them, what holds you back — you stop being surprised by yourself. You start to see the logic underneath what felt like chaos. And once you can see it, you can actually work with it.',
+      "Your map starts as a sketch and gets sharper with every conversation you add to. As it does, you stop being surprised by yourself: you start to see the sense in what felt like chaos, where your patterns came from and what each one is trying to do for you. Once you can see it, you can work with it instead of against it.",
     ],
   },
   {
@@ -141,7 +141,7 @@ export const WELCOME_SLIDES: GuideSlide[] = [
     visual: 'fullmap',
     title: 'A companion for the long journey',
     body: [
-      "Open the app when something is activated and you can't quite name the feeling. Return when a pattern keeps repeating and you want to understand why. Use it when you need to be heard without advice or fixing. Mark the moments when something shifts. Sit with it between therapy sessions, when you need somewhere to land.",
+      "Open the app when something is stirred up and you can't quite name it. Come back when a pattern keeps repeating and you want to understand why. Use it when you need to be heard without advice or fixing. Sit with it between therapy sessions, when you need somewhere to land.",
       KEEPS_WHAT_IT_KEEPS,
     ],
   },
@@ -177,7 +177,7 @@ export const MAP_SLIDES: GuideSlide[] = [
     visual: 'everyone',
     title: 'This is everyone',
     body: [
-      "Everyone has a wound. Not from trauma necessarily — just from being human. Every child, at some point, encountered something overwhelming and formed a conclusion.",
+      "Everyone has a wound. Not from trauma necessarily, just from being human. Somewhere early, usually over many small moments rather than one, a child met something they couldn't make sense of and drew a conclusion about themselves.",
       "The wound doesn't require a villain. It doesn't require a diagnosis. It just requires being a child in a world too big to fully understand.",
       "The parts that grew up around it aren't signs of damage. They're signs of intelligence — a child being resourceful with what they were given.",
     ],
@@ -187,7 +187,7 @@ export const MAP_SLIDES: GuideSlide[] = [
     title: 'The Wound',
     titleColor: '#E05050',
     body: [
-      "Before the protectors, before the patterns — there was a moment. A child who concluded something about themselves to make sense of what was happening.",
+      "Before the protectors, before the patterns, there was that conclusion. A child making sense of what was happening the only way a child can: by deciding something about themselves.",
       '"I am not enough." "I am invisible." "I am too much." "I am not safe."',
       'That conclusion became a lens. Everything since has been organized around it — trying to prove it wrong, trying to avoid feeling it.',
     ],
@@ -218,8 +218,8 @@ export const MAP_SLIDES: GuideSlide[] = [
     titleColor: '#86BDDC',
     body: [
       "The Fixer doesn't always work. Sometimes it overreaches, crashes. And a part noticed.",
-      "The Skeptic developed to protect you from the crash. It pumps the brakes before the Fixer overextends. It says: stop, this will end in more pain.",
-      "It looks like defeat. From the inside it's dignity — a part paying attention and drawing reasonable conclusions from real evidence.",
+      "The Skeptic grew to protect you from the crash. On the surface it pumps the brakes: stop, this will end in more pain. Underneath, it's holding out for something: it won't settle for a version of you that isn't real, so it refuses the performance.",
+      "It looks like defeat. From the inside it's integrity, a part that pays attention, draws reasonable conclusions from real evidence, and won't be fooled.",
     ],
   },
   {
@@ -240,7 +240,7 @@ export const MAP_SLIDES: GuideSlide[] = [
       "Look at what you love. Your work, your interests, the things that give you satisfaction and meaning — much of this lives in the compromise zone. You found ways to express something real within the constraints of the wound.",
       "You don't choose which part speaks up. The system sends what it sends — the fixer's urgency, the skeptic's doubt — and it arrives whether you asked for it or not. What you choose is your relationship to what arrives. That choice is always yours, even when it doesn't feel like it.",
       "Mostly it hasn't felt like it. You have been so fused with the system that you couldn't feel yourself as separate from it — in the game rather than coaching it. That isn't a flaw in you; it's how close you have been standing.",
-      "You and Self are not the same thing. You is the one who receives and chooses; Self is what there is to receive from — always there underneath, and reachable once you can let a part go.",
+      "You and Self are not the same thing. You is the one who receives and chooses; Self is what there is to receive from, always there underneath. It can be touched at any moment, and the more you stand there, the more of it gets lived.",
     ],
   },
   {
@@ -259,7 +259,7 @@ export const MAP_SLIDES: GuideSlide[] = [
     body: [
       "Underneath all the protecting and proving and managing — something was never wounded.",
       "Self has no agenda. No fear. No need for anything to be different. Just genuine curiosity, warmth, and presence.",
-      "Self is not built. It's uncovered. The healing work doesn't create Self — it removes what's been covering it.",
+      "Self is not built. It's uncovered. The work doesn't create Self; it changes which part of yourself you take to be you, so that more of what was always there gets lived.",
     ],
   },
   {
@@ -267,7 +267,7 @@ export const MAP_SLIDES: GuideSlide[] = [
     title: 'Your map',
     body: [
       "This is your map. Not a diagnosis. Not fixed. A living picture of how you're put together — growing more accurate the more you share.",
-      "Every conversation adds to it. Every pattern that surfaces, every feeling named — all of it becomes part of the picture.",
+      "Every conversation can add to it. What you recognise as yours, in your own words, goes on; nothing goes on that you didn't say yes to.",
       "You don't have to understand everything now. The map will explain itself over time.",
     ],
   },
@@ -344,6 +344,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
       "Understanding your map is not the same as healing. Insight is the beginning — not the destination.",
       "Healing happens in layers. It's not linear and it's rarely dramatic.",
       "But there is a shape to it — a direction things move when the work is genuine.",
+      "The stages describe the shape, not a grade. People move through them and back again, and nobody is told which one they're at.",
     ],
   },
   // Stage 1 — split into two slides. The old single "Taking
@@ -375,7 +376,7 @@ export const HEALING_SLIDES: GuideSlide[] = [
     title: 'Stage one — B: Becoming the coach',
     body: [
       "When you first start seeing your parts clearly, there's often something painful in it. The wish that they weren't there. The shame that they are. The quiet sense that something about you must be wrong for them to exist.",
-      "A lot of healing begins with letting that go.",
+      "A lot of healing begins with accepting that it's there, and that it isn't going anywhere, before anything about it changes.",
       "Not by forcing acceptance, but by quietly noticing what's true: these parts are here. They came online for reasons that made sense at the time. You didn't create them. You don't really control them. What you have, what you've always had, is a relationship with them.",
       "You are the coach. You didn't pick the players — the system did, long ago, for reasons that made sense then. A coach can't trade his players, can't shame them off the roster, can't make them into different players. But he can be in real relationship with them — meet each one where they are, get to know what they need, help them grow over time. And slowly, he can help them work together as a team.",
       "You were always the coach. When the players were running the game, that wasn't a failure, and it wasn't a job you forgot to do — you just couldn't hear yourself over the noise. Coaching starts the moment you can.",
@@ -412,8 +413,8 @@ export const HEALING_SLIDES: GuideSlide[] = [
     visual: 'release',
     title: 'Stage three — Release',
     body: [
-      "Through genuine relationship with a part — being truly seen, being truly received — the part begins to see itself differently.",
-      "The fixer discovers it doesn't have to prove anything. The skeptic relaxes its vigilance. The wound discovers it is not the truth about who you are.",
+      "Through real relationship with a part, being seen, being received, something changes in how you hold it. The deepest part of this, a hurt letting go of what it has carried, is usually done with a real person present; here the ground for it gets built.",
+      "The Fixer stops having to prove anything, and its force is still yours. The Skeptic stops having to brace, and its refusal to be fooled is still yours. The wound stops being the truth about who you are. Nothing gets smaller. Both sides, at full strength, led by you, make something that was never there before.",
       "This stage happens in its own time. It cannot be forced — but it can be prepared for.",
     ],
   },
@@ -423,10 +424,10 @@ export const HEALING_SLIDES: GuideSlide[] = [
     body: [
       "A word about what healing actually means here.",
       "Most people think of healing as going back — returning to some original state before the wound. That's not what this is.",
-      "The wound changed you. It revealed depths that wouldn't have existed without the breaking. The fixer's extraordinary drive, the skeptic's hard-won wisdom, the sensitivity that comes from having felt things deeply — none of that disappears. It transforms.",
+      "The wound changed you. It pressed things out of you that wouldn't have shown themselves otherwise: the Fixer's drive, the Skeptic's discernment, the depth that comes from having felt things. None of that disappears. It gets to be yours, instead of a job.",
       "What you're moving toward has never existed before. Not a restoration of something lost — a creation of something new. A version of yourself that is both shaped by everything you've been through AND no longer limited by it.",
-      "This is why the work is worth doing. Not to undo your history. To become what your history was always pointing toward.",
-      "What was always whole underneath becomes available again.",
+      "This isn't about undoing your history. Who you are was always there, underneath, and has never yet been fully lived. That's what the work is for.",
+      "What was always whole underneath gets lived, a little more each time, and what gets built from there is new.",
     ],
   },
   // 'Creating something new' is the last slide in the Healing arc. The
@@ -439,15 +440,13 @@ export const HEALING_SLIDES: GuideSlide[] = [
 // with the app: two Map Voice mics, the Partner tab, the Journal, and (2026-09)
 // the reading. Each variant gets a matching Ionicons glyph in FeatureCard.
 //
-// ONE STORY (2026-09-02). This file, prompts/askGuide.js and public/index.html
-// each described the app differently, and two of the three still called it a
-// two-mode app. The four ways of working are named here exactly as the mode
-// sheet names them (components/WorkingModeControl.tsx MODE_LABEL / MODE_BLURB)
-// and as the opening orientation names them, because a person who reads one and
-// then meets another cannot tell whether they are the same thing.
-// scripts/check-one-story.js fails if they drift apart again.
+// 1.4.0 (founder's copy v2, 2026-11-09): there are no modes to name. The Chat
+// card says the conversation follows you and that you never choose; the
+// Messages card (new) and the cards' offer-and-tap wording say what the M2
+// app does. The mode sheet and its "ONE STORY" naming rule went with the mode
+// control (f3ffa52).
 export type GuideFeature = {
-  icon: 'chat' | 'map' | 'self' | 'self-like' | 'partner' | 'journal' | 'journey' | 'reading';
+  icon: 'chat' | 'messages' | 'map' | 'self' | 'self-like' | 'partner' | 'journal' | 'journey' | 'reading';
   title: string;
   body: string[];
 };
@@ -457,36 +456,45 @@ export const USING_FEATURES: GuideFeature[] = [
     icon: 'chat',
     title: 'Chat',
     body: [
-      "Chat is where most of the work happens. It is one conversation, and what changes is how it is being with you. Four ways, and you can ask for any of them at any time:",
-      "\u2022 Saying it \u2014 it listens. Nothing gets pulled apart and nothing gets mapped at you.\n\u2022 Sitting with it \u2014 you stay with how something feels, in the body, without going anywhere.\n\u2022 Understanding it \u2014 you look at the pattern: what the parts are and what they protect.\n\u2022 Leading it \u2014 you look at one belief: where it came from, whether it still holds.",
-      "You never have to name any of that. \u201ccan we slow down\u201d, \u201cI just want to talk\u201d, \u201cwhy does this keep happening\u201d all work, and it will follow. The control above the message box does the same thing if you would rather tap than ask.",
-      "You can type, or press and hold the mic to send a voice note. End a session anytime to get a summary and a few things to try.",
+      "Chat is where most of it happens. It's one conversation, and it follows you: sometimes it just listens, sometimes it stays with how something feels, sometimes it looks at a pattern with you, sometimes it looks at one belief. You never have to choose or name any of that. \"Can we slow down,\" \"I just want to talk,\" \"why does this keep happening\" all work.",
+      "When something you've said sounds like it belongs on your map, the conversation offers it in words and a small card appears under that reply. Your tap is what puts it on the map; nothing goes on without one. You can edit the wording on the card first, or leave it. If you don't tap, the card waits for you in Messages.",
+      "The first conversation is a little different: it builds the start of your map, so the conversation leads more and asks a bit more than it usually will, and you decide each entry. After that, it's your space.",
+      "You can type, or press and hold the mic to speak. When a conversation goes quiet, a short record of it is written, in your words, and it's there under Journey and the next time you come back.",
+    ],
+  },
+  {
+    // New card (founder's copy v2, 2026-11-09): the M2 card's second home.
+    icon: 'messages',
+    title: 'Messages',
+    body: [
+      "Messages is where things wait for you. After a conversation goes quiet, the app looks back over it and proposes anything it recognised but didn't offer at the time: a part, something more about a part, where you live between your parts, a moment of being yourself, a key moment. Anything from a shared journal entry comes here too. Cards you didn't tap in the chat land here as well.",
+      "Each is a card: tap to add it to your map, edit the words first, or leave it off. Nothing here is on your map until you say so.",
     ],
   },
   {
     icon: 'map',
     title: 'Map',
     body: [
-      "The Map shows your inner landscape — wound, fixer, skeptic, managers, firefighters, Self, and You. As you talk in Chat, parts get added or refined. Tap any of them to open what has been filed there. Rows nothing has reached yet still show, with a line saying what they are building toward, so a map early on reads as unfinished rather than empty. Managers and Firefighters are groups rather than single parts: tapping either one opens every protector in it, each with its own rows.",
-      "A folder fills in as the map does. Once a part has been detected, its folder carries a count of how many times, the date it was first noticed, and — once you have opened it before — when you last did. There is a GO DEEPER section holding the secondary rows, and once more than half of a part's rows are filled in, a button appears to hear what Self would say to that part. Self is the one exception, deliberately: no count, no dates, no GO DEEPER, no button. Self is not a part to be mapped or spoken to; it is where the speaking comes from.",
-      "Beliefs sit in two places on the map and they are not the same thing. The Wound folder has a row called The Belief — the one the wound formed, that the rest of the map is arranged around, filed by the AI as it learns it. The You folder has YOUR BELIEF — what you stand on, separate from what your parts believe — and that one is yours to write, edit or clear. A belief of their own is not among the rows Fixer, Skeptic, Managers and Firefighters carry: those say what a part does, what it protects and what it needs.",
-      "Two mics sit at the bottom of the Map for Map Voice. The first time you press either one an explainer opens instead of recording; after that, press and hold, say what is alive right now, and let go. Slide your finger up before you let go to throw the take away. The LEADING mic waits on one more thing before it will record — its own card says what.",
+      "The Map is your inner system drawn as one picture: the wound at the centre, the part that pushes and the part that gives up on either side, you in the middle with what you stand on and where you live, the managers and firefighters around, and Self underneath. The shapes are drawn for everyone; what's yours is what you've put on it, in your words, together with the conversation. Tap any part to open what's there. Managers and Firefighters are groups: tapping one opens each protector in it.",
+      "A part's folder fills as you add to it: what it does, when it fires, what it protects, how it shows up in your body, your own words for its voice. The wound's folder also holds who that part is underneath what it carries, if you've found that. Self is the one exception: no rows to fill and nothing to add. Self isn't a part to be mapped; it's where the speaking comes from.",
+      "Two beliefs live on the map and they're not the same. The wound's belief is the one the rest of the map is arranged around, and it goes on like everything else, offered and tapped. What you stand on, in the You folder, is yours: a belief of your own, formed in the conversation from the moments the old voice was quiet, and you can edit or clear it there.",
+      "Two mics sit at the bottom of the Map. The first time you press either, an explainer opens instead of recording; after that, press and hold, say what's alive right now, and let go. Slide your finger up before you let go to throw the take away. The Leading mic waits for one thing before it will record; its card says what.",
     ],
   },
   {
     icon: 'self',
     title: 'Self mic',
     body: [
-      "Use the Self mic when you want to be met with presence. Press and hold, share what's true, release. Self responds — grounded, warm, unhurried. The point isn't to figure anything out; it's to not be alone in what you're carrying. And it's something more: this is what your own grounded presence sounds like — so you can learn to recognize it, and find it, in yourself.",
+      "Use the Self mic when you want to be met rather than helped. Press and hold, say what's true, let go. What answers is Self: the part of you that was never hurt, calm, open, without an agenda, speaking to whichever part of you is loud right now. It doesn't fix anything. The point is that you hear what that voice sounds like, so you can recognise it as your own and find it in yourself.",
     ],
   },
   {
     icon: 'self-like',
-    title: 'The leading mic',
+    title: 'The Leading mic',
     body: [
-      "Use the leading mic when you're ready to lead a part rather than be run by it. It speaks to whichever part is active the way you would from the ground you stand on — your own belief, separate from what your parts believe. The point is to hear what that sounds like, so you can come to speak it yourself.",
-      "It opens once you have a belief of your own. Until then the LEADING mic sits dimmed, and pressing it tells you what it is waiting for instead of recording. To establish what you stand on, tap YOU on your map — the diamond on the triangle — and press Establish your belief. That hands the work to Chat, which helps you find the words; what you land on is kept in your You folder, and you can edit or clear it there. There is one belief for the whole map and it lives on that row.",
-      "Once it is set, press and hold LEADING, say what is alive right now, and let go. You do not pick which part it answers: the app listens for the one speaking through you, lights it on the map, and speaks to that one. If it cannot tell which part it is, it says so and asks you to try again with one specific situation.",
+      "Use the Leading mic when you're ready to lead a part rather than be run by it. It speaks to whichever part is active the way you would from the ground you stand on: your own belief, separate from what your parts believe. It doesn't argue with the part and doesn't ask it to stop. It sees what the part is doing, says what's true in it, and stands where you stand. The point is to hear what that sounds like so you can come to say it yourself.",
+      "It opens once you have a belief of your own. Until then it sits dimmed, and pressing it tells you what it's waiting for. Your belief comes out of the conversation, when you've found something of your own to stand on; it's kept in your You folder, where you can edit or clear it.",
+      "Once it's set, press and hold, say what's alive, and let go. You don't pick which part it answers: the app listens for the one speaking through you, lights it on the map, and speaks to that one. If it can't tell, it says so and asks you to try again with one specific situation.",
     ],
   },
   // Partner card hidden behind PARTNER_ENABLED for v1 launch — the Guide
@@ -507,31 +515,31 @@ export const USING_FEATURES: GuideFeature[] = [
     icon: 'journal',
     title: 'Journal',
     body: [
-      "Free space for whatever needs to come out. New entries are shared with the AI, so it can draw on them to understand you. One switch in Settings — Share journal with AI — turns that off for every new entry from then on; those stay encrypted on your device, unread.",
+      "Free space for whatever needs to come out, typed or spoken. Entries you share with the app are read the way a conversation is: anything it recognises comes to Messages as a card for you to tap, never straight onto the map. One switch in Settings, Share journal with AI, turns sharing off for every new entry from then on; those stay encrypted on your phone, unread, and have no mic, since dictation sends audio to be transcribed.",
     ],
   },
   {
     icon: 'reading',
     title: 'The whole picture',
     body: [
-      "A reading is a page written back to you about your whole map \u2014 everything at once, instead of a part at a time. It is the one thing the conversation cannot do: chat stays with whatever is in front of you, and this stands back and reads all of it together.",
-      "It waits until there is enough to read. It needs the belief at the centre \u2014 what your wound actually says \u2014 both sides that answer it, the Fixer and the Skeptic, and at least one protector with something filled in. Until then the card on the Map tab tells you which of those pieces your map is still missing.",
-      "When it is ready, tap it on the Map tab. It takes about a minute to write. When your map moves afterwards, the card says so and you can ask for an updated one. A new reading REPLACES the one you have \u2014 there is no history to go back to yet, so if there is something in it you want to keep, copy it out first.",
+      "A reading is a page written about your whole map at once, instead of a part at a time. It's the one thing the conversation can't do: chat stays with what's in front of you; this stands back and reads all of it together.",
+      "It waits until there's enough to read: the belief at the centre, both sides that answer it, and at least one protector with something filled in. Until then the card on the Map tab says what's missing.",
+      "When it's ready, tap it on the Map tab. It takes about a minute. A new reading replaces the one you have, so if there's something you want to keep, copy it out first.",
     ],
   },
   {
     icon: 'journey',
     title: 'Journey',
     body: [
-      "Journey shows your work over time — sessions, what came up, how the map has shifted. Useful for noticing your own patterns at a longer time scale than any single conversation.",
+      "Journey shows how things have moved over time: three directions (from outside-in to inside-out, from fragmented to integrated, from blended to you leading), the words that keep coming back, and the record of each conversation. It's a way to see movement without a diagnosis, not a score to reach.",
     ],
   },
 ];
 
 export const USING_PRINCIPLES: string[] = [
-  "Come regularly, not just when things are bad. The map builds over time. Twenty conversations give you a picture of yourself most people never get.",
+  "Come when things are ordinary, not only when they're bad. The map is built from everyday life as much as from hard days, and it gets truer the more of you it has seen.",
   "Be honest about what you're avoiding. The most useful things to share are the ones you're slightly reluctant to say.",
-  "Let it surprise you. The map sometimes sees things before you consciously do. Don't dismiss that.",
+  "Let it surprise you. Something you said in passing may come back as a card you didn't expect. You decide whether it's yours; if it isn't, leave it off.",
   "Use it alongside therapy, not instead of it. What comes up here is yours to bring to your therapist — but the deep work is most safely done with a real person present.",
   "The map is not a verdict. Everything on it is provisional, revisable, and yours to interpret. If something doesn't land — say so.",
 ];

@@ -446,15 +446,22 @@ step('REORDER — the DOB has left IntakeFlow entirely, leaving exactly one age 
   })(),
   'no second age question, and no dangling step index — step 1 is the name again');
 
-step('REORDER — IntakeFlow still runs four steps, 1 through 4, with no gap',
+// THREE steps since 1.4.0 build 55: the founder's copy v2 removed step 4 (the
+// free-text "Is there anything else"). Step 3 now submits, and nothing may
+// still reach a step 4.
+step('REORDER — IntakeFlow runs three steps, 1 through 3, with no gap, and step 3 submits',
   (() => {
     const m = onboardingSrc.match(/function IntakeFlow\(\{[\s\S]*?\r?\n\}\r?\n/);
     if (!m) return false;
-    return /useState<1 \| 2 \| 3 \| 4>\(1\)/.test(m[0]) &&
-      [1, 2, 3, 4].every((n) => m[0].includes(`{step === ${n} ?`)) &&
-      /setStep\(2\)/.test(m[0]) && /setStep\(3\)/.test(m[0]) && /setStep\(4\)/.test(m[0]);
+    const body = stripComments(m[0]);
+    const s3 = body.slice(body.indexOf('{step === 3 ?'));
+    return /useState<1 \| 2 \| 3>\(1\)/.test(body) &&
+      [1, 2, 3].every((n) => body.includes(`{step === ${n} ?`)) &&
+      !body.includes('{step === 4 ?') && !/setStep\(4\)/.test(body) &&
+      /setStep\(2\)/.test(body) && /setStep\(3\)/.test(body) &&
+      /<CTA onPress=\{submit\}/.test(s3) && /<SkipLink onPress=\{submit\}/.test(s3);
   })(),
-  'removing the DOB must not strand a step that nothing advances into');
+  'removing a step must not strand one that nothing advances into, or leave the last one unable to finish');
 
 // The counsel flag. The founder is taking the "DOB collected before terms
 // acceptance" sequencing question to his attorney and asked for it to be

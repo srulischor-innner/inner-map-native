@@ -5,8 +5,10 @@
 //   3. age     — the 18+ gate. Its own phase, and it sits AHEAD of terms
 //                (2026-08 reorder — see the AgeGateScreen header for why).
 //   4. terms   — plain-language disclaimer with a checkbox and "I understand" CTA
-//   5. intake  — 4-step form: name / about / goals / free-text. Each step has its
-//      own "Continue" button; slide 2+ have a "skip" link to respect the user.
+//   5. intake  — 3-step form: name / about / goals. Each step has its own
+//      "Continue" button; slide 2+ have a "skip" link to respect the user.
+//      (The fourth, free-text "Is there anything else" step was removed in
+//      1.4.0 build 55, founder's copy v2.)
 //
 // On completion of each phase we mark the corresponding flag in AsyncStorage so a
 // restart mid-flow resumes where the user left off. When the final flag lands we
@@ -512,10 +514,10 @@ function PrivacyNoticeScreen({ onAcknowledge }: { onAcknowledge: () => void }) {
         can't read them.
       </Text>
       <Text style={styles.privacyNoticeBody}>
-        Your chats and your map live on our server so you can pick up
-        where you left off. We never sell your data, never run ads, and
-        the AI providers we use (Anthropic and OpenAI) don't train their
-        models on your conversations.
+        Your conversations and your map live on our server, so the app
+        remembers what you've built. We never sell your data, never run
+        ads, and the AI providers we use (Anthropic and OpenAI) don't train
+        their models on your conversations.
       </Text>
       <Text style={styles.privacyNoticeBody}>
         Any time, you can take a copy of your data with you, or delete
@@ -693,8 +695,16 @@ function TermsScreen({ onAccept }: { onAccept: () => void }) {
 }
 
 // ============================================================================
-// 3. INTAKE — four steps
+// 3. INTAKE — three steps
 // ============================================================================
+// THE FOURTH STEP IS GONE (1.4.0 build 55, founder's copy v2: "Intake step 4:
+// remove"). It asked "Is there anything else / you'd want me to know before we
+// start?" and sent the answer as `freeText` in POST /api/intake. The server
+// keeps it in user_settings.intake (trimmed, 500 characters) and its
+// buildIntakeContextBlock quotes it to the chat model, "in their own words",
+// until the map has a confirmed wound belief. Nothing requires it: an empty
+// freeText was always allowed (the step had a Skip), and that line simply
+// carries the goals alone. Answers already stored are left as they are.
 type IntakeState = {
   name: string;
   gender: string;
@@ -702,15 +712,14 @@ type IntakeState = {
   profession: string;
   goals: string[];
   goalsOther: string;
-  freeText: string;
 };
 
 function IntakeFlow({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<IntakeState>({
     name: '', gender: '', relationship: '', profession: '',
-    goals: [], goalsOther: '', freeText: '',
+    goals: [], goalsOther: '',
   });
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
 
   // NO DATE OF BIRTH HERE, AND NONE MAY BE ADDED (2026-08 reorder).
   // The 18+ gate used to be the second half of step 1. It is now its own
@@ -737,7 +746,6 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
       profession: state.profession,
       goals: state.goals,
       goalsOther: state.goalsOther,
-      freeText: state.freeText,
     });
     onDone();
   }
@@ -745,7 +753,7 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
   return (
     <View style={[styles.flex, { paddingBottom: kbHeight }]}>
       <View style={styles.stepDots}>
-        {[1, 2, 3, 4].map((n) => (
+        {[1, 2, 3].map((n) => (
           <View key={n} style={[styles.stepDot, n === step && styles.stepDotActive, n < step && styles.stepDotDone]} />
         ))}
       </View>
@@ -842,27 +850,9 @@ function IntakeFlow({ onDone }: { onDone: () => void }) {
               selectionColor={colors.amber}
             />
           ) : null}
-          <CTA onPress={() => setStep(4)} label="CONTINUE" />
-          <SkipLink onPress={() => setStep(4)} />
-        </StepWrap>
-      ) : null}
-
-      {step === 4 ? (
-        <StepWrap
-          title="Is there anything else"
-          subtitle="you'd want me to know before we start?"
-        >
-          <TextInput
-            value={state.freeText}
-            onChangeText={(t) => setState((s) => ({ ...s, freeText: t }))}
-            placeholder="Take your time — say as much or as little as you want."
-            placeholderTextColor={colors.creamFaint}
-            style={[styles.input, { minHeight: 140, textAlignVertical: 'top' }]}
-            multiline
-            selectionColor={colors.amber}
-          />
-          <CTA onPress={submit} label="B E G I N" />
-          <SkipLink onPress={submit} label="Skip" />
+          {/* The last step now: it submits. Labels unchanged. */}
+          <CTA onPress={submit} label="CONTINUE" />
+          <SkipLink onPress={submit} />
         </StepWrap>
       ) : null}
     </View>
@@ -1407,11 +1397,10 @@ function NotTherapyScreen({ onContinue }: { onContinue: () => void }) {
       <View style={{ flex: 1 }} />
       <Text style={styles.notTherapyTitle}>One important thing</Text>
       <Text style={styles.notTherapyBody}>
-        Inner Map is a companion for your inner journey — not a replacement
-        for therapy or professional support. If you're going through
-        something difficult, please have a real person in your life who can
-        hold it with you. This works best alongside that support, not
-        instead of it.
+        Inner Map is a companion for your inner life, not a replacement for
+        therapy or professional support. If you're going through something
+        difficult, please have a real person in your life who can hold it
+        with you. This works best alongside that support, not instead of it.
       </Text>
       <Pressable
         onPress={() => {
