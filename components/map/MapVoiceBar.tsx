@@ -100,6 +100,12 @@ const SLIDE_CANCEL_DY = -60;      // upward swipe past this distance cancels
 // being discarded anyway, no point keeping the user waiting.
 const STOP_GRACE_MS = 250;
 const POST_STOP_FLUSH_MS = 150;
+
+// The Map tab's crisis-card lede, built from safety.md l.21's own phrases:
+// "what they're sharing matters, that this space isn't the right one for
+// something this heavy, and that the next step is a real person."
+const MAP_CRISIS_LEDE =
+  "What you're sharing matters. This space isn't the right one for something this heavy, and the next step is a real person.";
 // Zero-inset baselines for the two absolutely-positioned rows. Both anchor to
 // the Map root's raw screen bottom, so each render adds bottomInset on top.
 // 50 leaves 9px above the collapsed ProgressStrip (40px header + 1px borderTop);
@@ -884,7 +890,12 @@ export function MapVoiceBar({ sessionId: _sessionId, onDetectedPart, onBarTop, b
         visible={crisisVisible}
         onClose={() => setCrisisVisible(false)}
         header="We're going to pause here"
-        lede="What you shared matters. The AI here isn't the right one to be with you in this — please use one of the resources below."
+        // safety.md l.21, its own words: what they're sharing matters, this
+        // space isn't the right one for something this heavy, and the next
+        // step is a real person. (It said "The AI here isn't the right one to
+        // be with you in this", which never named a person as the next step
+        // and framed the AI as "with you" — five-screens audit, section 3.)
+        lede={MAP_CRISIS_LEDE}
       />
       <View
         ref={barRef}

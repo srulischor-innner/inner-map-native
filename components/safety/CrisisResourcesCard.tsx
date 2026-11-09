@@ -10,6 +10,20 @@
 // inserted in-flow when the server flags `crisis_detected: true` on
 // a turn response (see services/api.ts mapVoiceTurn).
 //
+// THE LINES ARE safety.md's (2026-11-09). The five-screens audit
+// (package-test-prompts/five-screens-2026-11-08.md, section 3) found the card
+// missing four of them; they are added here word for word from safety.md
+// (the server's prompts/m2/safety.md), so every surface that shows this card
+// — the Map tab, the chat, Settings, Privacy — says what the chat says aloud:
+//   - "988 also serves people worried about someone" (safety.md l.42)
+//   - "the National Domestic Violence Hotline, 1-800-799-7233, text START to
+//     88788, or thehotline.org" — the hotline's name and 88788 were visible
+//     nowhere, only in an accessibility label (l.28)
+//   - "the National Alliance for Eating Disorders, 1-866-662-1235 (weekdays
+//     9am–7pm ET), and 988 after hours" — the name likewise (l.28)
+//   - "For psychosis or mania: a doctor, a psychiatrist or 988." (l.28)
+// scripts/check-crisis-card-safety-lines.js compares them with safety.md.
+//
 // Visual language: amber, warm-not-alarmed (matches the existing
 // settings card). Tap-to-call uses expo Linking (tel: / sms: / https:)
 // — system apps take over from there.
@@ -43,6 +57,15 @@ type Props = {
   lede?: string;
 };
 
+// Word for word from safety.md (see the header). Capitalised where a line
+// starts the sentence on the card; nothing else changed.
+export const SAFETY_LINES = {
+  worriedAboutSomeone: '988 also serves people worried about someone.',
+  domesticViolence: 'The National Domestic Violence Hotline, 1-800-799-7233, text START to 88788, or thehotline.org.',
+  eating: 'The National Alliance for Eating Disorders, 1-866-662-1235 (weekdays 9am–7pm ET), and 988 after hours.',
+  psychosisOrMania: 'For psychosis or mania: a doctor, a psychiatrist or 988.',
+} as const;
+
 function CrisisResourcesContent({ header, lede }: { header?: string; lede?: string }) {
   const open = useCallback((url: string) => {
     Haptics.selectionAsync().catch(() => {});
@@ -67,6 +90,7 @@ function CrisisResourcesContent({ header, lede }: { header?: string; lede?: stri
         </Pressable>
       </View>
       <Text style={styles.sub}>Suicide &amp; Crisis Lifeline</Text>
+      <Text style={styles.sub}>{SAFETY_LINES.worriedAboutSomeone}</Text>
 
       <Text style={[styles.localeLabel, styles.localeLabelTop]}>UNITED KINGDOM &amp; IRELAND</Text>
       <View style={styles.row}>
@@ -93,7 +117,7 @@ function CrisisResourcesContent({ header, lede }: { header?: string; lede?: stri
           <Text style={styles.btnText}>Text START</Text>
         </Pressable>
       </View>
-      <Text style={styles.sub}>1-800-799-7233 · thehotline.org</Text>
+      <Text style={styles.sub}>{SAFETY_LINES.domesticViolence}</Text>
 
       <Text style={[styles.localeLabel, styles.localeLabelTop]}>EATING DISORDERS (US)</Text>
       <View style={styles.row}>
@@ -101,7 +125,9 @@ function CrisisResourcesContent({ header, lede }: { header?: string; lede?: stri
           <Text style={styles.btnText}>Call helpline</Text>
         </Pressable>
       </View>
-      <Text style={styles.sub}>1-866-662-1235 · Mon–Fri 9a–7p ET · After hours: 988</Text>
+      <Text style={styles.sub}>{SAFETY_LINES.eating}</Text>
+
+      <Text style={[styles.body, styles.bodyTop]}>{SAFETY_LINES.psychosisOrMania}</Text>
 
       <Text style={[styles.localeLabel, styles.localeLabelTop]}>EMERGENCY</Text>
       <Text style={styles.body}>
@@ -214,6 +240,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     marginTop: 2,
   },
+  // The psychosis/mania line sits apart from the eating section above it.
+  bodyTop: { marginTop: spacing.md },
   body: {
     color: colors.cream,
     fontFamily: fonts.sans,
