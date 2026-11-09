@@ -18,6 +18,10 @@
 //   ?case=chat-failing   the write fails: the card says so and stays
 //   ?case=messages       Messages: the same row, plus an old-stack row
 //   ?case=timing         card timing: one reply's cards in every state
+//   ?case=wound-card     a wound card carrying `underneath` (home-layer s.3)
+//   ?case=wound          the Wound folder on M2 with `underneath` filled
+//   ?case=wound-empty    the same folder on M2 with `underneath` empty
+//   ?case=wound-off      the filled folder with the flag off: no row
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
@@ -25,6 +29,20 @@ import { api, type InboxMessage } from '../services/api';
 import { chatPendingCards } from '../services/m2';
 import { PendingMapCards, M2InlineCards } from '../components/m2/M2Cards';
 import MessagesScreen from '../app/messages';
+import { PartFolderModal } from '../components/map/PartFolderModal';
+import { setM2Flag } from '../services/m2Store';
+
+// A wound row as /api/parts returns it, with markerFields as the tap writes
+// them ({ value, confidence, ts }). Invented words.
+function woundRow(withUnderneath: boolean) {
+  const mf: Record<string, { value: string; confidence: string; ts: string }> = {
+    feeling: { value: 'A tightness, like holding my breath', confidence: 'confirmed', ts: '2026-11-08T12:00:00Z' },
+  };
+  if (withUnderneath) {
+    mf.underneath = { value: 'Someone curious, who used to take things apart to see how they worked', confidence: 'confirmed', ts: '2026-11-08T12:05:00Z' };
+  }
+  return { id: 'preview-wound', category: 'wound', corePhrase: 'If I need something, I’m too much', markerFields: mf };
+}
 
 const SESSION = 'preview-session';
 
@@ -172,6 +190,11 @@ function stubTransport(failWrites: boolean) {
     await new Promise((r) => setTimeout(r, 400));
     return { ok: true, declined: 1, allResolved: false };
   };
+  // The part folder's own calls (all behind a tap).
+  a.savePartBelief = async () => null;
+  a.deletePartBelief = async () => false;
+  a.deleteMiddleGroundItem = async () => null;
+  a.selfVoice = async () => null;
 }
 
 export default function M2Preview() {
@@ -179,6 +202,48 @@ export default function M2Preview() {
   useMemo(() => stubTransport(which === 'chat-failing'), [which]);
 
   if (which === 'messages') return <MessagesScreen />;
+
+  if (which === 'wound-card') {
+    setM2Flag(true);
+    const entry = {
+      card: {
+        messageId: 'm2-row-wound', itemIndex: 0,
+        item: {
+          part: 'wound', kind: 'part', source: 'chat', confirmedInChat: false, status: 'pending',
+          payload: {
+            part: 'wound', label: 'The one who holds back',
+            fields: {
+              belief: 'If I need something, I’m too much',
+              underneath: 'Someone curious, who used to take things apart to see how they worked',
+            },
+            value: 'The one who holds back',
+          },
+        },
+      },
+      status: 'pending',
+    } as unknown as Parameters<typeof M2InlineCards>[0]['entries'][number];
+    return (
+      <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+        <Text style={styles.aiText}>Would you want that on your map, in your words?</Text>
+        <M2InlineCards entries={[entry]} onSettled={() => {}} />
+      </ScrollView>
+    );
+  }
+
+  if (which === 'wound' || which === 'wound-empty' || which === 'wound-off') {
+    setM2Flag(which !== 'wound-off');
+    return (
+      <View style={styles.root}>
+        <PartFolderModal
+          visible
+          partKey="wound"
+          mapData={{ wound: 'If I need something, I’m too much' }}
+          parts={[woundRow(which !== 'wound-empty')]}
+          onClose={() => {}}
+        />
+      </View>
+    );
+  }
 
   if (which === 'timing') {
     // One reply's cards as the chat screen draws them under it: an offer still

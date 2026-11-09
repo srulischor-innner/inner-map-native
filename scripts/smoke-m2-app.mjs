@@ -304,7 +304,7 @@ console.log('\n3b. what a card says, and what an edit sends');
   const FIELDS = ['belief', 'feeling', 'story', 'body', 'history', 'worldview', 'trigger', 'voice', 'pattern',
     'selectivity', 'fear', 'what-it-protects', 'how-it-shows-up', 'desire', 'fantasy', 'what-it-built', 'agenda',
     'clenched-or-open', 'lean', 'strategy', 'what-it-manages', 'when-it-fires', 'what-it-gives', 'situation',
-    'example', 'manner', 'memory', 'note', '', 'not-a-field'];
+    'example', 'manner', 'memory', 'note', 'underneath', '', 'not-a-field'];
   const JARGON = /\b(wound|fixer|skeptic|firefighter|manager|self-like|unknown-part)\b/i;
   const RAWKEY = /\b[a-z]+-[a-z]+(?:-[a-z]+)*\b/;
   const leaks = [];
@@ -334,8 +334,13 @@ console.log('\n3b. what a card says, and what an edit sends');
   // THE FIELDS A CARD MAY CARRY — mapping-m2 (3).md, line 16. The editor is
   // generic over a card's fields, so what can go wrong is a field reaching the
   // screen as "more about it", or two fields on one card reading the same.
+  // Added after line 16, each from its own founder file.
+  const ADDED_AFTER_LINE_16 = {
+    // home-layer-for-code.md section 3 (Nov 8): the wound row's `underneath`.
+    wound: ['underneath'],
+  };
   const BY_PART = {
-    wound: ['belief', 'feeling', 'story', 'body', 'history', 'worldview', 'trigger', 'voice'],
+    wound: ['belief', 'feeling', 'story', 'body', 'history', 'worldview', 'trigger', 'voice', 'underneath'],
     fixer: ['pattern', 'selectivity', 'what-it-protects', 'how-it-shows-up', 'body', 'history', 'worldview', 'desire', 'fantasy', 'voice'],
     skeptic: ['pattern', 'selectivity', 'what-it-protects', 'how-it-shows-up', 'body', 'history', 'worldview', 'desire', 'fantasy', 'voice'],
     manager: ['strategy', 'when-it-fires', 'what-it-gives', 'what-it-manages', 'trigger', 'situation', 'example', 'body', 'voice', 'worldview', 'story'],
@@ -358,6 +363,16 @@ console.log('\n3b. what a card says, and what an edit sends');
   ok('a belief card\'s belief is what they stand on, a wound\'s is the belief underneath',
     m2.m2FieldWords('belief', 'belief') === m2.m2FieldWords('stands-on')
       && m2.m2FieldWords('belief', 'part') !== m2.m2FieldWords('belief', 'belief'));
+  // Who the part is without what it carries — not another "… underneath",
+  // which on a wound card already names the burden (the belief, the feeling).
+  const under = m2.m2FieldWords('underneath');
+  ok('the wound\'s underneath reads as who the part is without what it carries',
+    under === 'who it is without what it carries'
+      && !['belief', 'feeling'].some((k) => m2.m2FieldWords(k) === under), under);
+  ok('a pass proposal of it says the same words, never the raw key',
+    m2.m2ItemCategory({ kind: 'part', payload: { part: 'wound', field: 'underneath', value: 'x' } }) === under
+      && m2.m2ItemCategory({ kind: 'detail', payload: { part: 'wound', field: 'underneath', label: 'the lonely one', value: 'x' } })
+        === `the lonely one · ${under}`);
 
   // When the founder's file is on disk, the list above must still be its
   // line 16; when it is not, say so rather than pass quietly.
@@ -373,11 +388,19 @@ console.log('\n3b. what a card says, and what an edit sends');
       'self-like': grab(/Self-like: ([^.]+)\./),
     };
     const drift = Object.entries(spec)
-      .filter(([p, keys]) => JSON.stringify(keys) !== JSON.stringify(BY_PART[p]))
+      .filter(([p, keys]) => JSON.stringify([...keys, ...(ADDED_AFTER_LINE_16[p] || [])]) !== JSON.stringify(BY_PART[p]))
       .map(([p, keys]) => `${p}: file says ${JSON.stringify(keys)}`);
     ok('the field list above is still the founder\'s line 16', line && drift.length === 0, drift.join(' | ') || 'line not found');
   } else {
     console.log(`  [3c] SKIP  field-list comparison — ${SPEC} not on disk; compared on the machine that built this`);
+  }
+  const HOME = process.env.M2_HOME_LAYER_MD
+    || path.join(process.env.USERPROFILE || process.env.HOME || '', 'Downloads', 'home-layer-for-code.md');
+  if (fs.existsSync(HOME)) {
+    ok('the Home layer still adds `underneath` to the wound row',
+      /Wound row: add field `underneath`/.test(fs.readFileSync(HOME, 'utf8')));
+  } else {
+    console.log(`  [3c] SKIP  Home layer check — ${HOME} not on disk`);
   }
 }
 
@@ -675,6 +698,24 @@ console.log('\n7. invented memory');
   ok('the folder reads the flag before its early return, so the hook runs every render',
     /const m2 = useM2Flag\(\);\s*if \(!partKey\) return null;/.test(code)
       && /\{descriptionFor\(partKey, meta, m2\)\}/.test(code));
+
+  // The Wound folder's `underneath` row (home-layer-for-code.md section 3):
+  // the person's words, on M2 only, and no row at all while it's empty.
+  const bodySrc = (code.match(/const WOUND_BODY = (\{[\s\S]*?\}) as const;/) || [])[1];
+  const body = bodySrc ? new Function(`return (${bodySrc});`)() : null;
+  ok('the Wound folder declares the underneath row with the card\'s own words',
+    body && body.underneath && body.underneath.key === 'underneath'
+      && body.underneath.label.toLowerCase() === m2.m2FieldWords('underneath'),
+    body && body.underneath ? body.underneath.label : 'not declared');
+  const wound = code.slice(code.indexOf('function WoundSections'), code.indexOf('<GoDeeperSection', code.indexOf('function WoundSections')));
+  ok('it reads the field only on M2',
+    /const underneath = m2 \? readField\(part, WOUND_BODY\.underneath\.key\) : '';/.test(wound)
+      && /<WoundSections\s+mapData=\{mapData\} part=\{part\} m2=\{m2\} \/>/.test(code));
+  ok('the row renders only when the field has their words, with no placeholder of its own',
+    /\{underneath \? \(\s*<Section label=\{WOUND_BODY\.underneath\.label\} value=\{underneath\} placeholder="" \/>\s*\) : null\}/.test(wound));
+  ok('the four rows that were there keep their placeholders, unchanged',
+    ['The core belief is still taking shape...', 'The feeling beneath the story...', 'Where this lives in the body...', 'Still emerging...']
+      .every((p) => wound.includes(`placeholder="${p}"`)));
 }
 {
   // The end-session fallback (other-surfaces-audit.md, SessionSummaryModal.tsx

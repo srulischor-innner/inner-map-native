@@ -275,6 +275,11 @@ const WOUND_BODY = {
   feeling: { label: 'The Feeling Layer', key: 'feeling' },
   body:    { label: 'Where It Lives',    key: 'body' },
   history: { label: 'When It Started',   key: 'history' },
+  // M2 only, and only once they've said it (home-layer-for-code.md section
+  // 3): who the part is without what it carries. No placeholder, so the row
+  // is hidden while empty; empty-state wording is the founder's to write.
+  // Same words as the card's field (services/m2.ts).
+  underneath: { label: 'Who It Is Without What It Carries', key: 'underneath' },
 } as const;
 
 const FIXER_BODY = {
@@ -386,7 +391,7 @@ export function PartFolderModal({
               empty fields show a quiet italic placeholder so the user can
               see what the map is building toward, instead of a missing row.
               Folders refine over time as the AI files content. */}
-          {partKey === 'wound'       ? <WoundSections      mapData={mapData} part={part} /> : null}
+          {partKey === 'wound'       ? <WoundSections      mapData={mapData} part={part} m2={m2} /> : null}
           {partKey === 'fixer'       ? <FixerSections      part={part} />                    : null}
           {partKey === 'skeptic'     ? <SkepticSections    part={part} />                    : null}
           {partKey === 'self'        ? <SelfSections       part={part} color={meta.color} /> : null}
@@ -888,7 +893,9 @@ function GoDeeperSection({ part, fields }: { part: any; fields: DeeperField[] })
 // Order within each: DetectedPill → main sections → SelfVoiceButton →
 // GoDeeperSection.
 // ============================================================================
-function WoundSections({ mapData, part }: { mapData: any; part: any }) {
+function WoundSections({ mapData, part, m2 }: { mapData: any; part: any; m2: boolean }) {
+  // Hidden unless M2 and filled; every other row keeps its placeholder.
+  const underneath = m2 ? readField(part, WOUND_BODY.underneath.key) : '';
   return (
     <View style={styles.sections}>
       <DetectedPill part={part} color="#E05050" />
@@ -912,6 +919,9 @@ function WoundSections({ mapData, part }: { mapData: any; part: any }) {
         value={readField(part, WOUND_BODY.history.key) || mapData?.objectiveStory}
         placeholder="Still emerging..."
       />
+      {underneath ? (
+        <Section label={WOUND_BODY.underneath.label} value={underneath} placeholder="" />
+      ) : null}
       <SelfVoiceButton part={part} />
       <PartRecencyRows firstDetected={part?.firstDetected} lastVisitedAt={part?.lastVisitedAt} lastSource={part?.lastSource} />
       <GoDeeperSection part={part} fields={WOUND_DEEPER_SHOWN} />

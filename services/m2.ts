@@ -227,7 +227,8 @@ const PART_WORDS: Record<string, string> = {
 // Every field mapping-m2 (3).md line 16 lets a card carry, and what the card
 // calls it:
 //   wound              belief, feeling, story, body, history, worldview,
-//                      trigger, voice
+//                      trigger, voice, underneath (home-layer-for-code.md
+//                      section 3, Nov 8: added after line 16)
 //   fixer, skeptic     pattern, selectivity, what-it-protects,
 //                      how-it-shows-up, body, history, worldview, desire,
 //                      fantasy, voice
@@ -268,6 +269,12 @@ const FIELD_WORDS: Record<string, string> = {
   history: 'where it comes from',
   'stands-on': 'what you stand on',
   'clenched-or-open': 'tight or open',
+  // The wound's "underneath" (home-layer-for-code.md section 3): who the part
+  // is without what it carries, in their words. The founder's own phrase, not
+  // "who it is underneath": on a wound card that would sit beside "the belief
+  // underneath" and "the feeling underneath", which name the burden, the
+  // opposite layer. MICROCOPY — the founder may word it.
+  underneath: 'who it is without what it carries',
   // Self-like keys the server's rules still allow (lib/m2/rules.js) though
   // line 16 no longer lists them; labelled so no card can show the generic.
   'what-it-built': 'what you’ve built',

@@ -78,12 +78,14 @@ The editor shows every bundled field with its own input, labelled in plain words
 
 | Card | Fields → label |
 |---|---|
-| wound | belief → the belief underneath; feeling → the feeling underneath; story → the story it carries; body → where you feel it; history → where it comes from; worldview → how it sees things; trigger → what sets it off; voice → what it says |
+| wound | belief → the belief underneath; feeling → the feeling underneath; story → the story it carries; body → where you feel it; history → where it comes from; worldview → how it sees things; trigger → what sets it off; voice → what it says; underneath → who it is without what it carries (added by home-layer-for-code.md section 3, Nov 8) |
 | fixer, skeptic | pattern → what it does; selectivity → who or where it shows up with; what-it-protects → what it protects; how-it-shows-up → how it shows up; body, history, worldview, voice as above; desire → what it wants; fantasy → what it dreams of |
 | manager, firefighter | strategy → what it does; when-it-fires → when it steps in; what-it-gives → what it gives you; what-it-manages → what it keeps in check; situation → when it shows up; example → an example; trigger, body, voice, worldview, story as above |
 | self-like | stands-on → what you stand on; body → where you feel it; clenched-or-open → tight or open |
 | middle | label → the moment (the headline); note → what you said |
 | belief | belief → what you stand on (on this card only; a wound's belief stays "the belief underneath") |
+
+**The wound's `underneath`** (home-layer-for-code.md section 3: who the part is without what it carries, in their words). The server (chat stack `13b35bc`, `lib/m2/rules.js`) offers it on a wound card and writes it on the tap to the wound row's `markerFields.underneath` (`{ value, confidence, ts }`); no column. The app labels it "who it is without what it carries", the founder's own phrase. That avoids a third "… underneath" on a wound card, beside "the belief underneath" and "the feeling underneath", which name the burden. On M2, the Wound folder shows it as a row, "Who It Is Without What It Carries", after When It Started. That happens only when the field has their words. Every other row in the folder has a placeholder, but this one has none, so it's hidden while empty; the empty-state wording is the founder's. With the flag off, the row is never read. The self-voice threshold's wound total (`PART_FIELD_TOTAL`, 8) is unchanged.
 
 **Renaming isn't a card edit.** `mapping-m2 (3).md` line 12 makes PART_NAMED "the one direct write". A name comes from what the person says in conversation, not from a card. So a chat card's name stays read-only in the editor, and its fields are what EDIT changes.
 
