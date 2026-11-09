@@ -37,9 +37,9 @@ import {
   getOnboardingState, OnboardingState,
   isTermsSyncPending, clearTermsSyncPending,
   isAgeGateBlocked, isAgeSyncPending, clearAgeSyncPending,
-  getAcceptedPolicyVersion, needsPolicyNotice, markPolicyNoticeSeen,
+  getAcceptedPolicyVersion, needsPolicyNotice,
 } from '../services/onboarding';
-import { PolicyUpdateNotice } from '../components/legal/PolicyUpdateNotice';
+import { PolicyUpdateNotice, acceptPolicyFromNotice } from '../components/legal/PolicyUpdateNotice';
 import { registerForPushNotifications } from '../services/push';
 import { configurePurchases, identifyUser } from '../services/purchases';
 import { peekUserId, M2_CLIENT_HEADER, M2_CLIENT_HEADER_VALUE } from '../services/user';
@@ -271,8 +271,12 @@ function RootLayout() {
   // dropped-redirect bug described on that effect.
   const [pendingRoute, setPendingRoute] = useState<'/sign-in' | '/onboarding' | null>(null);
   // F2 (2026-11-09): the policy changed since this person accepted the terms.
-  // Checked once the app is unlocked and on screen; the notice comes before
-  // they continue (components/legal/PolicyUpdateNotice.tsx).
+  // Checked once the app is unlocked and on screen, every launch until the
+  // server has stored their Continue as acceptance (founder ruling
+  // 2026-11-09). Continue closes it at once and the app carries on; the
+  // acceptance is POSTed and retried in the background and kept on the device
+  // only once the server has stored it (components/legal/PolicyUpdateNotice.tsx
+  // acceptPolicyFromNotice), so a failure brings it back on the next launch.
   const [policyNotice, setPolicyNotice] = useState(false);
   // 18+ GATE — the boot read's verdict, published to the OTHER effects in this
   // component. 'unknown' until the boot IIFE resolves it; nothing that touches
@@ -1139,7 +1143,7 @@ function RootLayout() {
         </Stack>
         <PolicyUpdateNotice
           visible={policyNotice}
-          onContinue={() => { setPolicyNotice(false); markPolicyNoticeSeen().catch(() => {}); }}
+          onContinue={() => { setPolicyNotice(false); acceptPolicyFromNotice().catch(() => {}); }}
         />
       </SafeAreaProvider>
     </GestureHandlerRootView>

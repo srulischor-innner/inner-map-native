@@ -1616,6 +1616,26 @@ export const api = {
     } catch { return false; }
   },
 
+  /** The policy-change notice's Continue, stored as acceptance of
+   *  `policyVersion` (founder ruling 2026-11-09). The same POST
+   *  /api/terms/accept { policyVersion }, but true ONLY when the server says
+   *  it kept that version: it answers { ok: true, policyVersion } with the
+   *  version it stored, or null when it stored none (server 0a4cc70). A 200
+   *  that does not echo the version is not an acceptance on record, so the
+   *  notice stays due. */
+  async acceptPolicyVersion(policyVersion: string): Promise<boolean> {
+    try {
+      const headers = await authHeaders();
+      const res = await apiFetch('/api/terms/accept', {
+        label: 'terms-accept-policy', method: 'POST', headers,
+        body: JSON.stringify({ policyVersion }),
+      });
+      if (!res.ok) return false;
+      const j = await res.json().catch(() => null);
+      return !!j && j.policyVersion === policyVersion;
+    } catch { return false; }
+  },
+
   /** POST /api/age-confirm — record that this user attested to being 18+.
    *
    *  THE BODY IS A BARE BOOLEAN AND MUST STAY THAT WAY. The date of birth the

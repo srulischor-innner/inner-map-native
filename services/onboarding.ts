@@ -31,8 +31,11 @@ export const READ_ALOUD_PREF_KEY = 'chat.readAloudEnabled';
 const KEYS = {
   hasSeenIntro:       'onboarding.hasSeenIntro',
   termsAccepted:      'onboarding.termsAccepted',
-  // F2 (2026-11-09): which policy version the terms were accepted under, and
-  // the newest version this person was told about and continued past.
+  // F2 (2026-11-09): which policy version the terms were accepted under —
+  // at onboarding, or by the policy-change notice's Continue once the server
+  // has stored it. policyNoticeVersion is build 54's "notice seen" record,
+  // which no longer stops the notice (Continue is acceptance now); nothing
+  // reads it, and reset still clears it.
   acceptedPolicyVersion: 'onboarding.acceptedPolicyVersion',
   policyNoticeVersion:   'onboarding.policyNoticeVersion',
   intakeComplete:     'onboarding.intakeComplete',
@@ -202,29 +205,32 @@ export async function getAcceptedPolicyVersion(): Promise<string | null> {
   try { return await AsyncStorage.getItem(KEYS.acceptedPolicyVersion); } catch { return null; }
 }
 
-/** They were shown the notice for this version and continued. A record of the
- *  notice, NOT a new acceptance: the accepted version is left as it was. */
-export async function markPolicyNoticeSeen(version: string = LEGAL_POLICY_VERSION): Promise<void> {
-  try { await AsyncStorage.setItem(KEYS.policyNoticeVersion, version); } catch {}
+/** The policy-change notice's Continue, once the SERVER has stored it as an
+ *  acceptance of `version` (founder ruling 2026-11-09: "The policy
+ *  'Continue' is stored as acceptance."). Called only after
+ *  api.acceptPolicyVersion confirmed the server kept that version, never on
+ *  the tap itself, so a failed POST leaves the notice due for next launch. */
+export async function markPolicyAccepted(version: string = LEGAL_POLICY_VERSION): Promise<void> {
+  try { await AsyncStorage.setItem(KEYS.acceptedPolicyVersion, version); } catch {}
 }
 
 /** PURE: does this person need the policy-change notice before continuing?
- *  Only someone who has accepted the terms at all, and only when neither the
- *  version they accepted nor the last notice they saw is the current one. */
-export function policyNoticeDue(termsAccepted: boolean, accepted: string | null, noticed: string | null, current: string = LEGAL_POLICY_VERSION): boolean {
-  return termsAccepted === true && accepted !== current && noticed !== current;
+ *  Only someone who has accepted the terms at all, and only while the version
+ *  they accepted is not the current one. Seeing the notice is not enough to
+ *  stop it: only an acceptance the server stored is (markPolicyAccepted). */
+export function policyNoticeDue(termsAccepted: boolean, accepted: string | null, current: string = LEGAL_POLICY_VERSION): boolean {
+  return termsAccepted === true && accepted !== current;
 }
 
-/** Reads the three stored facts and answers policyNoticeDue. Unknown storage
+/** Reads the two stored facts and answers policyNoticeDue. Unknown storage
  *  answers false: a notice is not worth blocking a launch over a failed read. */
 export async function needsPolicyNotice(): Promise<boolean> {
   try {
-    const [t, a, n] = await Promise.all([
+    const [t, a] = await Promise.all([
       AsyncStorage.getItem(KEYS.termsAccepted),
       AsyncStorage.getItem(KEYS.acceptedPolicyVersion),
-      AsyncStorage.getItem(KEYS.policyNoticeVersion),
     ]);
-    return policyNoticeDue(t === 'true', a, n);
+    return policyNoticeDue(t === 'true', a);
   } catch { return false; }
 }
 

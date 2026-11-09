@@ -203,9 +203,14 @@ const PRIVACY = read('app/privacy.tsx');
 // RE-DATED 2026-11-09 (policy finding F2): counsel's rewrite (inner-map-legal
 // 883967e) dated both documents 13 October 2026, and the app said July 3 for
 // four weeks. The literal is the documents' own form now.
+// RE-DATED AGAIN 2026-11-09: the documents were republished "Last Updated:
+// 9 November 2026" for two corrections (the timezone lines removed,
+// ElevenLabs narrowed), Effective Date still 13 October 2026. Not a material
+// change: the notice's date and the acceptance version stay 13 October (F2
+// block below).
 ok('the date is declared once, and matches the published documents',
-  /export const LEGAL_DOCS_LAST_UPDATED = '13 October 2026';/.test(LEGALDOCS),
-  'privacy-policy.html:55 and terms-of-service.html:49 both read "Last Updated: 13 October 2026"');
+  /export const LEGAL_DOCS_LAST_UPDATED = '9 November 2026';/.test(LEGALDOCS),
+  'privacy-policy.html:55 and terms-of-service.html:49 both read "Last Updated: 9 November 2026"');
 
 // NARROW SLICE, on purpose, and over EVERY occurrence rather than the first.
 // The constant's own header comment quotes the WRONG date in order to explain
@@ -230,16 +235,20 @@ ok('...and it is imported, not shadowed by a local re-declaration',
 
 // ---- F2 (2026-11-09): the version accepted, and the notice when it changes ----
 {
-  ok('the policy version is the same date as a key',
+  ok('the policy version is the last MATERIAL change, as a key',
     /export const LEGAL_POLICY_VERSION = '2026-10-13';/.test(LEGALDOCS));
+  ok('...and the notice names that change in words, apart from the Last Updated date',
+    /export const LEGAL_POLICY_CHANGED_ON = '13 October 2026';/.test(LEGALDOCS));
   const LEGAL = path.join(__dirname, '..', '..', 'inner-map-legal');
   const LEGAL_ALT = path.join(__dirname, '..', '..', '..', '..', '..', 'inner-map-legal');
   const dir = [LEGAL, LEGAL_ALT].find((d) => fs.existsSync(path.join(d, 'privacy-policy.html')));
   if (dir) {
     const pp = fs.readFileSync(path.join(dir, 'privacy-policy.html'), 'utf8');
     const tos = fs.readFileSync(path.join(dir, 'terms-of-service.html'), 'utf8');
-    ok('...and the published documents still carry it',
-      /Last Updated:<\/strong> 13 October 2026/.test(pp) && /Last Updated:<\/strong> 13 October 2026/.test(tos));
+    ok('...and the published documents carry the Last Updated date, with 13 October 2026 still the Effective Date',
+      /Last Updated:<\/strong> 9 November 2026/.test(pp) && /Last Updated:<\/strong> 9 November 2026/.test(tos)
+        && /Effective Date:<\/strong> 13 October 2026/.test(pp) && /Effective Date:<\/strong> 13 October 2026/.test(tos),
+      'read from ' + dir);
   } else {
     console.log('  SKIP inner-map-legal not beside this checkout; the documents were not compared');
   }
@@ -251,15 +260,18 @@ ok('...and it is imported, not shadowed by a local re-declaration',
     due = new Function(...params, `return (${m[2]});`);
   }
   const V = '2026-10-13';
-  ok('the notice is due only for someone who accepted terms under an older version and has not seen it',
-    !!due && due(true, null, null, V) === true && due(true, '2026-07-03', null, V) === true
-      && due(true, V, null, V) === false && due(true, null, V, V) === false
-      && due(false, null, null, V) === false && due(true, '2026-07-03', '2026-07-03', V) === true,
+  // Founder ruling 2026-11-09: "The policy "Continue" is stored as
+  // acceptance." Having seen the notice no longer stops it; only an
+  // acceptance of the current version does.
+  ok('the notice is due for someone who accepted terms under an older version, until the current one is accepted',
+    !!due && due.length === 3 && due(true, null, V) === true && due(true, '2026-07-03', V) === true
+      && due(true, V, V) === false && due(false, null, V) === false,
     m ? '' : 'policyNoticeDue not found');
   ok('accepting the terms stores the version they were accepted under',
     /export async function markTermsAccepted\(\): Promise<void> \{\s*await setBool\(KEYS\.termsAccepted, true\);\s*try \{ await AsyncStorage\.setItem\(KEYS\.acceptedPolicyVersion, LEGAL_POLICY_VERSION\); \} catch \{\}/.test(ONB));
-  ok('...and the notice records itself without touching the accepted version',
-    /export async function markPolicyNoticeSeen\([^)]*\): Promise<void> \{\s*try \{ await AsyncStorage\.setItem\(KEYS\.policyNoticeVersion, version\); \} catch \{\}\s*\}/.test(ONB));
+  ok('...and the notice\'s Continue keeps the accepted version only through markPolicyAccepted',
+    /export async function markPolicyAccepted\([^)]*\): Promise<void> \{\s*try \{ await AsyncStorage\.setItem\(KEYS\.acceptedPolicyVersion, version\); \} catch \{\}\s*\}/.test(ONB)
+      && !/markPolicyNoticeSeen/.test(ONB) && !/markPolicyNoticeSeen/.test(LAYOUT));
   ok('the accept POST carries the version',
     /body: JSON\.stringify\(policyVersion \? \{ policyVersion \} : \{\}\)/.test(API));
   const ONBOARD = read('app/onboarding.tsx');
@@ -271,10 +283,28 @@ ok('...and it is imported, not shadowed by a local re-declaration',
   ok('the notice is rendered over the app once it is unlocked, and only when due',
     /needsPolicyNotice\(\)\.then\(\(due\) => \{ if \(live && due\) setPolicyNotice\(true\); \}\)/.test(LAYOUT)
       && /<PolicyUpdateNotice\s*visible=\{policyNotice\}/.test(LAYOUT));
+  ok('...and its Continue closes it at once and hands the acceptance to the background',
+    /onContinue=\{\(\) => \{ setPolicyNotice\(false\); acceptPolicyFromNotice\(\)\.catch\(\(\) => \{\}\); \}\}/.test(LAYOUT));
   const NOTICE = read('components/legal/PolicyUpdateNotice.tsx');
-  ok('its sentence takes the date from the one constant, never a literal',
-    /`Our Privacy Policy and Terms of Service were updated on \$\{LEGAL_DOCS_LAST_UPDATED\}\.`/.test(NOTICE)
-      && !/POLICY_NOTICE_SENTENCE =[^;]*\d{4}/.test(NOTICE));
+  ok('its sentence takes the date of the last material change from the one constant, never a literal',
+    /`Our Privacy Policy and Terms of Service were updated on \$\{LEGAL_POLICY_CHANGED_ON\}\.`/.test(NOTICE)
+      && !/POLICY_NOTICE_SENTENCE =[^;]*\d{4}/.test(NOTICE)
+      && !/LEGAL_DOCS_LAST_UPDATED/.test(NOTICE.replace(/^\s*\/\/.*$/gm, '')));
+  // The acceptance is kept on the device ONLY after the server said it stored
+  // that version: the order inside acceptPolicyFromNotice, and the echo check
+  // inside api.acceptPolicyVersion.
+  const accFn = (NOTICE.match(/export async function acceptPolicyFromNotice\([\s\S]*?\r?\n\}\r?\n/) || [''])[0];
+  ok('Continue is stored as acceptance: POST the current version, keep it on the device only once the server stored it',
+    /stored = await api\.acceptPolicyVersion\(version\)/.test(accFn)
+      && /if \(stored\) \{\s*await markPolicyAccepted\(version\);\s*return true;\s*\}/.test(accFn)
+      && accFn.indexOf('api.acceptPolicyVersion') < accFn.indexOf('markPolicyAccepted')
+      && /version: string = LEGAL_POLICY_VERSION/.test(accFn),
+    accFn ? '' : 'acceptPolicyFromNotice not found');
+  const apv = (API.match(/async acceptPolicyVersion\(policyVersion: string\): Promise<boolean> \{[\s\S]*?\r?\n  \},/) || [''])[0];
+  ok('...and the server has stored it only when it echoes that version back',
+    /'\/api\/terms\/accept'/.test(apv) && /body: JSON\.stringify\(\{ policyVersion \}\)/.test(apv)
+      && /if \(!res\.ok\) return false;/.test(apv) && /return !!j && j\.policyVersion === policyVersion;/.test(apv),
+    apv ? '' : 'api.acceptPolicyVersion not found');
 }
 
 // ===========================================================================

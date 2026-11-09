@@ -6,22 +6,60 @@
 // summary still said the policy was last updated July 3, 2026, four weeks
 // after counsel's 13 October rewrite.
 //
-// Shown once per policy version, over everything, to anyone who accepted the
-// terms under an earlier version (services/onboarding.ts policyNoticeDue). It
-// is a NOTICE, not a new acceptance: Continue records that they saw it
-// (markPolicyNoticeSeen) and leaves the accepted version as it was.
+// Shown to anyone who accepted the terms under an earlier version
+// (services/onboarding.ts policyNoticeDue), over everything, once the app is
+// unlocked.
 //
-// COPY: one plain sentence and the link, nothing more, because the founder is
-// doing the wording pass. MICROCOPY — the founder's to word.
+// CONTINUE IS ACCEPTANCE (founder ruling 2026-11-09: "The policy "Continue" is
+// stored as acceptance."). The tap closes the notice at once and never blocks
+// the app; acceptPolicyFromNotice then POSTs /api/terms/accept with the
+// current version and retries. Only when the server answers that it STORED
+// that version is the acceptance kept on the device (markPolicyAccepted),
+// which is the one thing that stops the notice. If every try fails, nothing
+// is kept and the notice comes back on the next launch.
+//
+// The date it names is LEGAL_POLICY_CHANGED_ON, the last MATERIAL change, not
+// the documents' Last Updated date: a re-dating for corrections (9 November
+// 2026) re-prompts nobody.
 
 import React from 'react';
 import { Modal, View, Text, Pressable, StyleSheet } from 'react-native';
 import { colors, fonts, spacing } from '../../constants/theme';
-import { LEGAL_DOCS_LAST_UPDATED, PRIVACY_POLICY_URL, openLegalDoc } from '../../utils/legalDocs';
+import { LEGAL_POLICY_CHANGED_ON, LEGAL_POLICY_VERSION, PRIVACY_POLICY_URL, openLegalDoc } from '../../utils/legalDocs';
+import { api } from '../../services/api';
+import { markPolicyAccepted } from '../../services/onboarding';
 
 export const POLICY_NOTICE_SENTENCE =
-  `Our Privacy Policy and Terms of Service were updated on ${LEGAL_DOCS_LAST_UPDATED}.`;
+  `Our Privacy Policy and Terms of Service were updated on ${LEGAL_POLICY_CHANGED_ON}.`;
 export const POLICY_NOTICE_LINK = 'Read the Privacy Policy';
+
+// Three tries in the background: at once, then after 3 s, then after 15 s.
+// Past that the launch's chance is spent; the next launch shows the notice
+// again, because nothing was kept.
+export const POLICY_ACCEPT_RETRY_MS = [0, 3_000, 15_000];
+
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Continue on the notice: store it as acceptance of the current policy
+ *  version on the server, and only then on the device. Resolves true once
+ *  the server has stored it; false when every try failed (nothing stored on
+ *  the device, so the notice is due again next launch). Never throws. */
+export async function acceptPolicyFromNotice(
+  version: string = LEGAL_POLICY_VERSION,
+  delays: number[] = POLICY_ACCEPT_RETRY_MS,
+): Promise<boolean> {
+  for (const ms of delays) {
+    if (ms > 0) await wait(ms);
+    let stored = false;
+    try { stored = await api.acceptPolicyVersion(version); } catch { stored = false; }
+    if (stored) {
+      await markPolicyAccepted(version);
+      return true;
+    }
+  }
+  console.warn('[policy] the notice\'s acceptance was not stored; it will show again next launch');
+  return false;
+}
 
 export function PolicyUpdateNotice({ visible, onContinue }: { visible: boolean; onContinue: () => void }) {
   return (
