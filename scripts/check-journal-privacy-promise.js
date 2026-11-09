@@ -127,9 +127,26 @@ for (const [name, src] of SURFACES) {
 check('the first-launch screen states the default out loud',
   /New journal entries are shared/.test(prose(onboard)),
   'the privacy screen does not say entries are shared by default');
+// UPDATED 2026-11-08. Counsel's rewrite of the policy (inner-map-legal
+// 883967e, 2026-10-13) dropped "shared with the AI unless you turn sharing
+// off" and states the default in its own sentence: "A setting in Settings
+// controls whether your entries are shared with the AI. It is on by default,
+// and you can turn it off at any time." The check was red for weeks on the
+// old wording, with the default still stated. It now reads the current
+// sentence, and still fails if the default sentence goes (negative control
+// below).
+const POLICY_DEFAULT = /whether your entries are shared with the AI\.\s+It is on by default\b/;
 check('the published policy states the default out loud',
-  /shared with the AI unless you turn sharing off/.test(policy),
-  'the policy does not say entries are shared unless the switch is turned off');
+  POLICY_DEFAULT.test(policy),
+  'the policy no longer says, next to the journal sharing setting, that it is on by default');
+{
+  const without = policy.split('It is on by default').join('');
+  if (POLICY_DEFAULT.test(without)) {
+    fail++; console.log('  FAIL NEGATIVE CONTROL: the policy-default assertion cannot fail');
+  } else {
+    console.log('  ok   negative control: removing the default sentence from the policy turns it red');
+  }
+}
 
 // ---- the compose screen shows where THIS entry is going -------------------
 // TRUE UNDER BOTH BRANCHES, which is why it survived the reversal: someone
