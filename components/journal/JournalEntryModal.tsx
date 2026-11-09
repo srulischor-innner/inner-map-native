@@ -101,6 +101,18 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   // SETTINGS IS THE DEFAULT, NOT THE LOCK. It still decides which way this
   // opens; this decides which way this one goes.
   const [shared, setShared] = useState(true);
+  // DICTATION ONLY FOR A SHARED ENTRY (founder, 2026-11-08). Speaking sends the
+  // audio to /api/transcribe and on to OpenAI. The privacy policy says a
+  // private journal entry is never transmitted to OpenAI and never reaches our
+  // servers, so a private entry gets no mic and no "Or speak" label: it is
+  // typed, and stays on the device.
+  //
+  // `shareKnown` because `shared` starts TRUE above while the default is still
+  // being read. Without it a private-by-default person would be offered the
+  // mic for that first moment. The mic waits until the read has answered.
+  // scripts/check-journal-private-no-dictation.js holds this.
+  const [shareKnown, setShareKnown] = useState(false);
+  const micAllowed = shareKnown && shared;
   // Build 14 — manual kbHeight lift, replacing the prior
   // KeyboardAvoidingView with behavior:'height' on Android (which
   // is the known-unreliable pattern that left inputs hidden behind
@@ -192,7 +204,9 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
     setSaving(false);
     // Seed the share flag from the global default (Settings → "Share journal
     // with AI"); no per-entry toggle — this is the save-time snapshot.
-    getJournalShareDefault().then(setShared).catch(() => setShared(true));
+    // The mic stays hidden until this answers (see `shareKnown` above).
+    setShareKnown(false);
+    getJournalShareDefault().then((on) => { setShared(on); setShareKnown(true); }).catch(() => { setShared(true); setShareKnown(true); });
     setGuidanceCollapsed(false);
     guidanceOpacity.setValue(1);
   }, [visible, guidanceOpacity, recorder]);
@@ -327,6 +341,9 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
   }
 
   async function startRecording() {
+    // A private entry never records (see `micAllowed`). The mic isn't rendered
+    // for one; this is the second lock.
+    if (!micAllowed) return;
     holdActiveRef.current = true;
     const run = (async (): Promise<boolean> => {
       try {
@@ -439,6 +456,11 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
       } catch {}
       const uri = recorder.uri;
       if (!uri || heldSec < 0.3) {
+        setTranscribing(false);
+        return;
+      }
+      // A private entry's audio never leaves the device (see `micAllowed`).
+      if (!micAllowed) {
         setTranscribing(false);
         return;
       }
@@ -693,7 +715,9 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
 
           {/* Mic dock — bottom-right. Hold to record; swipe up to lock hands-
               free; release (below the lock) to transcribe. Locked → the mic
-              becomes a finish button. (No swipe-to-cancel in the journal.) */}
+              becomes a finish button. (No swipe-to-cancel in the journal.)
+              Shared entries only: a private entry has no mic (`micAllowed`). */}
+          {micAllowed ? (
           <View style={styles.micDock}>
             <Text style={styles.micLabel}>{locked || interrupted ? 'Tap to finish' : 'Or speak'}</Text>
             {/* Lock affordance — floats above the mic while holding (pre-lock),
@@ -737,6 +761,7 @@ export function JournalEntryModal({ visible, kind, onClose, onSave }: Props) {
               </GestureDetector>
             )}
           </View>
+          ) : null}
         </View>
       </SafeAreaView>
       </GestureHandlerRootView>
