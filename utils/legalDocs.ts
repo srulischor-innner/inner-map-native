@@ -20,8 +20,11 @@ export const PRIVACY_POLICY_URL = 'https://my-inner-map.com/privacy-policy.html'
 export const TERMS_OF_SERVICE_URL = 'https://my-inner-map.com/terms-of-service.html';
 
 // The "Last Updated" date carried by BOTH canonical documents. They are
-// versioned in lockstep and both currently read "Last Updated: July 3, 2026"
-// (privacy-policy.html line 55, terms-of-service.html line 49). The server
+// versioned in lockstep and both currently read "Last Updated: 13 October
+// 2026" (privacy-policy.html line 55, terms-of-service.html line 49) since
+// counsel's rewrite (inner-map-legal 883967e). The app read "July 3, 2026"
+// for four weeks after it — policy finding F2, fixed 2026-11-09 — in the
+// documents' own form this time, so the two can be compared by eye. The server
 // repo holds the same fact as AGE_POLICY_VERSION = "2026-07-03" and stamps it
 // on every age attestation, so if the two ever disagree the attestation audit
 // trail points at a version of the text nobody was ever shown.
@@ -42,7 +45,16 @@ export const TERMS_OF_SERVICE_URL = 'https://my-inner-map.com/terms-of-service.h
 //     asserts this constant exactly and goes red until it is updated too.
 //     That step pins the literal on purpose: a shape-only check ("any
 //     Month D, YYYY") would have stayed green through the July 1 defect.
-export const LEGAL_DOCS_LAST_UPDATED = 'July 3, 2026';
+export const LEGAL_DOCS_LAST_UPDATED = '13 October 2026';
+
+// THE SAME FACT AS A VERSION KEY (F2, 2026-11-09). Stored with the person's
+// terms acceptance (services/onboarding.ts markTermsAccepted) and sent with
+// it (api.acceptTerms), so it is known WHICH text they accepted. When this
+// moves past what a person accepted, the app shows an in-app notice before
+// they continue (components/legal/PolicyUpdateNotice.tsx) — the Terms
+// promise "For material changes, we will provide notice in-app".
+// Bump it in the same change as LEGAL_DOCS_LAST_UPDATED.
+export const LEGAL_POLICY_VERSION = '2026-10-13';
 
 /**
  * Open one of the live legal documents.

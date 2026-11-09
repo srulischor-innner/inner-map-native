@@ -1588,10 +1588,17 @@ export const api = {
     } catch { return false; }
   },
 
-  async acceptTerms(): Promise<boolean> {
+  /** POST /api/terms/accept. `policyVersion` (F2, 2026-11-09) is the policy
+   *  version the terms were accepted under (utils/legalDocs.ts
+   *  LEGAL_POLICY_VERSION at acceptance). Sent so the server can keep it with
+   *  the acceptance; a server that does not read it yet ignores the body. */
+  async acceptTerms(policyVersion?: string | null): Promise<boolean> {
     try {
       const headers = await authHeaders();
-      const res = await apiFetch('/api/terms/accept', { label: 'terms-accept', method: 'POST', headers });
+      const res = await apiFetch('/api/terms/accept', {
+        label: 'terms-accept', method: 'POST', headers,
+        body: JSON.stringify(policyVersion ? { policyVersion } : {}),
+      });
       return res.ok;
     } catch { return false; }
   },

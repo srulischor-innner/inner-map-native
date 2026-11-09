@@ -18,6 +18,7 @@
 // user is routed to /onboarding.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LEGAL_POLICY_VERSION } from '../utils/legalDocs';
 
 /** Read-aloud in chat. Lives HERE, not beside its toggle, because three
  *  different files need the same string and the two that clear it are not the
@@ -30,6 +31,10 @@ export const READ_ALOUD_PREF_KEY = 'chat.readAloudEnabled';
 const KEYS = {
   hasSeenIntro:       'onboarding.hasSeenIntro',
   termsAccepted:      'onboarding.termsAccepted',
+  // F2 (2026-11-09): which policy version the terms were accepted under, and
+  // the newest version this person was told about and continued past.
+  acceptedPolicyVersion: 'onboarding.acceptedPolicyVersion',
+  policyNoticeVersion:   'onboarding.policyNoticeVersion',
   intakeComplete:     'onboarding.intakeComplete',
   privacyNoticeSeen:  'onboarding.privacyNoticeSeen',
   // Build 11 — set true once the user has made a sign-in choice on
@@ -185,7 +190,43 @@ export async function getOnboardingState(): Promise<OnboardingState> {
 }
 
 export const markIntroSeen          = () => setBool(KEYS.hasSeenIntro, true);
-export const markTermsAccepted      = () => setBool(KEYS.termsAccepted, true);
+/** The terms accepted, and the policy version they were accepted under. */
+export async function markTermsAccepted(): Promise<void> {
+  await setBool(KEYS.termsAccepted, true);
+  try { await AsyncStorage.setItem(KEYS.acceptedPolicyVersion, LEGAL_POLICY_VERSION); } catch {}
+}
+
+/** The policy version the terms were accepted under; null for anyone who
+ *  accepted before versions were recorded (1.3.0 and earlier). */
+export async function getAcceptedPolicyVersion(): Promise<string | null> {
+  try { return await AsyncStorage.getItem(KEYS.acceptedPolicyVersion); } catch { return null; }
+}
+
+/** They were shown the notice for this version and continued. A record of the
+ *  notice, NOT a new acceptance: the accepted version is left as it was. */
+export async function markPolicyNoticeSeen(version: string = LEGAL_POLICY_VERSION): Promise<void> {
+  try { await AsyncStorage.setItem(KEYS.policyNoticeVersion, version); } catch {}
+}
+
+/** PURE: does this person need the policy-change notice before continuing?
+ *  Only someone who has accepted the terms at all, and only when neither the
+ *  version they accepted nor the last notice they saw is the current one. */
+export function policyNoticeDue(termsAccepted: boolean, accepted: string | null, noticed: string | null, current: string = LEGAL_POLICY_VERSION): boolean {
+  return termsAccepted === true && accepted !== current && noticed !== current;
+}
+
+/** Reads the three stored facts and answers policyNoticeDue. Unknown storage
+ *  answers false: a notice is not worth blocking a launch over a failed read. */
+export async function needsPolicyNotice(): Promise<boolean> {
+  try {
+    const [t, a, n] = await Promise.all([
+      AsyncStorage.getItem(KEYS.termsAccepted),
+      AsyncStorage.getItem(KEYS.acceptedPolicyVersion),
+      AsyncStorage.getItem(KEYS.policyNoticeVersion),
+    ]);
+    return policyNoticeDue(t === 'true', a, n);
+  } catch { return false; }
+}
 
 // ---- terms server-sync bookkeeping (2026-07-30) ----------------------------
 // The local flag is a UI gate; the SERVER row is the audit trail. When the
@@ -464,6 +505,8 @@ export async function resetOnboarding(): Promise<void> {
   await Promise.all([
     AsyncStorage.removeItem(KEYS.hasSeenIntro),
     AsyncStorage.removeItem(KEYS.termsAccepted),
+    AsyncStorage.removeItem(KEYS.acceptedPolicyVersion),
+    AsyncStorage.removeItem(KEYS.policyNoticeVersion),
     AsyncStorage.removeItem(KEYS.intakeComplete),
     AsyncStorage.removeItem(KEYS.privacyNoticeSeen),
     AsyncStorage.removeItem(KEYS.signInChoiceMade),

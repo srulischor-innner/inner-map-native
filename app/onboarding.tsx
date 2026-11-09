@@ -38,6 +38,7 @@ import {
 // asserts that as a census over comment-stripped source.
 import { primeDoor, doorForExit } from '../services/membershipDoor';
 import { api } from '../services/api';
+import { LEGAL_POLICY_VERSION } from '../utils/legalDocs';
 import {
   evaluateDob, localToday, parseBox, MINIMUM_AGE,
   type DobInput, type AgeGateStatus,
@@ -369,7 +370,7 @@ export default function OnboardingScreen() {
               // server was never told, and nothing ever reconciled. The result
               // is no longer discarded: a failed POST marks the sync pending so
               // the boot reconciliation retries it.
-              const synced = await api.acceptTerms();
+              const synced = await api.acceptTerms(LEGAL_POLICY_VERSION);
               if (!synced) {
                 console.warn('[terms] accept POST failed — marking sync pending for boot retry');
                 await markTermsSyncPending();
@@ -436,7 +437,7 @@ export default function OnboardingScreen() {
             //
             // Same contract as the invitee path above: server first, result
             // honoured, local gate last, pending marker on failure.
-            const synced = await api.acceptTerms();
+            const synced = await api.acceptTerms(LEGAL_POLICY_VERSION);
             if (!synced) {
               console.warn('[terms] accept POST failed — marking sync pending for boot retry');
               await markTermsSyncPending();

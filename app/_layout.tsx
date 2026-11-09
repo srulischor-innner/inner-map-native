@@ -37,7 +37,9 @@ import {
   getOnboardingState, OnboardingState,
   isTermsSyncPending, clearTermsSyncPending,
   isAgeGateBlocked, isAgeSyncPending, clearAgeSyncPending,
+  getAcceptedPolicyVersion, needsPolicyNotice, markPolicyNoticeSeen,
 } from '../services/onboarding';
+import { PolicyUpdateNotice } from '../components/legal/PolicyUpdateNotice';
 import { registerForPushNotifications } from '../services/push';
 import { configurePurchases, identifyUser } from '../services/purchases';
 import { peekUserId } from '../services/user';
@@ -268,6 +270,10 @@ function RootLayout() {
   // decision in state rather than firing it inline is the whole fix for the
   // dropped-redirect bug described on that effect.
   const [pendingRoute, setPendingRoute] = useState<'/sign-in' | '/onboarding' | null>(null);
+  // F2 (2026-11-09): the policy changed since this person accepted the terms.
+  // Checked once the app is unlocked and on screen; the notice comes before
+  // they continue (components/legal/PolicyUpdateNotice.tsx).
+  const [policyNotice, setPolicyNotice] = useState(false);
   // 18+ GATE — the boot read's verdict, published to the OTHER effects in this
   // component. 'unknown' until the boot IIFE resolves it; nothing that touches
   // the network or a third-party SDK may run until it is 'clear'. The
@@ -692,7 +698,7 @@ function RootLayout() {
               return;
             }
             if (local || pending) {
-              const ok = await api.acceptTerms();
+              const ok = await api.acceptTerms(await getAcceptedPolicyVersion());
               console.log(`[terms] reconcile → server had no record, re-POSTed: ${ok ? 'ok' : 'failed'}`);
               if (ok) await clearTermsSyncPending();
             }
@@ -1035,6 +1041,12 @@ function RootLayout() {
   // =========================================================================
   const stackMounted = !isCheckingBiometrics && !locked && fontsReady;
   useEffect(() => {
+    if (!stackMounted) return;
+    let live = true;
+    needsPolicyNotice().then((due) => { if (live && due) setPolicyNotice(true); }).catch(() => {});
+    return () => { live = false; };
+  }, [stackMounted]);
+  useEffect(() => {
     if (!pendingRoute || !stackMounted) return;
     const t = setTimeout(() => {
       try {
@@ -1125,6 +1137,10 @@ function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
         </Stack>
+        <PolicyUpdateNotice
+          visible={policyNotice}
+          onContinue={() => { setPolicyNotice(false); markPolicyNoticeSeen().catch(() => {}); }}
+        />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
